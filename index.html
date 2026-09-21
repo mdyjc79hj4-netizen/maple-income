@@ -72,23 +72,40 @@
         <label>항목
           <select id="incomeItem"></select>
         </label>
+        <div id="saleStateWrap">
+          <div class="seg" role="group" aria-label="기록 유형">
+            <button type="button" data-sale="acquired" class="active">획득</button>
+            <button type="button" data-sale="sold">판매</button>
+          </div>
+          <div class="hint">획득은 수량만 저장되고, 판매한 금액만 주간 수익에 반영됩니다.</div>
+        </div>
         <label id="qtyWrap">수량
           <input id="incomeQty" type="number" inputmode="numeric" min="0" value="1">
         </label>
         <label id="priceWrap">개당 판매가
-          <input id="incomePrice" type="number" inputmode="numeric" min="0" placeholder="0">
+          <input id="incomePrice" class="money-input" type="text" inputmode="numeric" placeholder="6,500,000">
+          <small class="money-hint" id="incomePriceHint"></small>
         </label>
         <label id="mesoWrap" class="hidden">획득 메소
-          <input id="mesoAmount" type="number" inputmode="numeric" min="0" placeholder="82000000">
+          <input id="mesoAmount" class="money-input" type="text" inputmode="numeric" placeholder="82,000,000">
+          <small class="money-hint" id="mesoAmountHint"></small>
         </label>
-        <div id="saleStateWrap">
-          <div class="seg">
-            <button type="button" data-sale="acquired" class="active">획득</button>
-            <button type="button" data-sale="sold">판매</button>
-          </div>
-          <div class="hint">획득은 재고로 기록되고, 판매 완료 시 수익에 반영됩니다.</div>
+        <label id="costWrap" class="hidden">소재비 총액
+          <input id="materialCost" class="money-input" type="text" inputmode="numeric" placeholder="12,000,000">
+          <small class="money-hint" id="materialCostHint"></small>
+        </label>
+        <label id="sourceWrap">획득 경로
+          <input id="incomeSource" placeholder="예: 재획, 채집, 보스 드랍">
+        </label>
+        <label>메모
+          <input id="incomeMemo" placeholder="선택 입력">
+        </label>
+        <div class="income-result" id="incomeResult" aria-live="polite">
+          <span id="incomeResultLabel">수익 반영액</span>
+          <strong id="incomeResultValue">0 메소</strong>
+          <small id="incomeResultDetail"></small>
         </div>
-        <button class="primary" type="submit">저장</button>
+        <button class="primary" id="incomeSubmit" type="submit">메소 수익 기록</button>
       </form>
       <div id="incomeHistory" class="history"></div>
     </section>
