@@ -10,3 +10,5 @@
 7. Deploy
 
 정적 HTML/CSS/JS 사이트이며 브라우저 localStorage에 저장됩니다.
+
+Vercel 자동 배포 연결 테스트
