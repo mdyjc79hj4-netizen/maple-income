@@ -2,8 +2,8 @@
 const KEY='maple-income-vercel-v1';
 const items={
   hunt:['메소','솔 에르다 조각','코어 젬스톤'],
-  gather:['쥬니퍼베리 씨앗','쥬니퍼베리 꽃','히솝 꽃','페퍼민트 꽃'],
-  drop:['보스 드랍','기타 아이템']
+  gather:['쥬니퍼베리 씨앗','쥬니퍼베리 씨앗 오일','소형 재물 획득의 비약'],
+  drop:['보스 드랍 아이템','칠흑 아이템','기타 드랍 아이템']
 };
 const bosses=[
   '스우','데미안','가디언 엔젤 슬라임','루시드','윌','더스크','듄켈',
@@ -17,8 +17,24 @@ let state=JSON.parse(localStorage.getItem(KEY)||'null')||{
   saleState:'acquired'
 };
 function save(){localStorage.setItem(KEY,JSON.stringify(state));render();}
-function n(v){return Number(v||0)}
+function n(v){return Number(String(v??0).replace(/,/g,''))||0}
 function won(v){return Math.floor(n(v)).toLocaleString('ko-KR')}
+function koreanMeso(value){
+  let rest=Math.floor(n(value)); if(!rest)return '';
+  const parts=[];
+  for(const [size,unit] of [[1e12,'조'],[1e8,'억'],[1e4,'만']]){
+    const group=Math.floor(rest/size); rest-=group*size;
+    if(group)parts.push(unit==='만'&&group%1000===0?`${group/1000}천만`:`${group.toLocaleString('ko-KR')}${unit}`);
+  }
+  if(rest)parts.push(rest.toLocaleString('ko-KR'));
+  return parts.join(' ')+' 메소';
+}
+function formatMoneyInput(input){
+  const digits=input.value.replace(/\D/g,'');
+  input.value=digits?Number(digits).toLocaleString('ko-KR'):'';
+  const hint=document.querySelector('#'+input.id+'Hint');
+  if(hint)hint.textContent=digits?koreanMeso(digits):'';
+}
 function weekRange(date=new Date()){
   const d=new Date(date); d.setHours(0,0,0,0);
   const day=d.getDay(); const diff=(day>=4?day-4:day+3);
@@ -29,9 +45,10 @@ function weekRange(date=new Date()){
 }
 function currentWeekKey(){const w=weekRange();return `${w.start}~${w.end}`}
 function incomeValue(x){
-  if(x.item==='메소') return n(x.amount);
-  if(x.saleState!=='sold') return 0;
-  return n(x.qty)*n(x.price);
+  const kind=x.recordType||(x.item==='메소'?'income':x.saleState==='sold'?'sold':'acquired');
+  if(kind==='income')return n(x.netIncome??x.amount);
+  if(kind!=='sold')return 0;
+  return n(x.netIncome??(n(x.qty)*n(x.price)-n(x.materialCost)));
 }
 function catTotal(cat){return state.incomes.filter(x=>x.category===cat).reduce((a,b)=>a+incomeValue(b),0)}
 function bossTotal(){
@@ -98,18 +115,37 @@ function renderIncomeForm(){
   const prev=itemSel.value;
   itemSel.innerHTML=items[cat].map(x=>`<option>${x}</option>`).join('');
   if(items[cat].includes(prev)) itemSel.value=prev;
-  const meso=itemSel.value==='메소';
+  const item=itemSel.value,meso=item==='메소',acquired=!meso&&state.saleState!=='sold';
+  document.querySelectorAll('[data-sale]').forEach(button=>button.classList.toggle('active',button.dataset.sale===(state.saleState==='sold'?'sold':'acquired')));
   document.querySelector('#mesoWrap').classList.toggle('hidden',!meso);
   document.querySelector('#qtyWrap').classList.toggle('hidden',meso);
-  document.querySelector('#priceWrap').classList.toggle('hidden',meso);
+  document.querySelector('#priceWrap').classList.toggle('hidden',meso||acquired);
   document.querySelector('#saleStateWrap').classList.toggle('hidden',meso);
+  document.querySelector('#sourceWrap').classList.toggle('hidden',meso||!acquired);
+  document.querySelector('#costWrap').classList.toggle('hidden',meso||acquired||item!=='소형 재물 획득의 비약');
+  document.querySelector('#incomeResult').classList.toggle('hidden',acquired);
+  document.querySelector('#incomeSubmit').textContent=meso?'메소 수익 기록':acquired?'획득 기록 추가':'판매 수익 기록';
+  updateIncomePreview();
+}
+function updateIncomePreview(){
+  const item=document.querySelector('#incomeItem').value,meso=item==='메소';
+  if(!meso&&state.saleState!=='sold')return;
+  const qty=meso?1:Math.max(0,n(document.querySelector('#incomeQty').value));
+  const unit=meso?n(document.querySelector('#mesoAmount').value):n(document.querySelector('#incomePrice').value);
+  const gross=qty*unit,cost=meso?0:n(document.querySelector('#materialCost').value),net=Math.max(0,gross-cost);
+  document.querySelector('#incomeResultLabel').textContent=meso?'수익 반영액':cost?'순수익':'총 판매액';
+  document.querySelector('#incomeResultValue').textContent=koreanMeso(net)||'0 메소';
+  document.querySelector('#incomeResultDetail').textContent=!meso&&cost?`총 판매액 ${won(gross)} 메소 · 소재비 ${won(cost)} 메소`:gross?`${won(gross)} 메소`:'';
 }
 function renderIncomeHistory(){
   const host=document.querySelector('#incomeHistory');
   host.innerHTML=state.incomes.slice().reverse().map(x=>{
-    const value=incomeValue(x);
-    const detail=x.item==='메소'?`${won(x.amount)} 메소`:`${won(x.qty)}개 · ${x.saleState==='sold'?'판매 완료':'획득 기록'}${x.price?` · 개당 ${won(x.price)}`:''}`;
-    return `<div class="history-item"><div><b>${escapeHtml(x.item)}</b><div class="meta">${escapeHtml(x.categoryLabel)} · ${detail}</div></div><div>${won(value)} 메소</div></div>`
+    const value=incomeValue(x),kind=x.recordType||(x.item==='메소'?'income':x.saleState==='sold'?'sold':'acquired');
+    const source=x.source?` · ${escapeHtml(x.source)}`:'',memo=x.memo?`<div class="meta">${escapeHtml(x.memo)}</div>`:'';
+    if(kind==='income')return `<div class="history-item"><div><b>${escapeHtml(x.categoryLabel)} · ${escapeHtml(x.item)}</b><div class="meta">즉시 수익 반영</div>${memo}</div><div class="income-positive">+${koreanMeso(value)}</div></div>`;
+    if(kind==='acquired')return `<div class="history-item"><div><b>${escapeHtml(x.categoryLabel)} · ${escapeHtml(x.item)}</b><div class="meta">획득 ${won(x.qty)}개${source}</div><div class="not-realized">판매 전 · 주간 수익 미반영</div>${memo}</div></div>`;
+    const cost=x.materialCost?` · 소재비 ${won(x.materialCost)} 메소`:'';
+    return `<div class="history-item"><div><b>${escapeHtml(x.categoryLabel)} · ${escapeHtml(x.item)}</b><div class="meta">${won(x.qty)}개 판매 · 개당 ${won(x.price)} 메소${cost}</div>${memo}</div><div class="income-positive">+${koreanMeso(value)}</div></div>`
   }).join('')||'<div class="muted" style="margin-top:14px">아직 기록이 없습니다.</div>';
 }
 function renderPriceList(){
@@ -133,21 +169,38 @@ document.querySelector('#incomeItem').addEventListener('change',renderIncomeForm
 document.querySelectorAll('[data-sale]').forEach(b=>b.addEventListener('click',()=>{
   state.saleState=b.dataset.sale;
   document.querySelectorAll('[data-sale]').forEach(x=>x.classList.toggle('active',x===b));
+  renderIncomeForm();
 }));
+document.querySelectorAll('.money-input').forEach(input=>input.addEventListener('input',()=>{formatMoneyInput(input);updateIncomePreview()}));
+document.querySelector('#incomeQty').addEventListener('input',updateIncomePreview);
 document.querySelector('#incomeForm').addEventListener('submit',e=>{
   e.preventDefault();
   const category=document.querySelector('#incomeCategory').value;
   const item=document.querySelector('#incomeItem').value;
   const labels={hunt:'재획',gather:'채집',drop:'드랍·기타'};
+  const common={id:crypto.randomUUID(),date:new Date().toLocaleString('ko-KR'),weekId:currentWeekKey(),category,categoryLabel:labels[category],item,memo:document.querySelector('#incomeMemo').value.trim(),createdAt:Date.now()};
   if(item==='메소'){
     const amount=n(document.querySelector('#mesoAmount').value); if(!amount)return;
-    state.incomes.push({id:crypto.randomUUID(),category,categoryLabel:labels[category],item,amount,saleState:'direct',createdAt:Date.now()});
+    state.incomes.push({...common,recordType:'income',amount,netIncome:amount,saleState:'direct'});
     document.querySelector('#mesoAmount').value='';
   }else{
-    const qty=n(document.querySelector('#incomeQty').value),price=n(document.querySelector('#incomePrice').value);
-    state.incomes.push({id:crypto.randomUUID(),category,categoryLabel:labels[category],item,qty,price,saleState:state.saleState,createdAt:Date.now()});
+    const qty=n(document.querySelector('#incomeQty').value); if(!Number.isInteger(qty)||qty<1)return;
+    if(state.saleState!=='sold'){
+      state.incomes.push({...common,recordType:'acquired',qty,quantity:qty,source:document.querySelector('#incomeSource').value.trim(),netIncome:0,saleState:'acquired'});
+    }else{
+      const price=n(document.querySelector('#incomePrice').value),materialCost=item==='소형 재물 획득의 비약'?n(document.querySelector('#materialCost').value):0,grossIncome=qty*price;
+      if(!price||materialCost>grossIncome)return;
+      state.incomes.push({...common,recordType:'sold',qty,quantity:qty,price,unitPrice:price,grossIncome,materialCost,netIncome:grossIncome-materialCost,saleState:'sold'});
+    }
   }
+  document.querySelector('#incomeQty').value='1';
+  document.querySelector('#incomePrice').value='';
+  document.querySelector('#materialCost').value='';
+  document.querySelector('#incomeSource').value='';
+  document.querySelector('#incomeMemo').value='';
+  document.querySelectorAll('.money-hint').forEach(x=>x.textContent='');
   save();
+  renderIncomeForm();
 });
 document.querySelector('#resetAll').addEventListener('click',()=>{
   if(confirm('모든 저장 데이터를 초기화할까요?')){localStorage.removeItem(KEY);location.reload()}
