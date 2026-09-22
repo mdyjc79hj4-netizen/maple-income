@@ -1,150 +1,78 @@
 <!doctype html>
 <html lang="ko">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#07121c">
-<title>메기 · 메이플 수익 관리</title>
-<link rel="stylesheet" href="./style.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b141b">
+  <title>메기 · 메이플 수익 관리</title>
+  <link rel="stylesheet" href="./style.css">
+  <script src="./app.js" defer></script>
 </head>
 <body>
 <div class="app">
   <header class="top">
-    <div>
-      <h1>메기</h1>
-      <div class="sub">입력 중인 주차 · <span id="weekLabel"></span></div>
-    </div>
-    <div class="device-save">이 기기에 자동 저장</div>
+    <div class="brand-row"><h1><span class="brand-mark" aria-hidden="true">m.</span>메기</h1><span class="device-save"><i></i>이 기기에 저장</span></div>
+    <div class="header-stats"><div><small>총수익</small><strong id="headerTotal">0</strong></div><div><small>이번 주</small><strong id="headerWeek">0</strong></div></div>
+    <p class="sub" id="weekLabel"></p>
   </header>
-
   <main>
-    <section class="week-card">
-      <div class="label">조회 주차 · 목요일 ~ 수요일</div>
+    <section class="week-card" aria-label="주차 조회">
+      <label for="weekSelect">조회 주차 <span>목요일 ~ 수요일</span></label>
       <select id="weekSelect"></select>
-      <div class="muted">진행 중 · 현지 시간 목요일 00:00에 자동 마감</div>
+      <div class="week-footer"><small id="weekStatus"></small><button id="returnCurrent" class="text-button hidden">이번 주로</button></div>
     </section>
-
-    <section class="summary-main">
-      <div class="label mint">주차 총수익</div>
-      <div class="big" id="totalIncome">0</div>
-      <div class="mint" id="totalIncomeText">0 메소</div>
-      <div class="muted">완료한 보스(모든 주기)와 판매 완료 수익의 합계</div>
-    </section>
-
-    <section class="metric-grid">
-      <div class="metric"><b id="bossIncome">0</b><span>0 메소</span><small>주간 보스</small></div>
-      <div class="metric"><b id="huntIncome">0</b><span>0 메소</span><small>재획</small></div>
-      <div class="metric"><b id="gatherIncome">0</b><span>0 메소</span><small>채집</small></div>
-      <div class="metric"><b id="dropIncome">0</b><span>0 메소</span><small>드랍·기타</small></div>
-    </section>
-
-    <section class="panel" id="summaryTab">
-      <div class="panel-head">
-        <div>
-          <h2>캐릭터별 현황</h2>
-          <div class="muted">완료한 보스만 합산됩니다.</div>
-        </div>
-        <button class="green" data-open-income>수익 입력</button>
-      </div>
-      <div id="characterList"></div>
-      <button class="ghost full" id="addCharacter">+ 캐릭터 추가</button>
-    </section>
-
-    <section class="panel hidden" id="bossTab">
-      <div class="panel-head">
-        <div><h2>주간 보스</h2><div class="muted">캐릭터별 난이도 설정 후 체크합니다.</div></div>
-      </div>
+    <p id="status" role="status" aria-live="polite"></p>
+    <div data-page="summary" id="summaryTab">
+      <section class="summary-main">
+        <div class="eyebrow" id="summaryTitle">이번 주 수익</div>
+        <div class="big" id="totalIncome">0</div><div class="muted" id="totalIncomeText">0 메소</div>
+        <div class="metric-grid" id="metrics"></div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><div><h2>캐릭터별 현황</h2><p class="muted">이번 주의 작은 성과를 한눈에.</p></div><button class="green" data-open-income>+ 수익 입력</button></div>
+        <div id="characterList"></div><button class="ghost full" id="addCharacter">+ 캐릭터 추가</button>
+      </section>
+    </div>
+    <section class="panel hidden" data-page="boss" id="bossTab">
+      <div class="panel-head"><div><h2>주간 보스</h2><p class="muted">완료한 보스의 내 수익만 반영해요.</p></div></div>
+      <div class="seg filters" role="group" aria-label="보스 완료 필터"><button data-filter="pending" class="active" aria-pressed="true">미완료</button><button data-filter="all" aria-pressed="false">전체</button><button data-filter="done" aria-pressed="false">완료</button></div>
       <div id="bossEditor"></div>
+      <p class="footnote">난이도·인원·가격을 바꾸면 완료 체크가 해제됩니다. 검은 마법사도 완료를 기록한 주차 수익에 포함됩니다.</p>
     </section>
-
-    <section class="panel hidden" id="incomeTab">
-      <div class="panel-head">
-        <div><h2>수익 입력</h2><div class="muted">메소는 저장 즉시 수익에 반영됩니다.</div></div>
-      </div>
-      <form id="incomeForm" class="form">
-        <label>카테고리
-          <select id="incomeCategory">
-            <option value="hunt">재획</option>
-            <option value="gather">채집</option>
-            <option value="drop">드랍·기타</option>
-          </select>
-        </label>
-        <label>항목
-          <select id="incomeItem"></select>
-        </label>
-        <div id="saleStateWrap">
-          <div class="seg" role="group" aria-label="기록 유형">
-            <button type="button" data-sale="acquired" class="active">획득</button>
-            <button type="button" data-sale="sold">판매</button>
-          </div>
-          <div class="hint">획득은 수량만 저장되고, 판매한 금액만 주간 수익에 반영됩니다.</div>
-        </div>
-        <label id="qtyWrap">수량
-          <input id="incomeQty" type="number" inputmode="numeric" min="0" value="1">
-        </label>
-        <label id="priceWrap">개당 판매가
-          <input id="incomePrice" class="money-input" type="text" inputmode="numeric" placeholder="6,500,000">
-          <small class="money-hint" id="incomePriceHint"></small>
-        </label>
-        <label id="mesoWrap" class="hidden">획득 메소
-          <input id="mesoAmount" class="money-input" type="text" inputmode="numeric" placeholder="82,000,000">
-          <small class="money-hint" id="mesoAmountHint"></small>
-        </label>
-        <label id="costWrap" class="hidden">소재비 총액
-          <input id="materialCost" class="money-input" type="text" inputmode="numeric" placeholder="12,000,000">
-          <small class="money-hint" id="materialCostHint"></small>
-        </label>
-        <label id="sourceWrap">획득 경로
-          <input id="incomeSource" placeholder="예: 재획, 채집, 보스 드랍">
-        </label>
-        <label>메모
-          <input id="incomeMemo" placeholder="선택 입력">
-        </label>
-        <div class="income-result" id="incomeResult" aria-live="polite">
-          <span id="incomeResultLabel">수익 반영액</span>
-          <strong id="incomeResultValue">0 메소</strong>
-          <small id="incomeResultDetail"></small>
-        </div>
+    <section class="panel hidden" data-page="income" id="incomeTab">
+      <div class="panel-head"><div><h2>수익 입력</h2><p class="muted">메소는 바로, 아이템은 판매했을 때.</p></div></div>
+      <p id="incomeReadOnly" class="notice hidden">과거 주차 기록은 읽기 전용입니다.</p>
+      <form id="incomeForm"><fieldset id="incomeFields" class="form">
+        <div class="form-pair"><label>카테고리<select id="incomeCategory"><option value="hunt">재획</option><option value="gather">채집</option><option value="drop">드랍·기타</option></select></label><label>항목<select id="incomeItem"></select></label></div>
+        <label id="customItemWrap" class="hidden">아이템명 <small class="muted">선택 입력</small><input id="customItem" maxlength="80" placeholder="예: 몽환의 벨트"></label>
+        <div id="saleStateWrap"><div class="seg" role="group" aria-label="기록 유형"><button type="button" data-sale="acquired" class="active">획득</button><button type="button" data-sale="sold">판매</button></div><p class="hint">획득은 수량만 기록하고, 판매할 때 수익에 반영해요.</p></div>
+        <label id="mesoWrap">획득 메소<input id="mesoAmount" class="money-input" type="text" inputmode="numeric" maxlength="21" placeholder="82,000,000"><small class="money-hint" id="mesoAmountHint"></small></label>
+        <label id="qtyWrap">수량<input id="incomeQty" type="number" inputmode="numeric" min="1" step="1" value="1"></label>
+        <label id="priceWrap">개당 판매가<input id="incomePrice" class="money-input" type="text" inputmode="numeric" maxlength="21" placeholder="6,500,000"><small class="money-hint" id="incomePriceHint"></small></label>
+        <label id="costWrap">소재비 총액 <small class="muted">없으면 비워두세요</small><input id="materialCost" class="money-input" type="text" inputmode="numeric" maxlength="21" placeholder="0"><small class="money-hint" id="materialCostHint"></small></label>
+        <label id="sourceWrap">획득 경로<input id="incomeSource" maxlength="120" placeholder="예: 재획, 채집, 보스 드랍"></label>
+        <label>메모 <small class="muted">선택 입력</small><input id="incomeMemo" maxlength="300" placeholder="기억하고 싶은 내용"></label>
+        <div class="income-result" id="incomeResult" aria-live="polite"><span id="incomeResultLabel">즉시 반영할 수익</span><strong id="incomeResultValue">0 메소</strong><small id="incomeResultDetail"></small></div>
         <button class="primary" id="incomeSubmit" type="submit">메소 수익 기록</button>
-      </form>
-      <div id="incomeHistory" class="history"></div>
+      </fieldset></form>
+      <div class="section-divider"><h3>수익 기록</h3><span class="muted">최근 기록부터</span></div><div id="incomeHistory" class="history"></div>
     </section>
-
-    <section class="panel hidden" id="priceTab">
-      <h2>가격표</h2>
-      <div class="muted">자주 쓰는 아이템 기준가를 저장할 수 있습니다.</div>
-      <div id="priceList" class="history"></div>
+    <section class="panel hidden" data-page="price" id="priceTab">
+      <h2>가격표</h2><p class="muted">이 기기에서 기록한 최근 판매 단가</p><div id="priceList" class="history"></div>
+      <div class="section-divider"><h3>보스 결정석 기준</h3></div><p class="muted">2026년 9월 17일 공식 업데이트 기준입니다. 기존에 입력한 가격은 유지하며, 보스 목록에서 직접 수정할 수 있습니다.</p>
+      <a href="https://gi.maplestory.nexon.com/Update/813" target="_blank" rel="noopener noreferrer">공식 가격 변경 안내 ↗</a>
+      <p class="footnote">검은 마법사 변경 가격은 10월 1일부터 새 등록·난이도 변경 시 적용됩니다.</p>
     </section>
-
-    <section class="panel hidden" id="settingsTab">
-      <h2>설정</h2>
-      <div class="settings-row">
-        <div><b>로컬 저장</b><div class="muted">현재 브라우저의 localStorage에 저장됩니다.</div></div>
-        <button class="danger" id="resetAll">전체 초기화</button>
-      </div>
+    <section class="panel hidden" data-page="settings" id="settingsTab">
+      <h2>설정</h2><p class="muted">기록은 현재 브라우저에 저장됩니다.</p>
+      <div class="settings-block"><h3>기록 보관</h3><p class="muted">목요일 00:00에 지난 주를 보관합니다. 캐릭터·보스 구성·난이도·파티 인원·프리셋은 다음 주에도 유지됩니다.</p><p class="muted" id="migrationNote"></p><p class="pending" id="recoveryNote"></p><button id="exportData" class="ghost full">전체 기록 백업 내려받기</button><button id="exportOriginal" class="ghost full">이전 버전 원본 내려받기</button></div>
+      <div class="settings-block"><h3>데이터 초기화</h3><p class="muted">현재 기록과 과거 주차를 모두 삭제합니다.</p><button class="danger" id="resetAll">전체 초기화</button></div>
     </section>
   </main>
-
-  <nav class="tabs">
-    <button data-tab="summary" class="active"><span>⌂</span>요약</button>
-    <button data-tab="boss"><span>✓</span>주간보스</button>
-    <button data-tab="income"><span>＋</span>수익입력</button>
-    <button data-tab="price"><span>₩</span>가격표</button>
-    <button data-tab="settings"><span>⚙</span>설정</button>
-  </nav>
+  <nav class="tabs" aria-label="메인 메뉴"><button data-tab="summary" class="active" aria-current="page"><span aria-hidden="true">⌂</span>요약</button><button data-tab="boss"><span aria-hidden="true">✓</span>주간보스</button><button data-tab="income"><span aria-hidden="true">＋</span>수익입력</button><button data-tab="price"><span aria-hidden="true">₩</span>가격표</button><button data-tab="settings"><span aria-hidden="true">⚙</span>설정</button></nav>
 </div>
-
-<dialog id="characterDialog">
-  <form method="dialog" class="dialog-card" id="characterForm">
-    <h3>캐릭터 추가</h3>
-    <label>캐릭터 이름<input id="characterName" required placeholder="본캐"></label>
-    <div class="dialog-actions">
-      <button value="cancel" class="ghost">취소</button>
-      <button value="default" class="primary" id="saveCharacter">추가</button>
-    </div>
-  </form>
-</dialog>
-
-<script src="./app.js"></script>
+<dialog id="characterDialog" aria-labelledby="characterTitle"><form id="characterForm" class="dialog-card"><h2 id="characterTitle">캐릭터 추가</h2><label>캐릭터 이름<input id="characterName" required maxlength="40" placeholder="본캐"></label><label>보스 프리셋<select id="characterPreset"></select></label><div id="customBosses" class="check-list hidden"></div><div class="dialog-actions"><button type="button" data-close="characterDialog" class="ghost">취소</button><button type="submit" class="primary">추가</button></div></form></dialog>
+<dialog id="bossDialog" aria-labelledby="bossDialogTitle"><form id="bossForm" class="dialog-card"><h2 id="bossDialogTitle">보스 등록</h2><label>보스 선택<select id="bossToAdd"></select></label><div class="dialog-actions"><button type="button" data-close="bossDialog" class="ghost">취소</button><button type="submit" class="primary">등록</button></div></form></dialog>
+<noscript>메기를 사용하려면 브라우저에서 JavaScript를 켜 주세요.</noscript>
 </body>
 </html>
