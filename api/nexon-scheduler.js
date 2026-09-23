@@ -94,6 +94,7 @@ function sanitizeScheduler(payload, ocid, requestedDate = '') {
     throw Object.assign(new Error('NEXON 스케줄러 응답 구조가 변경되었습니다.'), {status: 502});
   }
   const bossContents = payload.boss_contents.filter(item => item && typeof item === 'object');
+  const diagnosticContents = bossContents.map((item, index) => ({item, index})).sort((left, right) => Number(parseFlag(right.item.complete_flag)) - Number(parseFlag(left.item.complete_flag)) || left.index - right.index);
   return {
     ok: true,
     fetchedAt: new Date().toISOString(),
@@ -113,7 +114,7 @@ function sanitizeScheduler(payload, ocid, requestedDate = '') {
       complete: parseFlag(item.complete_flag)
     })),
     diagnostics: {
-      samples: bossContents.slice(0, 20).map(diagnosticSample)
+      samples: diagnosticContents.slice(0, 20).map(({item}) => diagnosticSample(item))
     }
   };
 }

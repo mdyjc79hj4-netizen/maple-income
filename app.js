@@ -37,7 +37,10 @@ const bossIds = {
 const bossNames = Object.fromEntries(Object.entries(bossIds).map(([name, id]) => [id, name]));
 const bossAliases = {'세렌': '선택받은 세렌', '칼로스': '감시자 칼로스'};
 const nexonBossAliases = {'블러디 퀸': '블러디퀸', '세렌': '선택받은 세렌', '칼로스': '감시자 칼로스'};
-const nexonDifficulties = {'이지': '이지', '노멀': '노멀', '노말': '노멀', '하드': '하드', '카오스': '카오스', '익스트림': '익스트림'};
+const nexonDifficulties = {
+  '이지': '이지', '노멀': '노멀', '노말': '노멀', '하드': '하드', '카오스': '카오스', '익스트림': '익스트림',
+  easy: '이지', normal: '노멀', hard: '하드', chaos: '카오스', extreme: '익스트림'
+};
 const legacyBossNames = ['스우', '데미안', '가디언 엔젤 슬라임', '루시드', '윌', '더스크', '듄켈', '진 힐라', '검은 마법사', '세렌', '칼로스', '카링'];
 const presetGroups = {
   all: {name: '전체 보스', bosses: presetBosses(Object.keys(bossDB))},
@@ -175,7 +178,12 @@ function resetBossWeeklyState(boss) {
 function normalizeNexonText(value) { return String(value ?? '').trim().replace(/\s+/g, ' '); }
 function normalizeNexonDifficulty(value) {
   const normalized = normalizeNexonText(value).replace(/\s+/g, '');
-  return nexonDifficulties[normalized] || normalized;
+  return nexonDifficulties[normalized.toLowerCase()] || normalized;
+}
+function isNexonWeeklyCycle(value) {
+  const normalized = normalizeNexonText(value).replace(/\s+/g, '').toLowerCase();
+  if (['bossdaily', 'daily', '일간'].includes(normalized)) return false;
+  return true;
 }
 function nexonFlag(value) { return value === true || (typeof value === 'string' && value.trim().toLowerCase() === 'true'); }
 function mapNexonBossEntry(entry) {
@@ -216,7 +224,7 @@ function applyNexonSchedulerState(data, characterId, response, checkedAt = new D
     fetched: response.bosses.length,
     apiCompleted: response.bosses.filter(entry => nexonFlag(entry?.complete ?? entry?.complete_flag)).length,
     matched: 0, matchedCompleted: 0, autoCompleted: 0,
-    unknown: [], difficultyMismatch: [], ambiguous: [], notConfigured: [], localNotFound: []
+    unknown: [], difficultyMismatch: [], ambiguous: [], notConfigured: [], localNotFound: [], ignoredCycle: []
   };
   const localBosses = (character.bosses || []).map((boss, index) => ({boss, index}));
   const matches = new Map(), unknownNames = new Set(), seenApiBossIds = new Set();
@@ -228,6 +236,10 @@ function applyNexonSchedulerState(data, characterId, response, checkedAt = new D
         unknownNames.add(name);
         diagnostics.unknown.push({contentName: name, difficulty: normalizeNexonDifficulty(entry?.difficulty), cycle: normalizeNexonText(entry?.cycle)});
       }
+      continue;
+    }
+    if (!isNexonWeeklyCycle(value.cycle)) {
+      diagnostics.ignoredCycle.push({bossId: value.bossId, contentName: value.contentName, difficulty: value.difficulty, cycle: value.cycle, complete: value.complete});
       continue;
     }
     seenApiBossIds.add(value.bossId);
@@ -511,7 +523,8 @@ function nexonDiagnosticGroups(result) {
     difficultyMismatch: result?.difficultyMismatch || [],
     ambiguous: result?.ambiguous || [],
     localMissing: result?.notConfigured || [],
-    apiMissing: result?.localNotFound || []
+    apiMissing: result?.localNotFound || [],
+    ignoredCycle: result?.ignoredCycle || []
   };
 }
 function diagnosticRawLabel(value, type) {
@@ -522,6 +535,7 @@ function diagnosticEntryLabel(key, item) {
   const name = item.contentName || item.name || item.bossId || '(이름 없음)';
   if (key === 'difficultyMismatch') return `${name} · API ${item.apiDifficulty || '(없음)'} · 로컬 ${(item.localDifficulties || []).join(', ') || '(없음)'}`;
   if (key === 'ambiguous') return `${name} · 로컬 ${(item.localDifficulties || []).join(', ') || '(없음)'}`;
+  if (key === 'ignoredCycle') return `${name} · ${item.difficulty || '(난이도 없음)'} · ${item.cycle || '(cycle 없음)'}`;
   return `${name}${item.difficulty ? ` · ${item.difficulty}` : ''}`;
 }
 function renderNexonDiagnostics() {
@@ -603,7 +617,7 @@ async function syncAllNexonCharacters() {
   if (!linked.length) { nexonApiState = {status: 'error', message: '연동된 NEXON 캐릭터가 없습니다.'}; renderNexonSettings(); return; }
   nexonApiState = {status: 'checking', message: '보스 기록 확인 중…', diagnostics: null}; renderNexonSettings();
   let checked = 0, cooldown = 0;
-  const total = {fetched: 0, apiCompleted: 0, matched: 0, autoCompleted: 0, unknown: [], difficultyMismatch: [], ambiguous: [], notConfigured: [], localNotFound: [], diagnosticSamples: []};
+  const total = {fetched: 0, apiCompleted: 0, matched: 0, autoCompleted: 0, unknown: [], difficultyMismatch: [], ambiguous: [], notConfigured: [], localNotFound: [], ignoredCycle: [], diagnosticSamples: []};
   try {
     for (const character of linked) {
       const result = await syncNexonCharacter(character.id);
@@ -611,7 +625,7 @@ async function syncAllNexonCharacters() {
       else {
         checked++;
         for (const key of ['fetched', 'apiCompleted', 'matched', 'autoCompleted']) total[key] += result[key] || 0;
-        for (const key of ['unknown', 'difficultyMismatch', 'ambiguous', 'notConfigured', 'localNotFound']) total[key].push(...(result[key] || []));
+        for (const key of ['unknown', 'difficultyMismatch', 'ambiguous', 'notConfigured', 'localNotFound', 'ignoredCycle']) total[key].push(...(result[key] || []));
         total.diagnosticSamples.push(...(result.diagnosticSamples || []).slice(0, Math.max(0, 20 - total.diagnosticSamples.length)));
       }
     }

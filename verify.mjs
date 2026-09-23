@@ -80,6 +80,17 @@ for (const [name, bossId] of [['  블러디   퀸  ', 'bloodyqueen'], ['세렌',
 }
 context.__nexonEntry = {content_name: '스우', difficulty: ' 노말 ', cycle: '일간', registration_flag: 'false', complete_flag: 'true'};
 assert.deepEqual(json('mapNexonBossEntry(__nexonEntry)'), {bossId: 'lotus', contentName: '스우', difficulty: '노멀', cycle: '일간', registered: false, complete: true});
+const englishDifficulties = {easy: '이지', normal: '노멀', hard: '하드', chaos: '카오스', extreme: '익스트림'};
+for (const [apiDifficulty, localDifficulty] of Object.entries(englishDifficulties)) {
+  context.__apiDifficulty = apiDifficulty;
+  assert.equal(run('normalizeNexonDifficulty(__apiDifficulty)'), localDifficulty);
+  context.__apiDifficulty = apiDifficulty.toUpperCase();
+  assert.equal(run('normalizeNexonDifficulty(__apiDifficulty)'), localDifficulty);
+}
+context.__apiDifficulty = ' hard ';
+assert.equal(run('normalizeNexonDifficulty(__apiDifficulty)'), '하드');
+assert.equal(run("isNexonWeeklyCycle('bossWeekly')"), true);
+assert.equal(run("isNexonWeeklyCycle('bossDaily')"), false);
 
 const schedulerState = {
   version: 5, updatedAt: '2026-09-23T00:00:00.000Z', currentWeek: '2026-09-17~2026-09-23',
@@ -117,8 +128,70 @@ assert.equal(context.__schedulerState.characters[0].bosses[1].done, true);
 assert.equal(context.__schedulerState.characters[0].bosses[1].completionSource, 'manual');
 context.__appliedDiagnostics = appliedScheduler;
 assert.equal(run('nexonDiagnosticMessage(__appliedDiagnostics)'), 'NEXON 조회 4개 · 완료 2개 · 메기 매칭 2개 · 자동 완료 1개 · 매칭 실패 1개');
-assert.deepEqual(json('Object.keys(nexonDiagnosticGroups(__appliedDiagnostics))'), ['unknownName', 'difficultyMismatch', 'ambiguous', 'localMissing', 'apiMissing']);
+assert.deepEqual(json('Object.keys(nexonDiagnosticGroups(__appliedDiagnostics))'), ['unknownName', 'difficultyMismatch', 'ambiguous', 'localMissing', 'apiMissing', 'ignoredCycle']);
 assert.equal(run('nexonDiagnosticGroups(__appliedDiagnostics).unknownName.length'), 1);
+
+// The live API's English difficulty codes match the app's Korean canonical values.
+context.__englishDifficultyState = {
+  ...structuredClone(schedulerState),
+  characters: [{id: 'c1', name: '본캐', bosses: [
+    {bossId: 'lucid', name: '루시드', difficulty: '이지', party: 1, price: 100, done: false},
+    {bossId: 'damien', name: '데미안', difficulty: '노멀', party: 1, price: 100, done: false},
+    {bossId: 'lotus', name: '스우', difficulty: '하드', party: 1, price: 100, done: false},
+    {bossId: 'guardian-angel-slime', name: '가디언 엔젤 슬라임', difficulty: '카오스', party: 1, price: 100, done: false},
+    {bossId: 'black-mage', name: '검은 마법사', difficulty: '익스트림', party: 1, price: 100, done: false}
+  ]}]
+};
+context.__englishDifficultyResponse = {
+  ...structuredClone(schedulerResponse),
+  bosses: [
+    {contentName: '루시드', difficulty: 'easy', cycle: 'bossWeekly', complete: 'false'},
+    {contentName: '데미안', difficulty: 'normal', cycle: 'bossWeekly', complete: 'false'},
+    {contentName: '스우', difficulty: 'HARD', cycle: 'bossWeekly', complete: 'false'},
+    {contentName: '가디언 엔젤 슬라임', difficulty: 'chaos', cycle: 'bossWeekly', complete: 'false'},
+    {contentName: '검은 마법사', difficulty: 'extreme', cycle: 'bossWeekly', complete: 'false'}
+  ]
+};
+const englishDifficultyResult = json("applyNexonSchedulerState(__englishDifficultyState, 'c1', __englishDifficultyResponse, '2026-09-23T01:01:00.000Z')");
+assert.equal(englishDifficultyResult.matched, 5);
+assert.equal(englishDifficultyResult.difficultyMismatch.length, 0);
+assert.equal(englishDifficultyResult.notConfigured.length, 0);
+assert.equal(englishDifficultyResult.localNotFound.length, 0);
+assert.equal(context.__englishDifficultyState.characters[0].bosses.some(boss => boss.done), false);
+
+// Multiple API difficulties for one boss only apply the exact local difficulty.
+context.__multiDifficultyState = structuredClone(schedulerState);
+context.__multiDifficultyState.characters[0].bosses = [structuredClone(schedulerState.characters[0].bosses[0])];
+context.__multiDifficultyResponse = {...structuredClone(schedulerResponse), bosses: [
+  {contentName: '스우', difficulty: 'normal', cycle: 'bossWeekly', complete: 'false'},
+  {contentName: '스우', difficulty: ' hard ', cycle: 'bossWeekly', complete: 'true'},
+  {contentName: '스우', difficulty: 'extreme', cycle: 'bossWeekly', complete: 'true'}
+]};
+const multiDifficultyResult = json("applyNexonSchedulerState(__multiDifficultyState, 'c1', __multiDifficultyResponse, '2026-09-23T01:01:30.000Z')");
+assert.equal(multiDifficultyResult.matched, 1);
+assert.equal(multiDifficultyResult.matchedCompleted, 1);
+assert.equal(multiDifficultyResult.difficultyMismatch.length, 2);
+assert.equal(context.__multiDifficultyState.characters[0].bosses[0].done, true);
+assert.equal(context.__multiDifficultyState.characters[0].bosses[0].completionSource, 'nexon-api');
+assert.equal(context.__multiDifficultyState.characters[0].bosses[0].completedIncome, 24450000);
+
+// Known daily scheduler rows are diagnostic-only and never auto-complete a weekly boss.
+context.__dailyCycleState = structuredClone(schedulerState);
+context.__dailyCycleState.characters[0].bosses = [structuredClone(schedulerState.characters[0].bosses[0])];
+context.__dailyCycleResponse = {...structuredClone(schedulerResponse), bosses: [{contentName: '스우', difficulty: 'hard', cycle: 'bossDaily', complete: 'true'}]};
+const dailyCycleResult = json("applyNexonSchedulerState(__dailyCycleState, 'c1', __dailyCycleResponse, '2026-09-23T01:01:40.000Z')");
+assert.equal(dailyCycleResult.matched, 0);
+assert.equal(dailyCycleResult.ignoredCycle.length, 1);
+assert.equal(context.__dailyCycleState.characters[0].bosses[0].done, false);
+
+// Unknown names remain diagnostic-only even when the API marks them complete.
+context.__unknownOnlyState = structuredClone(schedulerState);
+const unknownBossesBefore = JSON.stringify(context.__unknownOnlyState.characters[0].bosses);
+context.__unknownOnlyResponse = {...structuredClone(schedulerResponse), bosses: [{contentName: '시즌 보스 메이린', difficulty: 'hard', cycle: 'bossWeekly', complete: 'true'}]};
+const unknownOnlyResult = json("applyNexonSchedulerState(__unknownOnlyState, 'c1', __unknownOnlyResponse, '2026-09-23T01:01:50.000Z')");
+assert.equal(unknownOnlyResult.unknown.length, 1);
+assert.equal(unknownOnlyResult.matched, 0);
+assert.equal(JSON.stringify(context.__unknownOnlyState.characters[0].bosses), unknownBossesBefore);
 
 // Missing difficulty is safe only when the local bossId has one candidate.
 context.__missingDifficultyState = structuredClone(schedulerState);
@@ -193,7 +266,7 @@ assert.equal(JSON.stringify(context.__schedulerState.characters[0].bosses), boss
 context.__manualState = structuredClone(schedulerState);
 context.__manualState.characters[0].bosses[0].manualOverride = false;
 context.__manualState.characters[0].bosses[0].completionSource = 'manual';
-context.__manualResponse = {date: '2026-09-23', character: schedulerResponse.character, bosses: [{contentName: '스우', difficulty: '하드', cycle: '주간', complete: true}]};
+context.__manualResponse = {date: '2026-09-23', character: schedulerResponse.character, bosses: [{contentName: '스우', difficulty: 'hard', cycle: 'bossWeekly', complete: 'true'}]};
 const manualResult = json("applyNexonSchedulerState(__manualState, 'c1', __manualResponse, '2026-09-23T02:00:00.000Z')");
 assert.equal(context.__manualState.characters[0].bosses[0].apiCompleted, true);
 assert.equal(context.__manualState.characters[0].bosses[0].done, false);
@@ -396,6 +469,12 @@ assert.deepEqual(diagnosticLimit.diagnostics.samples[1], {
   rawCompleteType: 'number', rawCompleteValue: 1, rawRegistrationType: 'null', rawRegistrationValue: null
 });
 assert.deepEqual(nexonProxyInternals.diagnosticRaw({secret: true}), {type: 'object', value: '[unsupported]'});
+const prioritizedDiagnostics = nexonProxyInternals.sanitizeScheduler({boss_contents: [
+  {content_name: '미완료', complete_flag: 'false'},
+  {content_name: '완료', difficulty: 'hard', cycle: 'bossWeekly', complete_flag: 'true'}
+]}, 'ocid');
+assert.equal(prioritizedDiagnostics.diagnostics.samples[0].contentName, '완료');
+assert.equal(prioritizedDiagnostics.diagnostics.samples[0].complete, true);
 assert.equal(nexonProxyInternals.parseFlag(' true '), true);
 assert.equal(nexonProxyInternals.parseFlag('false'), false);
 assert.equal(sanitizedScheduler.mode, 'live');
