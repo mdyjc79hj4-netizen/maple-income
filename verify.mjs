@@ -120,6 +120,7 @@ assert.equal(appliedScheduler.apiCompleted, 2);
 assert.equal(appliedScheduler.matched, 2);
 assert.equal(appliedScheduler.matchedCompleted, 1);
 assert.equal(appliedScheduler.autoCompleted, 1);
+assert.equal(appliedScheduler.autoCompleted, appliedScheduler.completedItems.filter(item => item.result === 'matched-auto-completed').length);
 assert.equal(appliedScheduler.unknown[0].contentName, '알 수 없는 신규 보스');
 assert.equal(context.__schedulerState.characters[0].bosses[0].done, true);
 assert.equal(context.__schedulerState.characters[0].bosses[0].completionSource, 'nexon-api');
@@ -129,9 +130,9 @@ assert.equal(context.__schedulerState.characters[0].bosses[1].completionSource, 
 assert.equal(JSON.stringify(context.__schedulerState).includes('completedItems'), false);
 context.__appliedDiagnostics = appliedScheduler;
 assert.equal(run('nexonDiagnosticMessage(__appliedDiagnostics)'), 'NEXON 조회 4개 · 완료 2개 · 메기 매칭 2개 · 완료 매칭 1개 · 자동 완료 1개 · 매칭 실패 1개');
-assert.deepEqual(json('Object.keys(nexonDiagnosticGroups(__appliedDiagnostics))'), ['unknownName', 'difficultyMismatch', 'ambiguous', 'localMissing', 'apiMissing', 'ignoredCycle']);
+assert.deepEqual(json('Object.keys(nexonDiagnosticGroups(__appliedDiagnostics))'), ['unknownName', 'difficultyMismatch', 'ambiguous', 'localMissing', 'apiMissing', 'ignoredCycle', 'blockedByManualOverride']);
 assert.equal(run('nexonDiagnosticGroups(__appliedDiagnostics).unknownName.length'), 1);
-assert.deepEqual(appliedScheduler.completedItems.map(item => item.result), ['matched-auto-completed', 'unknown-name']);
+assert.deepEqual(appliedScheduler.completedItems.map(item => item.result).sort(), ['matched-auto-completed', 'unknown-name'].sort());
 assert.equal(run('nexonUserStatusMessage(__appliedDiagnostics)'), '주간 보스 1개를 자동 확인했습니다.');
 assert.equal(run('nexonUserStatusMessage({...__appliedDiagnostics, autoCompleted: 0})'), '새로 확인된 주간 보스가 없습니다.');
 assert.equal(run('nexonUserStatusMessage(__appliedDiagnostics, true)'), '최근 확인한 기록입니다.');
@@ -139,6 +140,20 @@ assert.equal(run("latestNexonCheckedAt([{nexonCharacter:{lastCheckedAt:'2026-09-
 assert.equal(run("nexonDefaultStatusMessage([{nexonCharacter:{ocid:'linked',lastCheckedAt:'2026-09-24T02:00:00.000Z'}}])"), '최신 상태');
 assert.equal(run('nexonDefaultStatusMessage([{id:"unlinked"}])'), '연동할 캐릭터를 선택해주세요.');
 assert.equal(JSON.stringify(context.__schedulerState).includes('diagnostics'), false);
+
+context.__duplicateUnknown = [
+  {character: '본캐', contentName: '힐라', difficulty: '노멀', cycle: 'bossWeekly'},
+  {character: '부캐1', contentName: '힐라', difficulty: '노멀', cycle: 'bossWeekly'},
+  {character: '부캐2', contentName: '힐라', difficulty: '노멀', cycle: 'bossWeekly'},
+  {character: '부캐3', contentName: '힐라', difficulty: '노멀', cycle: 'bossWeekly'}
+];
+const groupedUnknown = json("groupNexonDiagnosticItems('unknownName', __duplicateUnknown)");
+assert.equal(groupedUnknown.length, 1);
+assert.equal(groupedUnknown[0].count, 4);
+assert.deepEqual(groupedUnknown[0].characters, ['본캐', '부캐1', '부캐2', '부캐3']);
+assert.equal(run("groupedDiagnosticEntryLabel('unknownName', groupNexonDiagnosticItems('unknownName', __duplicateUnknown)[0])"), '힐라 · 노멀 · 4개 캐릭터');
+assert.equal(run("nexonDiagnosticGroupLabels.unknownName"), '지원하지 않는 보스');
+assert.equal(run("nexonDiagnosticGroupLabels.blockedByManualOverride"), '수동 해제 보호');
 
 // Multi-character aggregation collects every sample before completion-first limiting.
 context.__diagnosticTotal = {
@@ -202,7 +217,7 @@ const multiDifficultyResult = json("applyNexonSchedulerState(__multiDifficultySt
 assert.equal(multiDifficultyResult.matched, 1);
 assert.equal(multiDifficultyResult.matchedCompleted, 1);
 assert.equal(multiDifficultyResult.difficultyMismatch.length, 2);
-assert.deepEqual(multiDifficultyResult.completedItems.map(item => item.result), ['matched-auto-completed', 'difficulty-mismatch']);
+assert.deepEqual(multiDifficultyResult.completedItems.map(item => item.result).sort(), ['matched-auto-completed', 'difficulty-mismatch'].sort());
 assert.equal(context.__multiDifficultyState.characters[0].bosses[0].done, true);
 assert.equal(context.__multiDifficultyState.characters[0].bosses[0].completionSource, 'nexon-api');
 assert.equal(context.__multiDifficultyState.characters[0].bosses[0].completedIncome, 24450000);
@@ -301,6 +316,8 @@ assert.equal(context.__historicalIsoState.characters[0].bosses[0].done, true);
 const bossesBeforeRepeat = JSON.stringify(context.__schedulerState.characters[0].bosses);
 const repeatedScheduler = json("applyNexonSchedulerState(__schedulerState, 'c1', __schedulerResponse, '2026-09-23T01:05:00.000Z')");
 assert.equal(repeatedScheduler.bossesChanged, false);
+assert.equal(repeatedScheduler.autoCompleted, 0);
+assert.equal(repeatedScheduler.completedItems.find(item => item.contentName === '스우').result, 'matched-already-done');
 assert.equal(JSON.stringify(context.__schedulerState.characters[0].bosses), bossesBeforeRepeat);
 
 // Manual incomplete override wins over an API completion until weekly reset.
@@ -324,6 +341,7 @@ context.__alreadyDoneState = structuredClone(schedulerState);
 context.__alreadyDoneResponse = {...structuredClone(schedulerResponse), bosses: [{contentName: '데미안', difficulty: 'hard', cycle: 'bossWeekly', complete: 'true'}]};
 const alreadyDoneResult = json("applyNexonSchedulerState(__alreadyDoneState, 'c1', __alreadyDoneResponse, '2026-09-23T02:01:00.000Z')");
 assert.equal(alreadyDoneResult.completedItems[0].result, 'matched-already-done');
+assert.equal(alreadyDoneResult.autoCompleted, 0);
 assert.equal(context.__alreadyDoneState.characters[0].bosses[1].done, true);
 
 // Cloud field-level merges are normalized so a manual incomplete override cannot be revived by API metadata.
@@ -580,6 +598,11 @@ assert.doesNotMatch(html, /<details id="nexonDiagnostics"[^>]*\sopen(?:\s|=|>)/)
 assert.match(html, /id="nexonLastChecked"/);
 assert.match(css, /\.nexon-diagnostic-item/);
 assert.match(css, /\.nexon-sync-summary/);
+assert.match(source, /<details class="nexon-diagnostic-group"><summary>/);
+assert.doesNotMatch(source, /<details class="nexon-diagnostic-group" open/);
+const diagnosticsRenderSource = source.slice(source.indexOf('function renderNexonDiagnostics'), source.indexOf('function renderNexonSettings'));
+assert.ok(diagnosticsRenderSource.indexOf('${completedHtml}') < diagnosticsRenderSource.indexOf('${summaryHtml}'));
+assert.ok(diagnosticsRenderSource.indexOf('${samplesHtml}') > diagnosticsRenderSource.indexOf('${groupHtml'));
 assert.match(source, /data-nexon-action="link"/);
 assert.match(source, /data-nexon-action="unlink"/);
 const originalNexonKey = process.env.NEXON_OPEN_API_KEY;

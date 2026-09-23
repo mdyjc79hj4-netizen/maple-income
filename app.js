@@ -238,7 +238,7 @@ function applyNexonSchedulerState(data, characterId, response, checkedAt = new D
     const value = mapNexonBossEntry(entry);
     if (!value) {
       const name = normalizeNexonText(entry?.contentName ?? entry?.content_name);
-      const unknownItem = {contentName: name, difficulty: normalizeNexonDifficulty(entry?.difficulty), cycle: normalizeNexonText(entry?.cycle)};
+      const unknownItem = {...diagnosticCharacter, contentName: name, difficulty: normalizeNexonDifficulty(entry?.difficulty), cycle: normalizeNexonText(entry?.cycle)};
       if (name && !unknownNames.has(name)) {
         unknownNames.add(name);
         diagnostics.unknown.push(unknownItem);
@@ -247,14 +247,14 @@ function applyNexonSchedulerState(data, characterId, response, checkedAt = new D
       continue;
     }
     if (!isNexonWeeklyCycle(value.cycle)) {
-      diagnostics.ignoredCycle.push({bossId: value.bossId, contentName: value.contentName, difficulty: value.difficulty, cycle: value.cycle, complete: value.complete});
+      diagnostics.ignoredCycle.push({...diagnosticCharacter, bossId: value.bossId, contentName: value.contentName, difficulty: value.difficulty, cycle: value.cycle, complete: value.complete});
       if (value.complete) addCompletedItem(value, 'ignored-cycle');
       continue;
     }
     seenApiBossIds.add(value.bossId);
     const candidates = localBosses.filter(item => item.boss.bossId === value.bossId);
     if (!candidates.length) {
-      diagnostics.notConfigured.push({contentName: value.contentName, difficulty: value.difficulty, cycle: value.cycle, complete: value.complete});
+      diagnostics.notConfigured.push({...diagnosticCharacter, contentName: value.contentName, difficulty: value.difficulty, cycle: value.cycle, complete: value.complete});
       if (value.complete) addCompletedItem(value, 'not-configured');
       continue;
     }
@@ -262,37 +262,36 @@ function applyNexonSchedulerState(data, characterId, response, checkedAt = new D
     if (value.difficulty) {
       const exact = candidates.filter(item => normalizeNexonDifficulty(item.boss.difficulty) === value.difficulty);
       if (exact.length === 1) target = exact[0];
-      else diagnostics.difficultyMismatch.push({bossId: value.bossId, contentName: value.contentName, apiDifficulty: value.difficulty, localDifficulties: candidates.map(item => item.boss.difficulty), complete: value.complete});
+      else diagnostics.difficultyMismatch.push({...diagnosticCharacter, bossId: value.bossId, contentName: value.contentName, apiDifficulty: value.difficulty, cycle: value.cycle, localDifficulties: candidates.map(item => item.boss.difficulty), complete: value.complete});
     } else if (candidates.length === 1) target = candidates[0];
-    else diagnostics.ambiguous.push({contentName: value.contentName, localDifficulties: candidates.map(item => item.boss.difficulty), complete: value.complete});
+    else diagnostics.ambiguous.push({...diagnosticCharacter, contentName: value.contentName, difficulty: value.difficulty, cycle: value.cycle, localDifficulties: candidates.map(item => item.boss.difficulty), complete: value.complete});
     if (!target) {
       if (value.complete) addCompletedItem(value, 'difficulty-mismatch');
       continue;
-    }
-    if (value.complete) {
-      const result = target.boss.manualOverride === false ? 'blocked-manual-override' : target.boss.done ? 'matched-already-done' : 'matched-auto-completed';
-      addCompletedItem(value, result);
-      if (result === 'blocked-manual-override') diagnostics.blockedByManualOverride.push({...diagnosticCharacter, contentName: value.contentName, difficulty: value.difficulty, cycle: value.cycle});
     }
     const previous = matches.get(target.index);
     matches.set(target.index, {boss: target.boss, api: {...value, complete: value.complete || !!previous?.api.complete}});
   }
   diagnostics.matched = matches.size;
   diagnostics.matchedCompleted = [...matches.values()].filter(match => match.api.complete).length;
-  diagnostics.localNotFound = localBosses.filter(item => !seenApiBossIds.has(item.boss.bossId)).map(item => ({bossId: item.boss.bossId, name: item.boss.name, difficulty: item.boss.difficulty}));
+  diagnostics.localNotFound = localBosses.filter(item => !seenApiBossIds.has(item.boss.bossId)).map(item => ({...diagnosticCharacter, bossId: item.boss.bossId, name: item.boss.name, difficulty: item.boss.difficulty}));
   let bossesChanged = false, newlyCompleted = 0;
   for (const {boss, api: apiBoss} of matches.values()) {
     const before = JSON.stringify(boss);
+    const wasDoneBefore = boss.done === true;
     const wasApiCompleted = boss.apiCompleted === true && boss.apiCheckedWeek === data.currentWeek;
     boss.apiCompleted = apiBoss.complete;
     boss.apiCheckedWeek = data.currentWeek;
     if (apiBoss.complete) {
+      const result = boss.manualOverride === false ? 'blocked-manual-override' : wasDoneBefore ? 'matched-already-done' : 'matched-auto-completed';
+      addCompletedItem(apiBoss, result);
+      if (result === 'blocked-manual-override') diagnostics.blockedByManualOverride.push({...diagnosticCharacter, contentName: apiBoss.contentName, difficulty: apiBoss.difficulty, cycle: apiBoss.cycle});
+      if (result === 'matched-auto-completed') diagnostics.autoCompleted++;
       if (!wasApiCompleted) boss.apiCompletedAt = checkedAt;
       if (boss.manualOverride !== false) {
         if (!boss.done) newlyCompleted++;
         boss.done = true;
         if (boss.manualOverride !== true) boss.completionSource = 'nexon-api';
-        if (boss.completionSource === 'nexon-api') diagnostics.autoCompleted++;
         if (boss.completedIncome == null || boss.completionSource === 'nexon-api') boss.completedIncome = bossValue(boss);
       }
     }
@@ -565,8 +564,33 @@ function nexonDiagnosticGroups(result) {
     ambiguous: result?.ambiguous || [],
     localMissing: result?.notConfigured || [],
     apiMissing: result?.localNotFound || [],
-    ignoredCycle: result?.ignoredCycle || []
+    ignoredCycle: result?.ignoredCycle || [],
+    blockedByManualOverride: result?.blockedByManualOverride || []
   };
+}
+const nexonDiagnosticGroupLabels = {
+  unknownName: '지원하지 않는 보스',
+  difficultyMismatch: '난이도 불일치',
+  ambiguous: '매칭 모호',
+  localMissing: '로컬 미등록',
+  apiMissing: 'API에 없음',
+  ignoredCycle: '일일 보스 제외',
+  blockedByManualOverride: '수동 해제 보호'
+};
+function groupNexonDiagnosticItems(key, items = []) {
+  const grouped = new Map();
+  for (const item of items) {
+    const name = item.contentName || item.name || item.bossId || '(이름 없음)';
+    const difficulty = item.apiDifficulty || item.difficulty || '';
+    const cycle = item.cycle || '';
+    const groupKey = [key, name, difficulty, cycle].join('\u0000');
+    const current = grouped.get(groupKey) || {item, count: 0, characters: []};
+    current.count++;
+    const character = item.character || item.nexonCharacter || '';
+    if (character && !current.characters.includes(character)) current.characters.push(character);
+    grouped.set(groupKey, current);
+  }
+  return [...grouped.values()];
 }
 function appendNexonDiagnostics(total, result) {
   for (const key of ['fetched', 'apiCompleted', 'matched', 'matchedCompleted', 'autoCompleted']) total[key] += result[key] || 0;
@@ -587,6 +611,10 @@ function diagnosticEntryLabel(key, item) {
   if (key === 'ignoredCycle') return `${name} · ${item.difficulty || '(난이도 없음)'} · ${item.cycle || '(cycle 없음)'}`;
   return `${name}${item.difficulty ? ` · ${item.difficulty}` : ''}`;
 }
+function groupedDiagnosticEntryLabel(key, group) {
+  const suffix = group.characters.length > 1 ? ` · ${group.characters.length}개 캐릭터` : group.count > 1 ? ` · ${group.count}건` : '';
+  return `${diagnosticEntryLabel(key, group.item)}${suffix}`;
+}
 function nexonCompletionResultLabel(result) {
   return ({
     'matched-auto-completed': '자동 완료',
@@ -606,11 +634,16 @@ function renderNexonDiagnostics() {
   if (!result) { details.open = false; content.innerHTML = ''; return; }
   const groups = nexonDiagnosticGroups(result);
   const samples = (result.diagnosticSamples || []).slice(0, 30), completedItems = result.completedItems || [];
-  const summary = `조회 ${result.fetched || 0} · 완료 ${result.apiCompleted || 0} · 메기 매칭 ${result.matched || 0} · 완료 매칭 ${result.matchedCompleted || 0} · 자동 완료 ${result.autoCompleted || 0} · 매칭 실패 ${nexonDiagnosticFailureCount(result)} · 수동 해제 보호 ${result.blockedByManualOverride?.length || 0}`;
-  const completedHtml = `<section class="nexon-completed-items"><b>완료 항목 ${completedItems.length}</b>${completedItems.length ? completedItems.map(item => `<article class="nexon-completed-item"><small>${escapeHtml(item.character || '(메기 캐릭터 없음)')}${item.nexonCharacter ? ` → ${escapeHtml(item.nexonCharacter)}` : ''}</small><p>${escapeHtml(item.contentName || '(이름 없음)')} / ${escapeHtml(item.difficulty || '(난이도 없음)')} / ${escapeHtml(item.cycle || '(cycle 없음)')}</p><strong>→ ${escapeHtml(nexonCompletionResultLabel(item.result))}</strong></article>`).join('') : '<p class="muted">완료로 반환된 항목이 없습니다.</p>'}</section>`;
+  const summary = [['조회', result.fetched], ['완료', result.apiCompleted], ['메기 매칭', result.matched], ['완료 매칭', result.matchedCompleted], ['자동 완료', result.autoCompleted], ['매칭 실패', nexonDiagnosticFailureCount(result)], ['수동 해제 보호', result.blockedByManualOverride?.length]];
+  const completedHtml = `<section class="nexon-completed-items"><b>완료 항목 ${completedItems.length}</b>${completedItems.length ? completedItems.map(item => `<article class="nexon-completed-item"><small>${escapeHtml(item.character || '(메기 캐릭터 없음)')}${item.nexonCharacter ? ` → ${escapeHtml(item.nexonCharacter)}` : ''}</small><p>${escapeHtml(item.contentName || '(이름 없음)')} · ${escapeHtml(item.difficulty || '(난이도 없음)')} · ${escapeHtml(item.cycle || '(cycle 없음)')}</p><strong>→ ${escapeHtml(nexonCompletionResultLabel(item.result))}</strong></article>`).join('') : '<p class="muted">완료로 반환된 항목이 없습니다.</p>'}</section>`;
   const sampleHtml = samples.map(item => `<article class="nexon-diagnostic-item">${item.character || item.nexonCharacter ? `<small class="nexon-diagnostic-character">${escapeHtml(item.character || '(메기 캐릭터 없음)')}${item.nexonCharacter ? ` → ${escapeHtml(item.nexonCharacter)}` : ''}</small>` : ''}<b>${escapeHtml(item.contentName || '(content_name 없음)')}</b><p>difficulty: ${escapeHtml(item.difficulty || '(없음)')} · cycle: ${escapeHtml(item.cycle || '(없음)')}</p><p>registered: ${escapeHtml(String(item.registered))} <small>(${escapeHtml(diagnosticRawLabel(item.rawRegistrationValue, item.rawRegistrationType))})</small></p><p>complete: ${escapeHtml(String(item.complete))} <small>(${escapeHtml(diagnosticRawLabel(item.rawCompleteValue, item.rawCompleteType))})</small></p></article>`).join('');
-  const groupHtml = Object.entries(groups).filter(([, items]) => items.length).map(([key, items]) => `<section class="nexon-diagnostic-group"><b>${escapeHtml(key)} ${items.length}</b><ul>${items.slice(0, 20).map(item => `<li>${escapeHtml(diagnosticEntryLabel(key, item))}</li>`).join('')}</ul>${items.length > 20 ? `<small>외 ${items.length - 20}개</small>` : ''}</section>`).join('');
-  content.innerHTML = `${completedHtml}<p class="nexon-diagnostic-summary">${escapeHtml(summary)}</p>${groupHtml || '<p class="mint nexon-diagnostic-empty">매칭 실패 분류가 없습니다.</p>'}<section class="nexon-diagnostic-sample-section"><b>응답 샘플 ${samples.length}</b>${sampleHtml ? `<div class="nexon-diagnostic-samples">${sampleHtml}</div>` : '<p class="muted">응답 샘플이 없습니다.</p>'}</section>`;
+  const groupHtml = Object.entries(groups).filter(([, items]) => items.length).map(([key, items]) => {
+    const grouped = groupNexonDiagnosticItems(key, items);
+    return `<details class="nexon-diagnostic-group"><summary><span>${escapeHtml(nexonDiagnosticGroupLabels[key] || key)}</span><strong>${items.length}건</strong></summary><ul>${grouped.map(group => `<li><span>${escapeHtml(groupedDiagnosticEntryLabel(key, group))}</span>${group.characters.length ? `<small>대상: ${escapeHtml(group.characters.join(', '))}</small>` : ''}</li>`).join('')}</ul></details>`;
+  }).join('');
+  const summaryHtml = `<div class="nexon-diagnostic-summary">${summary.map(([label, value]) => `<span>${escapeHtml(label)} <b>${n(value)}</b></span>`).join('')}</div>`;
+  const samplesHtml = `<details class="nexon-diagnostic-sample-section"><summary><span>응답 샘플</span><strong>${samples.length}건</strong></summary>${sampleHtml ? `<div class="nexon-diagnostic-samples">${sampleHtml}</div>` : '<p class="muted">응답 샘플이 없습니다.</p>'}</details>`;
+  content.innerHTML = `${completedHtml}${summaryHtml}${groupHtml ? `<div class="nexon-diagnostic-groups">${groupHtml}</div>` : '<p class="mint nexon-diagnostic-empty">매칭 실패 분류가 없습니다.</p>'}${samplesHtml}`;
 }
 function renderNexonSettings() {
   const list = $('#nexonCharacterList');
