@@ -132,6 +132,13 @@ assert.equal(run('nexonDiagnosticMessage(__appliedDiagnostics)'), 'NEXON 조회 
 assert.deepEqual(json('Object.keys(nexonDiagnosticGroups(__appliedDiagnostics))'), ['unknownName', 'difficultyMismatch', 'ambiguous', 'localMissing', 'apiMissing', 'ignoredCycle']);
 assert.equal(run('nexonDiagnosticGroups(__appliedDiagnostics).unknownName.length'), 1);
 assert.deepEqual(appliedScheduler.completedItems.map(item => item.result), ['matched-auto-completed', 'unknown-name']);
+assert.equal(run('nexonUserStatusMessage(__appliedDiagnostics)'), '주간 보스 1개를 자동 확인했습니다.');
+assert.equal(run('nexonUserStatusMessage({...__appliedDiagnostics, autoCompleted: 0})'), '새로 확인된 주간 보스가 없습니다.');
+assert.equal(run('nexonUserStatusMessage(__appliedDiagnostics, true)'), '최근 확인한 기록입니다.');
+assert.equal(run("latestNexonCheckedAt([{nexonCharacter:{lastCheckedAt:'2026-09-23T01:00:00.000Z'}},{nexonCharacter:{lastCheckedAt:'2026-09-24T02:00:00.000Z'}}])"), '2026-09-24T02:00:00.000Z');
+assert.equal(run("nexonDefaultStatusMessage([{nexonCharacter:{ocid:'linked',lastCheckedAt:'2026-09-24T02:00:00.000Z'}}])"), '최신 상태');
+assert.equal(run('nexonDefaultStatusMessage([{id:"unlinked"}])'), '연동할 캐릭터를 선택해주세요.');
+assert.equal(JSON.stringify(context.__schedulerState).includes('diagnostics'), false);
 
 // Multi-character aggregation collects every sample before completion-first limiting.
 context.__diagnosticTotal = {
@@ -568,7 +575,13 @@ assert.match(source, /throw applyError \|\| new Error\('NEXON 확인 결과를 �
 assert.match(source, /console\.info\('NEXON scheduler sync diagnostics', result\)/);
 assert.match(html, /id="nexonDiagnostics"/);
 assert.match(html, /id="nexonDiagnosticsContent"/);
+assert.match(html, /<details id="nexonDiagnostics" class="nexon-diagnostics hidden"><summary>상세 진단 보기<\/summary>/);
+assert.doesNotMatch(html, /<details id="nexonDiagnostics"[^>]*\sopen(?:\s|=|>)/);
+assert.match(html, /id="nexonLastChecked"/);
 assert.match(css, /\.nexon-diagnostic-item/);
+assert.match(css, /\.nexon-sync-summary/);
+assert.match(source, /data-nexon-action="link"/);
+assert.match(source, /data-nexon-action="unlink"/);
 const originalNexonKey = process.env.NEXON_OPEN_API_KEY;
 delete process.env.NEXON_OPEN_API_KEY;
 let missingKeyStatus = 0, missingKeyBody = null;

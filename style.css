@@ -170,23 +170,30 @@ dd{margin:0;font-size:12px}
 .cloud-account{display:grid;gap:12px;margin-top:12px}
 .cloud-account b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cloud-account p,#authMessage{margin-top:4px}
-.nexon-help{margin-top:9px;font-size:11px}
-.nexon-character-list{display:grid;margin-top:10px}
-.nexon-character-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
+.nexon-help{margin-top:7px;font-size:11px}
+.nexon-character-list{display:grid;margin-top:7px}
+.nexon-character-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 0;border-top:1px solid var(--line)}
 .nexon-character-row:first-child{border-top:0}
-.nexon-character-row>div:first-child{min-width:0}
+.nexon-character-copy{min-width:0}
+.nexon-character-heading{display:flex;align-items:center;gap:6px;min-width:0}
 .nexon-character-row b,.nexon-character-row p,.nexon-character-row small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.nexon-character-row p{margin-top:2px;font-size:11px;color:var(--blue)}
+.nexon-character-row p{margin-top:1px;font-size:11px;color:var(--blue)}
 .nexon-character-row small{margin-top:1px;color:var(--muted);font-size:9px}
-.nexon-character-row>div:last-child{display:flex;gap:4px;flex-shrink:0}
+.nexon-link-badge{flex:none;padding:2px 5px;border-radius:999px;background:#26343e;color:var(--muted);font-size:9px;font-weight:700;line-height:1.25}
+.nexon-link-badge.linked{background:#173a32;color:var(--mint)}
+.nexon-link-badge.error{background:#48272e;color:#ff9eaa}
+.nexon-character-actions{display:flex;gap:3px;flex-shrink:0}
 .nexon-character-row button{min-height:44px;padding:7px 9px;font-size:11px}
-.nexon-check{width:100%;margin-top:10px}
-#nexonApiStatus{margin-top:7px;font-size:11px}
-.nexon-diagnostics{margin-top:10px;border-top:1px solid var(--line);font-size:11px}
+.nexon-sync-summary{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
+.nexon-sync-summary small{flex:none;font-size:10px}
+#nexonApiStatus{min-width:0;text-align:right;font-size:11px;overflow-wrap:anywhere}
+.nexon-check{width:100%;margin-top:8px}
+.nexon-diagnostics{margin-top:7px;border-top:1px solid var(--line);font-size:11px}
 .nexon-diagnostics>summary{min-height:44px;display:flex;align-items:center;color:var(--blue);font-weight:700;cursor:pointer;list-style-position:inside}
 .nexon-diagnostics-content{display:grid;gap:8px;padding-bottom:4px}
 .nexon-diagnostic-summary{padding:8px 10px;border-radius:9px;background:#0c1821;font-weight:700}
-.nexon-diagnostic-samples{display:grid;gap:6px;max-height:360px;overflow:auto}
+.nexon-diagnostic-sample-section{display:grid;gap:6px;min-width:0}
+.nexon-diagnostic-samples{display:grid;gap:6px;max-height:360px;overflow-y:auto;overflow-x:hidden}
 .nexon-diagnostic-item,.nexon-diagnostic-group{padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:#0c1821}
 .nexon-diagnostic-character{display:block;margin-bottom:3px;color:var(--blue)!important}
 .nexon-diagnostic-item p{margin-top:3px;overflow-wrap:anywhere;color:var(--muted)}
@@ -268,6 +275,12 @@ dialog::backdrop{background:#0009;backdrop-filter:blur(3px)}
 .settings-actions .text-button{grid-column:1}
 .cloud-auth{grid-template-columns:1fr}
 .cloud-auth .cloud-actions{grid-column:1}
+.nexon-section{padding-top:12px;padding-bottom:12px}
+.nexon-character-row{gap:5px}
+.nexon-character-row button{padding-left:8px;padding-right:8px}
+.nexon-sync-summary{align-items:flex-start;flex-direction:column;gap:3px}
+#nexonApiStatus{text-align:left}
+.nexon-diagnostic-item,.nexon-diagnostic-group,.nexon-completed-items{padding-left:8px;padding-right:8px}
 .danger-action{align-items:flex-start;flex-direction:column}
 .danger-action button{width:100%;min-height:44px}
 }

@@ -543,7 +543,20 @@ function renderPrices() {
 }
 function nexonCheckedLabel(value) {
   const date = value ? new Date(value) : null;
-  return date && !Number.isNaN(date.getTime()) ? date.toLocaleString('ko-KR', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'}) : '확인 전';
+  if (!date || Number.isNaN(date.getTime())) return '확인 전';
+  const part = value => String(value).padStart(2, '0');
+  return `${part(date.getMonth() + 1)}.${part(date.getDate())} ${part(date.getHours())}:${part(date.getMinutes())}`;
+}
+function nexonCheckedTimeLabel(value) {
+  const label = nexonCheckedLabel(value);
+  return label === '확인 전' ? label : label.slice(-5);
+}
+function latestNexonCheckedAt(characters = []) {
+  return characters.map(character => character.nexonCharacter?.lastCheckedAt).filter(value => !Number.isNaN(Date.parse(value || ''))).sort((left, right) => Date.parse(right) - Date.parse(left))[0] || '';
+}
+function nexonDefaultStatusMessage(characters = []) {
+  if (!characters.some(character => character.nexonCharacter?.ocid)) return '연동할 캐릭터를 선택해주세요.';
+  return latestNexonCheckedAt(characters) ? '최신 상태' : '보스 기록을 확인해주세요.';
 }
 function nexonDiagnosticGroups(result) {
   return {
@@ -590,14 +603,14 @@ function renderNexonDiagnostics() {
   if (!details || !content) return;
   const result = nexonApiState.diagnostics;
   details.classList.toggle('hidden', !result);
-  if (!result) { content.innerHTML = ''; return; }
+  if (!result) { details.open = false; content.innerHTML = ''; return; }
   const groups = nexonDiagnosticGroups(result);
   const samples = (result.diagnosticSamples || []).slice(0, 30), completedItems = result.completedItems || [];
-  const summary = `조회 ${result.fetched || 0} · 완료 ${result.apiCompleted || 0} · 매칭 ${result.matched || 0} · 완료 매칭 ${result.matchedCompleted || 0} · 실패 ${nexonDiagnosticFailureCount(result)}`;
+  const summary = `조회 ${result.fetched || 0} · 완료 ${result.apiCompleted || 0} · 메기 매칭 ${result.matched || 0} · 완료 매칭 ${result.matchedCompleted || 0} · 자동 완료 ${result.autoCompleted || 0} · 매칭 실패 ${nexonDiagnosticFailureCount(result)} · 수동 해제 보호 ${result.blockedByManualOverride?.length || 0}`;
   const completedHtml = `<section class="nexon-completed-items"><b>완료 항목 ${completedItems.length}</b>${completedItems.length ? completedItems.map(item => `<article class="nexon-completed-item"><small>${escapeHtml(item.character || '(메기 캐릭터 없음)')}${item.nexonCharacter ? ` → ${escapeHtml(item.nexonCharacter)}` : ''}</small><p>${escapeHtml(item.contentName || '(이름 없음)')} / ${escapeHtml(item.difficulty || '(난이도 없음)')} / ${escapeHtml(item.cycle || '(cycle 없음)')}</p><strong>→ ${escapeHtml(nexonCompletionResultLabel(item.result))}</strong></article>`).join('') : '<p class="muted">완료로 반환된 항목이 없습니다.</p>'}</section>`;
   const sampleHtml = samples.map(item => `<article class="nexon-diagnostic-item">${item.character || item.nexonCharacter ? `<small class="nexon-diagnostic-character">${escapeHtml(item.character || '(메기 캐릭터 없음)')}${item.nexonCharacter ? ` → ${escapeHtml(item.nexonCharacter)}` : ''}</small>` : ''}<b>${escapeHtml(item.contentName || '(content_name 없음)')}</b><p>difficulty: ${escapeHtml(item.difficulty || '(없음)')} · cycle: ${escapeHtml(item.cycle || '(없음)')}</p><p>registered: ${escapeHtml(String(item.registered))} <small>(${escapeHtml(diagnosticRawLabel(item.rawRegistrationValue, item.rawRegistrationType))})</small></p><p>complete: ${escapeHtml(String(item.complete))} <small>(${escapeHtml(diagnosticRawLabel(item.rawCompleteValue, item.rawCompleteType))})</small></p></article>`).join('');
   const groupHtml = Object.entries(groups).filter(([, items]) => items.length).map(([key, items]) => `<section class="nexon-diagnostic-group"><b>${escapeHtml(key)} ${items.length}</b><ul>${items.slice(0, 20).map(item => `<li>${escapeHtml(diagnosticEntryLabel(key, item))}</li>`).join('')}</ul>${items.length > 20 ? `<small>외 ${items.length - 20}개</small>` : ''}</section>`).join('');
-  content.innerHTML = `<p class="nexon-diagnostic-summary">${escapeHtml(summary)}</p>${completedHtml}${sampleHtml ? `<div class="nexon-diagnostic-samples">${sampleHtml}</div>` : '<p class="muted">응답 샘플이 없습니다.</p>'}${groupHtml || '<p class="mint nexon-diagnostic-empty">매칭 실패 분류가 없습니다.</p>'}`;
+  content.innerHTML = `${completedHtml}<p class="nexon-diagnostic-summary">${escapeHtml(summary)}</p>${groupHtml || '<p class="mint nexon-diagnostic-empty">매칭 실패 분류가 없습니다.</p>'}<section class="nexon-diagnostic-sample-section"><b>응답 샘플 ${samples.length}</b>${sampleHtml ? `<div class="nexon-diagnostic-samples">${sampleHtml}</div>` : '<p class="muted">응답 샘플이 없습니다.</p>'}</section>`;
 }
 function renderNexonSettings() {
   const list = $('#nexonCharacterList');
@@ -606,11 +619,15 @@ function renderNexonSettings() {
   list.innerHTML = state.characters.map(character => {
     const link = character.nexonCharacter;
     const linked = !!link?.ocid;
-    const detail = linked ? `${escapeHtml(link.characterName || '')}${link.world ? ` · ${escapeHtml(link.world)}` : ''}<small>마지막 확인 ${escapeHtml(nexonCheckedLabel(link.lastCheckedAt))}</small>` : '<span class="muted">연동되지 않음</span>';
-    return `<div class="nexon-character-row" data-nexon-character="${escapeHtml(character.id)}"><div><b>${escapeHtml(character.name)}</b><p>${detail}</p></div><div><button type="button" class="ghost" data-nexon-action="link" ${disabled}>${linked ? '변경' : '연동'}</button>${linked ? `<button type="button" class="text-button" data-nexon-action="unlink" ${disabled}>해제</button>` : ''}</div></div>`;
+    const hasError = nexonApiState.errorCharacterId === character.id;
+    const badge = hasError ? '<span class="nexon-link-badge error">오류</span>' : linked ? '<span class="nexon-link-badge linked">연동됨</span>' : '<span class="nexon-link-badge">미연동</span>';
+    const detail = linked ? `<p>${escapeHtml(link.characterName || '')}${link.world ? ` · ${escapeHtml(link.world)}` : ''}</p><small>마지막 확인 ${escapeHtml(nexonCheckedTimeLabel(link.lastCheckedAt))}</small>` : '<p class="muted">NEXON 캐릭터 미연동</p>';
+    return `<div class="nexon-character-row" data-nexon-character="${escapeHtml(character.id)}"><div class="nexon-character-copy"><div class="nexon-character-heading"><b>${escapeHtml(character.name)}</b>${badge}</div>${detail}</div><div class="nexon-character-actions"><button type="button" class="ghost" data-nexon-action="link" ${disabled}>${linked ? '변경' : '연동'}</button>${linked ? `<button type="button" class="text-button" data-nexon-action="unlink" ${disabled}>해제</button>` : ''}</div></div>`;
   }).join('') || '<p class="empty">먼저 캐릭터를 추가해주세요.</p>';
+  const lastCheckedAt = latestNexonCheckedAt(state.characters);
+  $('#nexonLastChecked').textContent = lastCheckedAt ? `마지막 확인 ${nexonCheckedLabel(lastCheckedAt)}` : '마지막 확인 없음';
   const status = $('#nexonApiStatus');
-  status.textContent = nexonApiState.message;
+  status.textContent = nexonApiState.status === 'idle' ? nexonDefaultStatusMessage(state.characters) : nexonApiState.message;
   status.className = nexonApiState.status === 'error' ? 'negative' : nexonApiState.status === 'checking' ? 'pending' : nexonApiState.status === 'ok' ? 'mint' : 'muted';
   const button = $('#checkNexonBosses');
   button.disabled = nexonApiState.status === 'checking' || isPast() || storageBlocked || !state.characters.some(character => character.nexonCharacter?.ocid);
@@ -642,6 +659,11 @@ function nexonDiagnosticMessage(result) {
   if (failures) parts.push(`매칭 실패 ${failures}개`);
   return parts.join(' · ');
 }
+function nexonUserStatusMessage(result, cooldown = false) {
+  if (cooldown) return '최근 확인한 기록입니다.';
+  const autoCompleted = result?.autoCompleted || 0;
+  return autoCompleted ? `주간 보스 ${autoCompleted}개를 자동 확인했습니다.` : '새로 확인된 주간 보스가 없습니다.';
+}
 async function syncNexonCharacter(characterId, {characterName = '', requestDate = '', ignoreCooldown = false} = {}) {
   const character = state.characters.find(item => item.id === characterId);
   if (!character) throw new Error('메기 캐릭터를 찾을 수 없습니다.');
@@ -667,10 +689,11 @@ async function syncAllNexonCharacters() {
   const linked = state.characters.filter(character => character.nexonCharacter?.ocid);
   if (!linked.length) { nexonApiState = {status: 'error', message: '연동된 NEXON 캐릭터가 없습니다.'}; renderNexonSettings(); return; }
   nexonApiState = {status: 'checking', message: '보스 기록 확인 중…', diagnostics: null}; renderNexonSettings();
-  let checked = 0, cooldown = 0;
+  let checked = 0, cooldown = 0, checkingCharacterId = '';
   const total = {fetched: 0, apiCompleted: 0, matched: 0, matchedCompleted: 0, autoCompleted: 0, unknown: [], difficultyMismatch: [], ambiguous: [], notConfigured: [], localNotFound: [], ignoredCycle: [], completedItems: [], blockedByManualOverride: [], diagnosticSamples: []};
   try {
     for (const character of linked) {
+      checkingCharacterId = character.id;
       const result = await syncNexonCharacter(character.id);
       if (result.cooldown) cooldown++;
       else {
@@ -679,10 +702,9 @@ async function syncAllNexonCharacters() {
       }
     }
     total.diagnosticSamples = prioritizeNexonDiagnosticSamples(total.diagnosticSamples);
-    const summary = checked ? nexonDiagnosticMessage(total) : '최근 확인 후 1분 이내라 다시 조회하지 않았습니다.';
-    nexonApiState = {status: 'ok', message: cooldown && checked ? `${summary} · 쿨다운 ${cooldown}개` : summary, diagnostics: checked ? total : null};
+    nexonApiState = {status: 'ok', message: nexonUserStatusMessage(total, !checked), diagnostics: checked ? total : null};
   } catch (error) {
-    nexonApiState = {status: 'error', message: error.message, diagnostics: null};
+    nexonApiState = {status: 'error', message: error.message, diagnostics: null, errorCharacterId: checkingCharacterId};
   }
   renderNexonSettings();
 }
@@ -867,9 +889,9 @@ function init() {
     nexonApiState = {status: 'checking', message: `${character.name} 연동 확인 중…`, diagnostics: null}; renderNexonSettings();
     try {
       const result = await syncNexonCharacter(character.id, {characterName});
-      nexonApiState = {status: 'ok', message: nexonDiagnosticMessage(result), diagnostics: result};
+      nexonApiState = {status: 'ok', message: nexonUserStatusMessage(result), diagnostics: result};
     } catch (error) {
-      nexonApiState = {status: 'error', message: error.message, diagnostics: null};
+      nexonApiState = {status: 'error', message: error.message, diagnostics: null, errorCharacterId: character.id};
     }
     renderNexonSettings();
   });
