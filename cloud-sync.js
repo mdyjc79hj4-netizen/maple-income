@@ -162,21 +162,22 @@ export function startCloudSync(app) {
   elements.form.addEventListener('submit', async event => {
     event.preventDefault();
     if (!elements.form.reportValidity()) return;
-    setAuthBusy(true); setMessage('濡쒓렇??以묅?);
+    setAuthBusy(true);
+    setMessage('\uB85C\uADF8\uC778 \uC911\u2026');
     try {
       const {error} = await supabase.auth.signInWithPassword({
         email: elements.email.value.trim(),
         password: elements.password.value
       });
       if (error) {
-        setMessage(`濡쒓렇???ㅽ뙣: ${error.message}`, true);
+        setMessage(`\uB85C\uADF8\uC778 \uC2E4\uD328: ${error.message}`, true);
       } else {
         elements.password.value = '';
-        setMessage('濡쒓렇?명뻽?듬땲?? ?곗씠?곕? ?뺤씤?섍퀬 ?덉뒿?덈떎.');
+        setMessage('\uB85C\uADF8\uC778\uD588\uC2B5\uB2C8\uB2E4. \uB370\uC774\uD130\uB97C \uD655\uC778\uD558\uACE0 \uC788\uC2B5\uB2C8\uB2E4.');
       }
     } catch (error) {
       console.error('Supabase sign-in failed', error);
-      setMessage(`濡쒓렇???ㅽ뙣: ${error?.message || 'Supabase ?곌껐 以??ㅻ쪟媛 諛쒖깮?덉뒿?덈떎.'}`, true);
+      setMessage(`\uB85C\uADF8\uC778 \uC2E4\uD328: ${error?.message || 'Supabase \uC5F0\uACB0 \uC911 \uC624\uB958\uAC00 \uBC1C\uC0DD\uD588\uC2B5\uB2C8\uB2E4.'}`, true);
     } finally {
       setAuthBusy(false);
     }
@@ -184,26 +185,27 @@ export function startCloudSync(app) {
 
   elements.signUp.addEventListener('click', async () => {
     if (!elements.form.reportValidity()) return;
-    setAuthBusy(true); setMessage('怨꾩젙 ?앹꽦 以묅?);
+    setAuthBusy(true);
+    setMessage('\uACC4\uC815 \uC0DD\uC131 \uC911\u2026');
     try {
       const {data, error} = await supabase.auth.signUp({
         email: elements.email.value.trim(),
         password: elements.password.value
       });
       if (error) {
-        setMessage(`?뚯썝媛???ㅽ뙣: ${error.message}`, true);
+        setMessage(`\uD68C\uC6D0\uAC00\uC785 \uC2E4\uD328: ${error.message}`, true);
       } else if (data.session) {
         elements.password.value = '';
-        setMessage('?뚯썝媛?낃낵 濡쒓렇?몄씠 ?꾨즺?섏뿀?듬땲??');
+        setMessage('\uD68C\uC6D0\uAC00\uC785\uACFC \uB85C\uADF8\uC778\uC774 \uC644\uB8CC\uB418\uC5C8\uC2B5\uB2C8\uB2E4.');
       } else if (data.user) {
         elements.password.value = '';
-        setMessage('?뚯썝媛???붿껌???꾨즺?섏뿀?듬땲?? ?낅젰???대찓?쇱쓽 ?몄쬆 硫붿씪???뺤씤????濡쒓렇?명빐 二쇱꽭??');
+        setMessage('\uD68C\uC6D0\uAC00\uC785 \uC694\uCCAD\uC774 \uC644\uB8CC\uB418\uC5C8\uC2B5\uB2C8\uB2E4. \uC785\uB825\uD55C \uC774\uBA54\uC77C\uC758 \uC778\uC99D \uBA54\uC77C\uC744 \uD655\uC778\uD55C \uB4A4 \uB85C\uADF8\uC778\uD574 \uC8FC\uC138\uC694.');
       } else {
-        setMessage('?뚯썝媛???붿껌? ?꾩넚?먯?留??묐떟???뺤씤?섏? 紐삵뻽?듬땲?? ?좎떆 ???ㅼ떆 ?쒕룄??二쇱꽭??', true);
+        setMessage('\uD68C\uC6D0\uAC00\uC785 \uC694\uCCAD\uC740 \uC804\uC1A1\uB410\uC9C0\uB9CC \uC751\uB2F5\uC744 \uD655\uC778\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC8FC\uC138\uC694.', true);
       }
     } catch (error) {
       console.error('Supabase sign-up failed', error);
-      setMessage(`?뚯썝媛???ㅽ뙣: ${error?.message || 'Supabase ?곌껐 以??ㅻ쪟媛 諛쒖깮?덉뒿?덈떎.'}`, true);
+      setMessage(`\uD68C\uC6D0\uAC00\uC785 \uC2E4\uD328: ${error?.message || 'Supabase \uC5F0\uACB0 \uC911 \uC624\uB958\uAC00 \uBC1C\uC0DD\uD588\uC2B5\uB2C8\uB2E4.'}`, true);
     } finally {
       setAuthBusy(false);
     }
