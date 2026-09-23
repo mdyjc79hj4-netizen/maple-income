@@ -438,6 +438,7 @@ export function startCloudSync(app) {
       mergeResult = mergeStates(base, candidate, latest.payload);
       candidate = mergeResult.state;
     }
+    if (typeof app.normalizeCloudState === 'function') candidate = app.normalizeCloudState(candidate);
     const hash = await contentHash(candidate);
     if (latest && hash === (latest.content_hash || await contentHash(latest.payload))) {
       await applyRemote(latest, mergeResult?.merged ? 'merged' : 'synced');

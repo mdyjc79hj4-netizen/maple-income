@@ -3,12 +3,15 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import {webcrypto} from 'node:crypto';
 import {cloudSyncInternals} from './cloud-sync.js';
+import nexonSchedulerHandler, {nexonProxyInternals} from './api/nexon-scheduler.js';
 
 const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
 const cloudSource = readFileSync(new URL('./cloud-sync.js', import.meta.url), 'utf8');
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
 const css = readFileSync(new URL('./style.css', import.meta.url), 'utf8');
 const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
+const nexonApiSource = readFileSync(new URL('./api/nexon-scheduler.js', import.meta.url), 'utf8');
+const envExample = readFileSync(new URL('./.env.example', import.meta.url), 'utf8');
 const context = vm.createContext({console, crypto: webcrypto, document: undefined, structuredClone, setTimeout, clearTimeout});
 vm.runInContext(source, context);
 const run = expression => vm.runInContext(expression, context);
@@ -59,6 +62,80 @@ assert.deepEqual(migrated.presets[0].bosses[0], {bossId: 'seren', difficulty: '�
 assert.equal(migrated.weeklyHistory['2026-09-10~2026-09-16'].totals.total, 10);
 assert.equal(migrated.incomes[0].amount, 82000000);
 
+const nexonNames = {
+  '자쿰': 'zakum', '피에르': 'pierre', '반반': 'vonbon', '블러디 퀸': 'bloodyqueen', '벨룸': 'vellum',
+  '매그너스': 'magnus', '파풀라투스': 'papulatus', '스우': 'lotus', '데미안': 'damien',
+  '가디언 엔젤 슬라임': 'guardian-angel-slime', '루시드': 'lucid', '윌': 'will', '더스크': 'gloom',
+  '듄켈': 'darknell', '진 힐라': 'verus-hilla', '검은 마법사': 'black-mage', '선택받은 세렌': 'seren',
+  '감시자 칼로스': 'kalos', '카링': 'kaling', '벨로나': 'bellona', '림보': 'limbo', '발드릭스': 'baldrix',
+  '최초의 대적자': 'first-adversary', '찬란한 흉성': 'shining-calamity', '유피테르': 'jupiter'
+};
+for (const [name, bossId] of Object.entries(nexonNames)) {
+  context.__nexonEntry = {contentName: name, difficulty: '하드', cycle: '주간', complete: true};
+  assert.equal(run('mapNexonBossEntry(__nexonEntry)?.bossId'), bossId);
+}
+
+const schedulerState = {
+  version: 5, updatedAt: '2026-09-23T00:00:00.000Z', currentWeek: '2026-09-17~2026-09-23',
+  characters: [{id: 'c1', name: '본캐', bosses: [
+    {bossId: 'lotus', name: '스우', difficulty: '하드', party: 2, partySize: 2, price: 48900000, done: false},
+    {bossId: 'damien', name: '데미안', difficulty: '하드', party: 1, partySize: 1, price: 46400000, done: true, completedIncome: 46400000, completionSource: 'manual', manualOverride: true}
+  ]}], incomes: [], weeklyHistory: {}, presets: [], settings: {}
+};
+const schedulerResponse = {
+  date: '2026-09-23',
+  character: {ocid: '0123456789abcdef0123456789abcdef', name: '넥슨본캐', world: '루나'},
+  bosses: [
+    {contentName: '스우', difficulty: '하드', cycle: '주간', complete: false},
+    {contentName: '스우', difficulty: '하드', cycle: '주간', complete: true},
+    {contentName: '데미안', difficulty: '하드', cycle: '주간', complete: false},
+    {contentName: '알 수 없는 신규 보스', difficulty: '하드', cycle: '주간', complete: true}
+  ]
+};
+context.__schedulerState = structuredClone(schedulerState);
+context.__schedulerResponse = structuredClone(schedulerResponse);
+const appliedScheduler = json("applyNexonSchedulerState(__schedulerState, 'c1', __schedulerResponse, '2026-09-23T01:00:00.000Z')");
+assert.equal(appliedScheduler.newlyCompleted, 1);
+assert.equal(appliedScheduler.matched, 2);
+assert.deepEqual(appliedScheduler.unknown, ['알 수 없는 신규 보스']);
+assert.equal(context.__schedulerState.characters[0].bosses[0].done, true);
+assert.equal(context.__schedulerState.characters[0].bosses[0].completionSource, 'nexon-api');
+assert.equal(context.__schedulerState.characters[0].bosses[0].completedIncome, 24450000);
+assert.equal(context.__schedulerState.characters[0].bosses[1].done, true);
+assert.equal(context.__schedulerState.characters[0].bosses[1].completionSource, 'manual');
+
+// Re-reading the same result does not rewrite boss state.
+const bossesBeforeRepeat = JSON.stringify(context.__schedulerState.characters[0].bosses);
+const repeatedScheduler = json("applyNexonSchedulerState(__schedulerState, 'c1', __schedulerResponse, '2026-09-23T01:05:00.000Z')");
+assert.equal(repeatedScheduler.bossesChanged, false);
+assert.equal(JSON.stringify(context.__schedulerState.characters[0].bosses), bossesBeforeRepeat);
+
+// Manual incomplete override wins over an API completion until weekly reset.
+context.__manualState = structuredClone(schedulerState);
+context.__manualState.characters[0].bosses[0].manualOverride = false;
+context.__manualState.characters[0].bosses[0].completionSource = 'manual';
+context.__manualResponse = {date: '2026-09-23', character: schedulerResponse.character, bosses: [{contentName: '스우', difficulty: '하드', cycle: '주간', complete: true}]};
+run("applyNexonSchedulerState(__manualState, 'c1', __manualResponse, '2026-09-23T02:00:00.000Z')");
+assert.equal(context.__manualState.characters[0].bosses[0].apiCompleted, true);
+assert.equal(context.__manualState.characters[0].bosses[0].done, false);
+
+// Cloud field-level merges are normalized so a manual incomplete override cannot be revived by API metadata.
+context.__mergedOverride = structuredClone(context.__manualState);
+context.__mergedOverride.characters[0].bosses[0].done = true;
+context.__mergedOverride.characters[0].bosses[0].completedIncome = 24450000;
+const normalizedOverride = json('migrateState(__mergedOverride)');
+assert.equal(normalizedOverride.characters[0].bosses[0].done, false);
+assert.equal('completedIncome' in normalizedOverride.characters[0].bosses[0], false);
+
+// Invalid/error-shaped scheduler data leaves existing state untouched.
+context.__invalidState = structuredClone(schedulerState);
+const invalidBefore = JSON.stringify(context.__invalidState);
+assert.throws(() => run("applyNexonSchedulerState(__invalidState, 'c1', {error:'failed'})"), /응답/);
+assert.equal(JSON.stringify(context.__invalidState), invalidBefore);
+context.__wrongWeekResponse = {...structuredClone(schedulerResponse), date: '2026-09-16'};
+assert.throws(() => run("applyNexonSchedulerState(__invalidState, 'c1', __wrongWeekResponse)"), /주차/);
+assert.equal(JSON.stringify(context.__invalidState), invalidBefore);
+
 context.__v1 = {characters:[{name:'구버전',bosses:{세렌:{difficulty:'하드',price:302000000,done:false},칼로스:{difficulty:'카오스',price:1230000000,done:false}}}],incomes:[],weeklyHistory:{},presets:{},settings:{}};
 const migratedV1 = json("migrateState(__v1, new Date('2026-09-20T12:00:00'))");
 assert.equal(migratedV1.characters[0].bosses.filter(b => b.bossId === 'seren').length, 1);
@@ -90,6 +167,13 @@ assert.equal(rolled.characters[0].bosses[0].done, false);
 assert.equal(rolled.characters[0].bosses[0].difficulty, '하드');
 assert.equal(rolled.characters[0].bosses[0].partySize, 2);
 assert.equal(rolled.presets.length, 1);
+
+context.__nexonRoll = structuredClone(context.__schedulerState);
+run("rollover(__nexonRoll, new Date('2026-09-24T00:00:00'))");
+assert.equal(context.__nexonRoll.weeklyHistory['2026-09-17~2026-09-23'].characters[0].bosses[0].completionSource, 'nexon-api');
+assert.equal(context.__nexonRoll.characters[0].bosses[0].done, false);
+assert.equal('apiCompleted' in context.__nexonRoll.characters[0].bosses[0], false);
+assert.equal(context.__nexonRoll.characters[0].nexonCharacter.ocid, schedulerResponse.character.ocid);
 
 assert.equal(run('incomeValue({item:"메소",category:"hunt",amount:82000000})'), 82000000);
 assert.equal(run('incomeValue({item:"조각",category:"hunt",recordType:"sold",qty:30,price:6500000,materialCost:5000000})'), 190000000);
@@ -195,6 +279,45 @@ onlineRemote.weeklyHistory['week-remote'] = {weekId: 'week-remote', incomes: [],
 const reconnected = cloudSyncInternals.mergeStates(syncBase, offlineLocal, onlineRemote, '2026-09-23T04:00:00.000Z').state;
 assert.ok(reconnected.presets.some(preset => preset.id === 'preset-offline'));
 assert.ok(reconnected.weeklyHistory['week-remote']);
+
+// NEXON character metadata remains a normal character field in the existing 3-way merge.
+const nexonLocal = clone(syncBase);
+nexonLocal.updatedAt = '2026-09-23T04:00:00.000Z';
+nexonLocal.characters[0].nexonCharacter = {ocid: schedulerResponse.character.ocid, characterName: '넥슨본캐'};
+const nexonRemote = clone(syncBase);
+nexonRemote.updatedAt = '2026-09-23T05:00:00.000Z';
+nexonRemote.incomes.push({id: 'income-with-nexon', category: 'hunt', item: '메소', amount: 10, createdAt: 5});
+const nexonCloudMerge = cloudSyncInternals.mergeStates(syncBase, nexonLocal, nexonRemote, '2026-09-23T06:00:00.000Z').state;
+assert.equal(nexonCloudMerge.characters[0].nexonCharacter.ocid, schedulerResponse.character.ocid);
+assert.ok(nexonCloudMerge.incomes.some(item => item.id === 'income-with-nexon'));
+
+const sanitizedScheduler = nexonProxyInternals.sanitizeScheduler({
+  date: '2026-09-23', character_name: '넥슨본캐', world_name: '루나',
+  boss_contents: [{content_name: '스우', difficulty: '하드', cycle: '주간', registration_flag: 'true', complete_flag: 'true'}]
+}, schedulerResponse.character.ocid);
+assert.deepEqual(sanitizedScheduler.bosses[0], {contentName: '스우', difficulty: '하드', cycle: '주간', registered: true, complete: true});
+assert.throws(() => nexonProxyInternals.sanitizeScheduler({boss_contents: null}, 'ocid'), /응답 구조/);
+assert.equal(nexonProxyInternals.publicError(400).code, 'BAD_REQUEST');
+assert.equal(nexonProxyInternals.publicError(403).code, 'FORBIDDEN');
+assert.equal(nexonProxyInternals.publicError(429).code, 'RATE_LIMITED');
+assert.equal(nexonProxyInternals.publicError(500).code, 'UPSTREAM_ERROR');
+assert.equal(nexonProxyInternals.publicError(503).code, 'UPSTREAM_ERROR');
+assert.match(nexonApiSource, /process\.env\.NEXON_OPEN_API_KEY/);
+assert.doesNotMatch(nexonApiSource, /VITE_NEXON/);
+assert.match(nexonApiSource, /'x-nxopen-api-key': apiKey/);
+assert.match(nexonApiSource, /\/maplestory\/v1\/scheduler\/character-state/);
+assert.match(envExample, /^NEXON_OPEN_API_KEY=$/m);
+const originalNexonKey = process.env.NEXON_OPEN_API_KEY;
+delete process.env.NEXON_OPEN_API_KEY;
+let missingKeyStatus = 0, missingKeyBody = null;
+await nexonSchedulerHandler(
+  {method: 'GET', query: {characterName: '넥슨본캐'}},
+  {status(code) { missingKeyStatus = code; return this; }, json(body) { missingKeyBody = body; return this; }, setHeader() {}}
+);
+if (originalNexonKey === undefined) delete process.env.NEXON_OPEN_API_KEY;
+else process.env.NEXON_OPEN_API_KEY = originalNexonKey;
+assert.equal(missingKeyStatus, 503);
+assert.equal(missingKeyBody.code, 'NOT_CONFIGURED');
 assert.match(cloudSource, /auth\.resend\(\{/);
 assert.match(cloudSource, /emailRedirectTo: window\.location\.origin/);
 assert.match(html, /id="resendConfirmation"/);
@@ -210,4 +333,4 @@ assert.match(css, /\.cloud-actions button\{[^}]*min-height:44px/);
 assert.match(schema, /alter table public\.maple_income_sync enable row level security/i);
 assert.equal((schema.match(/create policy/gi) || []).length, 3);
 assert.match(schema, /auth\.uid\(\)\) = user_id/);
-console.log('boss roster, preset, migration, backup, reset, rollover, income and multi-device cloud sync regression checks passed');
+console.log('boss roster, preset, migration, backup, reset, rollover, income, NEXON scheduler and multi-device cloud sync regression checks passed');

@@ -101,6 +101,9 @@ dd{margin:0;font-size:12px}
 .boss-char+.boss-char{border-top:1px solid var(--line);padding-top:18px}
 .boss-line{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 10px;padding:12px 0;border-bottom:1px solid var(--line)}
 .boss-name{display:flex;align-items:center;gap:9px;min-height:30px;font-size:14px;font-weight:600;overflow-wrap:anywhere}
+.boss-name>span{display:flex;align-items:center;flex-wrap:wrap;gap:5px}
+.api-badge{display:inline-flex;align-items:center;min-height:20px;border:1px solid #3c6d85;border-radius:999px;padding:1px 7px;background:#183446;color:var(--blue);font-size:9px;font-weight:700;white-space:nowrap}
+.api-badge.manual{border-color:#765f35;background:#302818;color:var(--amber)}
 .boss-earned{align-self:center;font-size:13px;max-width:130px;text-align:right;overflow-wrap:anywhere}
 .boss-controls{display:flex;align-items:center;gap:7px;grid-column:1/-1;padding-left:30px}
 .boss-controls select{min-height:40px;padding:7px 9px;font-size:13px;flex:1}
@@ -167,6 +170,18 @@ dd{margin:0;font-size:12px}
 .cloud-account{display:grid;gap:12px;margin-top:12px}
 .cloud-account b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cloud-account p,#authMessage{margin-top:4px}
+.nexon-help{margin-top:9px;font-size:11px}
+.nexon-character-list{display:grid;margin-top:10px}
+.nexon-character-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
+.nexon-character-row:first-child{border-top:0}
+.nexon-character-row>div:first-child{min-width:0}
+.nexon-character-row b,.nexon-character-row p,.nexon-character-row small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nexon-character-row p{margin-top:2px;font-size:11px;color:var(--blue)}
+.nexon-character-row small{margin-top:1px;color:var(--muted);font-size:9px}
+.nexon-character-row>div:last-child{display:flex;gap:4px;flex-shrink:0}
+.nexon-character-row button{min-height:44px;padding:7px 9px;font-size:11px}
+.nexon-check{width:100%;margin-top:10px}
+#nexonApiStatus{margin-top:7px;font-size:11px}
 .preset-manager{display:grid;gap:7px;margin-top:11px}
 .preset-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
 .preset-row:first-child{border-top:0}

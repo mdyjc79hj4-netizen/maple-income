@@ -36,6 +36,16 @@ const bossIds = {
 };
 const bossNames = Object.fromEntries(Object.entries(bossIds).map(([name, id]) => [id, name]));
 const bossAliases = {'세렌': '선택받은 세렌', '칼로스': '감시자 칼로스'};
+// NEXON Scheduler `boss_contents[].content_name` -> local stable bossId.
+const nexonBossIds = {
+  '자쿰': 'zakum', '피에르': 'pierre', '반반': 'vonbon', '블러디 퀸': 'bloodyqueen', '블러디퀸': 'bloodyqueen',
+  '벨룸': 'vellum', '매그너스': 'magnus', '파풀라투스': 'papulatus', '스우': 'lotus', '데미안': 'damien',
+  '가디언 엔젤 슬라임': 'guardian-angel-slime', '루시드': 'lucid', '윌': 'will', '더스크': 'gloom',
+  '듄켈': 'darknell', '진 힐라': 'verus-hilla', '검은 마법사': 'black-mage', '선택받은 세렌': 'seren',
+  '감시자 칼로스': 'kalos', '카링': 'kaling', '벨로나': 'bellona', '림보': 'limbo', '발드릭스': 'baldrix',
+  '최초의 대적자': 'first-adversary', '찬란한 흉성': 'shining-calamity', '유피테르': 'jupiter'
+};
+const nexonDifficulties = {'이지': '이지', '노멀': '노멀', '노말': '노멀', '하드': '하드', '카오스': '카오스', '익스트림': '익스트림'};
 const legacyBossNames = ['스우', '데미안', '가디언 엔젤 슬라임', '루시드', '윌', '더스크', '듄켈', '진 힐라', '검은 마법사', '세렌', '칼로스', '카링'];
 const presetGroups = {
   all: {name: '전체 보스', bosses: presetBosses(Object.keys(bossDB))},
@@ -124,7 +134,19 @@ function makeBoss(nameOrPreset, settings = {}) {
   const difficulty = validDifficulty(name, source.difficulty);
   const partySize = Math.min(6, Math.max(1, Math.trunc(n(source.partySize ?? source.party) || 1)));
   const bossId = Object.hasOwn(bossDB, name) ? bossIdFor(name) : source.bossId || bossIdFor(name);
-  return {bossId, name, difficulty, party: partySize, partySize, price: source.price == null ? referencePrice(name, difficulty) : n(source.price), done: !!source.done, ...(source.completedIncome == null ? {} : {completedIncome: n(source.completedIncome)})};
+  const manualOverride = typeof source.manualOverride === 'boolean' ? source.manualOverride : undefined;
+  const done = manualOverride == null ? !!source.done : manualOverride;
+  return {
+    bossId, name, difficulty, party: partySize, partySize,
+    price: source.price == null ? referencePrice(name, difficulty) : n(source.price),
+    done,
+    ...(!done || source.completedIncome == null ? {} : {completedIncome: n(source.completedIncome)}),
+    ...(typeof source.apiCompleted === 'boolean' ? {apiCompleted: source.apiCompleted} : {}),
+    ...(typeof source.manualOverride === 'boolean' ? {manualOverride: source.manualOverride} : {}),
+    ...(['manual', 'nexon-api'].includes(source.completionSource) ? {completionSource: source.completionSource} : {}),
+    ...(typeof source.apiCheckedWeek === 'string' ? {apiCheckedWeek: source.apiCheckedWeek} : {}),
+    ...(typeof source.apiCompletedAt === 'string' ? {apiCompletedAt: source.apiCompletedAt} : {})
+  };
 }
 function normalizeBosses(source, legacy = false) {
   if (Array.isArray(source)) {
@@ -149,6 +171,77 @@ function incomeValue(r) {
   return kind === 'sold' ? n(r.netIncome ?? (n(r.qty ?? r.quantity) * n(r.price ?? r.unitPrice) - n(r.materialCost))) : 0;
 }
 function bossValue(b) { return Math.floor(n(b.price) / Math.max(1, n(b.party ?? b.partySize) || 1)); }
+function resetBossWeeklyState(boss) {
+  boss.done = false;
+  delete boss.completedIncome;
+  delete boss.apiCompleted;
+  delete boss.manualOverride;
+  delete boss.completionSource;
+  delete boss.apiCheckedWeek;
+  delete boss.apiCompletedAt;
+}
+function normalizeNexonDifficulty(value) { return nexonDifficulties[String(value || '').replace(/\s+/g, '')] || String(value || '').trim(); }
+function mapNexonBossEntry(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const name = String(entry.contentName ?? entry.content_name ?? '').trim();
+  const bossId = nexonBossIds[name];
+  if (!bossId) return null;
+  const difficulty = normalizeNexonDifficulty(entry.difficulty);
+  const cycle = String(entry.cycle || '').trim();
+  if (/일간|daily|월간|monthly/i.test(cycle)) return null;
+  return {bossId, difficulty, complete: entry.complete === true || entry.complete_flag === true || entry.complete_flag === 'true'};
+}
+function applyNexonSchedulerState(data, characterId, response, checkedAt = new Date().toISOString()) {
+  if (!data || !Array.isArray(data.characters) || !response || !Array.isArray(response.bosses)) throw new Error('NEXON 스케줄러 응답을 적용할 수 없습니다.');
+  if (response.date && currentWeekKey(new Date(response.date + 'T12:00:00')) !== data.currentWeek) throw new Error('NEXON 조회 주차가 현재 주차와 일치하지 않습니다.');
+  const character = data.characters.find(item => item.id === characterId);
+  if (!character) throw new Error('연동할 메기 캐릭터를 찾을 수 없습니다.');
+  const mapped = new Map(), unknown = new Set();
+  for (const entry of response.bosses) {
+    const value = mapNexonBossEntry(entry);
+    if (!value) {
+      const name = String(entry?.contentName ?? entry?.content_name ?? '').trim();
+      if (name && !/일간|daily|월간|monthly/i.test(String(entry?.cycle || ''))) unknown.add(name);
+      continue;
+    }
+    const key = value.bossId + '::' + value.difficulty;
+    const previous = mapped.get(key);
+    mapped.set(key, {...value, complete: value.complete || !!previous?.complete});
+  }
+  let bossesChanged = false, newlyCompleted = 0, matched = 0;
+  for (const boss of character.bosses || []) {
+    const apiBoss = mapped.get(boss.bossId + '::' + normalizeNexonDifficulty(boss.difficulty));
+    if (!apiBoss) continue;
+    matched++;
+    const before = JSON.stringify(boss);
+    const wasApiCompleted = boss.apiCompleted === true && boss.apiCheckedWeek === data.currentWeek;
+    boss.apiCompleted = apiBoss.complete;
+    boss.apiCheckedWeek = data.currentWeek;
+    if (apiBoss.complete) {
+      if (!wasApiCompleted) boss.apiCompletedAt = checkedAt;
+      if (boss.manualOverride !== false) {
+        if (!boss.done) newlyCompleted++;
+        boss.done = true;
+        if (boss.manualOverride !== true) boss.completionSource = 'nexon-api';
+        if (boss.completedIncome == null || boss.completionSource === 'nexon-api') boss.completedIncome = bossValue(boss);
+      }
+    }
+    if (before !== JSON.stringify(boss)) bossesChanged = true;
+  }
+  const previousLink = JSON.stringify(character.nexonCharacter || null);
+  const remoteCharacter = response.character || {};
+  character.nexonCharacter = {
+    ...(character.nexonCharacter || {}),
+    ...(remoteCharacter.ocid ? {ocid: remoteCharacter.ocid} : {}),
+    ...(remoteCharacter.name ? {characterName: remoteCharacter.name} : {}),
+    ...(remoteCharacter.world ? {world: remoteCharacter.world} : {}),
+    linkedAt: character.nexonCharacter?.linkedAt || checkedAt,
+    lastCheckedAt: checkedAt,
+    lastCheckedWeek: data.currentWeek,
+    status: 'ok'
+  };
+  return {changed: bossesChanged || previousLink !== JSON.stringify(character.nexonCharacter), bossesChanged, newlyCompleted, matched, unknown: [...unknown]};
+}
 function characterStats(c) {
   const list = normalizeBosses(c.bosses), completed = list.filter(b => b.done);
   const expected = list.reduce((sum, b) => sum + bossValue(b), 0);
@@ -218,7 +311,7 @@ function rollover(data, now = new Date()) {
       (data.recoveredWeeks ||= []).push({weekId: closing, characters: copy(data.characters), incomes: copy(rows)});
     }
     data.incomes = data.incomes.filter(r => recordWeek(r, closing) > closing);
-    data.characters.forEach(c => c.bosses.forEach(b => { b.done = false; delete b.completedIncome; }));
+    data.characters.forEach(c => c.bosses.forEach(resetBossWeeklyState));
     const next = new Date(`${closing.slice(0, 10)}T12:00:00`); next.setDate(next.getDate() + 7); data.currentWeek = currentWeekKey(next);
   }
   return true;
@@ -227,6 +320,8 @@ function rollover(data, now = new Date()) {
 let state, savedRaw = null, storageBlocked = false;
 let selectedWeek = '', bossFilter = 'pending', historyFilter = 'all', selectedBossCharacterId = '', characterMode = 'preset', presetApplyMode = 'add';
 let editingIncomeId = '', editSaleState = 'acquired';
+let nexonApiState = {status: 'idle', message: '연동할 캐릭터를 선택해주세요.'};
+const NEXON_CHECK_COOLDOWN_MS = 60_000;
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 function message(text, error = false) { $('#status').textContent = text; $('#status').classList.toggle('error', error); }
@@ -297,6 +392,11 @@ function selectedCharacter(data = viewData()) {
   return list.find(c => c.id === selectedBossCharacterId) || null;
 }
 function currentCharacterIndex() { return state.characters.findIndex(c => c.id === selectedBossCharacterId); }
+function bossApiBadge(boss) {
+  if (boss.apiCompleted && boss.manualOverride === false) return '<small class="api-badge manual">API 완료 · 수동 미완료</small>';
+  if (boss.completionSource === 'nexon-api') return '<small class="api-badge">API 확인</small>';
+  return '';
+}
 function render() {
   if (selectedWeek && !state.weeklyHistory[selectedWeek]) selectedWeek = '';
   const data = viewData(), totals = isPast() ? snapshotTotals(data) : totalsFor(state), current = totalsFor(state);
@@ -333,7 +433,7 @@ function renderBosses(data) {
   const shown = list.map((b, bi) => ({b, bi})).filter(({b}) => bossFilter === 'all' || (bossFilter === 'done' ? b.done : !b.done));
   $('#bossEditor').innerHTML = `<section class="boss-char" data-ci="${ci}"><div class="panel-head"><div><h3>${escapeHtml(c.name)}</h3><small class="muted">${stats.done} / ${stats.count} 완료 · ${koreanMeso(stats.earned)}</small></div></div>${shown.map(({b, bi}) => {
     const diffs = Object.keys(bossDB[b.name] || {[b.difficulty]: b.price});
-    return `<div class="boss-line ${b.done ? 'completed' : ''}" data-bi="${bi}"><label class="boss-name"><input type="checkbox" data-field="done" aria-label="${escapeHtml(b.name)} 완료" ${b.done ? 'checked' : ''} ${disabled}><span>${escapeHtml(b.name)}</span></label><strong class="boss-earned mint">${money(b.done && b.completedIncome != null ? b.completedIncome : bossValue(b))}</strong><div class="boss-controls"><select data-field="difficulty" aria-label="${escapeHtml(b.name)} 난이도" ${disabled}>${diffs.map(d => option(d, d, d === b.difficulty)).join('')}</select><select data-field="party" aria-label="${escapeHtml(b.name)} 파티 인원" ${disabled}>${Array.from({length: Math.max(6, b.party)}, (_, i) => option(i + 1, i === 0 ? '솔로' : `${i + 1}인`, i + 1 === b.party)).join('')}</select><button class="icon danger" data-action="remove-boss" aria-label="${escapeHtml(b.name)} 삭제" ${disabled}>×</button></div><details class="boss-price-detail"><summary>결정석 ${won(b.price)} · 가격 수정</summary><label>결정석 전체 가격<input class="money-input" data-field="price" inputmode="numeric" value="${won(b.price)}" ${disabled}><small class="money-hint">${koreanMeso(b.price)} 메소</small></label></details></div>`;
+    return `<div class="boss-line ${b.done ? 'completed' : ''}" data-bi="${bi}"><label class="boss-name"><input type="checkbox" data-field="done" aria-label="${escapeHtml(b.name)} 완료" ${b.done ? 'checked' : ''} ${disabled}><span>${escapeHtml(b.name)}${bossApiBadge(b)}</span></label><strong class="boss-earned mint">${money(b.done && b.completedIncome != null ? b.completedIncome : bossValue(b))}</strong><div class="boss-controls"><select data-field="difficulty" aria-label="${escapeHtml(b.name)} 난이도" ${disabled}>${diffs.map(d => option(d, d, d === b.difficulty)).join('')}</select><select data-field="party" aria-label="${escapeHtml(b.name)} 파티 인원" ${disabled}>${Array.from({length: Math.max(6, b.party)}, (_, i) => option(i + 1, i === 0 ? '솔로' : `${i + 1}인`, i + 1 === b.party)).join('')}</select><button class="icon danger" data-action="remove-boss" aria-label="${escapeHtml(b.name)} 삭제" ${disabled}>×</button></div><details class="boss-price-detail"><summary>결정석 ${won(b.price)} · 가격 수정</summary><label>결정석 전체 가격<input class="money-input" data-field="price" inputmode="numeric" value="${won(b.price)}" ${disabled}><small class="money-hint">${koreanMeso(b.price)} 메소</small></label></details></div>`;
   }).join('') || '<p class="empty">이 필터에 해당하는 보스가 없습니다.</p>'}<div class="boss-actions"><button class="ghost" data-action="add-boss" ${disabled}>+ 보스 등록</button></div></section>`;
 }
 function historyDate(row) {
@@ -361,8 +461,73 @@ function renderHistory(data) {
 function renderPrices() {
   $('#priceList').innerHTML = Object.entries(state.settings.itemPrices || {}).map(([name, price]) => `<div class="history-item"><b>${escapeHtml(name)}</b><span>${money(price)}</span></div>`).join('') || '<p class="empty">판매를 기록하면 최근 단가가 여기에 표시됩니다.</p>';
 }
+function nexonCheckedLabel(value) {
+  const date = value ? new Date(value) : null;
+  return date && !Number.isNaN(date.getTime()) ? date.toLocaleString('ko-KR', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'}) : '확인 전';
+}
+function renderNexonSettings() {
+  const list = $('#nexonCharacterList');
+  if (!list) return;
+  const disabled = isPast() || storageBlocked ? 'disabled' : '';
+  list.innerHTML = state.characters.map(character => {
+    const link = character.nexonCharacter;
+    const linked = !!link?.ocid;
+    const detail = linked ? `${escapeHtml(link.characterName || '')}${link.world ? ` · ${escapeHtml(link.world)}` : ''}<small>마지막 확인 ${escapeHtml(nexonCheckedLabel(link.lastCheckedAt))}</small>` : '<span class="muted">연동되지 않음</span>';
+    return `<div class="nexon-character-row" data-nexon-character="${escapeHtml(character.id)}"><div><b>${escapeHtml(character.name)}</b><p>${detail}</p></div><div><button type="button" class="ghost" data-nexon-action="link" ${disabled}>${linked ? '변경' : '연동'}</button>${linked ? `<button type="button" class="text-button" data-nexon-action="unlink" ${disabled}>해제</button>` : ''}</div></div>`;
+  }).join('') || '<p class="empty">먼저 캐릭터를 추가해주세요.</p>';
+  const status = $('#nexonApiStatus');
+  status.textContent = nexonApiState.message;
+  status.className = nexonApiState.status === 'error' ? 'negative' : nexonApiState.status === 'checking' ? 'pending' : nexonApiState.status === 'ok' ? 'mint' : 'muted';
+  const button = $('#checkNexonBosses');
+  button.disabled = nexonApiState.status === 'checking' || isPast() || storageBlocked || !state.characters.some(character => character.nexonCharacter?.ocid);
+}
 function renderSettings() {
   $('#presetManager').innerHTML = state.presets.map(preset => `<div class="preset-row" data-preset-id="${escapeHtml(preset.id)}"><div><b>${escapeHtml(preset.name)}</b><small class="muted">보스 ${preset.bosses.length}개</small></div><div><button class="ghost" type="button" data-preset-action="rename">이름 변경</button><button class="ghost danger-text" type="button" data-preset-action="delete">삭제</button></div></div>`).join('') || '<p class="empty">저장한 사용자 프리셋이 없습니다.</p>';
+  renderNexonSettings();
+}
+
+async function fetchNexonScheduler(character, characterName = '') {
+  const params = new URLSearchParams();
+  if (characterName) params.set('characterName', characterName);
+  else params.set('ocid', character.nexonCharacter.ocid);
+  const response = await fetch('/api/nexon-scheduler?' + params);
+  let data;
+  try { data = await response.json(); } catch { throw new Error('NEXON API 응답을 읽지 못했습니다.'); }
+  if (!response.ok || !data?.ok) throw new Error(data?.message || 'NEXON 보스 기록을 확인하지 못했습니다.');
+  return data;
+}
+async function syncNexonCharacter(characterId, {characterName = '', ignoreCooldown = false} = {}) {
+  const character = state.characters.find(item => item.id === characterId);
+  if (!character) throw new Error('메기 캐릭터를 찾을 수 없습니다.');
+  if (!characterName && !character.nexonCharacter?.ocid) throw new Error('먼저 NEXON 캐릭터를 연동해주세요.');
+  const lastChecked = Date.parse(character.nexonCharacter?.lastCheckedAt || '');
+  if (!characterName && !ignoreCooldown && !Number.isNaN(lastChecked) && Date.now() - lastChecked < NEXON_CHECK_COOLDOWN_MS) return {cooldown: true, character: character.name};
+  const response = await fetchNexonScheduler(character, characterName);
+  let applied;
+  const saved = transaction(next => { applied = applyNexonSchedulerState(next, characterId, response, response.fetchedAt); });
+  if (!saved) throw new Error('NEXON 확인 결과를 이 기기에 저장하지 못했습니다.');
+  if (applied.unknown.length) console.info('NEXON Scheduler unknown bosses', applied.unknown);
+  return {...applied, character: character.name};
+}
+async function syncAllNexonCharacters() {
+  if (nexonApiState.status === 'checking') return;
+  if (isPast()) { nexonApiState = {status: 'error', message: '과거 주차는 읽기 전용입니다. 이번 주로 돌아와주세요.'}; renderNexonSettings(); return; }
+  const linked = state.characters.filter(character => character.nexonCharacter?.ocid);
+  if (!linked.length) { nexonApiState = {status: 'error', message: '연동된 NEXON 캐릭터가 없습니다.'}; renderNexonSettings(); return; }
+  nexonApiState = {status: 'checking', message: '보스 기록 확인 중…'}; renderNexonSettings();
+  let checked = 0, completed = 0, cooldown = 0;
+  try {
+    for (const character of linked) {
+      const result = await syncNexonCharacter(character.id);
+      if (result.cooldown) cooldown++; else { checked++; completed += result.newlyCompleted; }
+    }
+    const parts = [`${checked}개 캐릭터 확인`, `새 완료 ${completed}개`];
+    if (cooldown) parts.push(`쿨다운 ${cooldown}개`);
+    nexonApiState = {status: 'ok', message: parts.join(' · ')};
+  } catch (error) {
+    nexonApiState = {status: 'error', message: error.message};
+  }
+  renderNexonSettings();
 }
 function renderIncomeForm(resetItems = false) {
   const category = $('#incomeCategory').value;
@@ -468,7 +633,7 @@ function prepareImportedState(text, now = new Date()) {
 }
 function resetCurrentWeek(data) {
   data.incomes = [];
-  data.characters.forEach(character => character.bosses.forEach(boss => { boss.done = false; delete boss.completedIncome; }));
+  data.characters.forEach(character => character.bosses.forEach(resetBossWeeklyState));
   return data;
 }
 function openIncomeEdit(id) {
@@ -531,6 +696,26 @@ function init() {
   }));
   $('#addCharacter').addEventListener('click', openCharacterDialog);
   $('#addCharacterFromBoss').addEventListener('click', openCharacterDialog);
+  $('#checkNexonBosses').addEventListener('click', syncAllNexonCharacters);
+  $('#nexonCharacterList').addEventListener('click', async e => {
+    const button = e.target.closest('[data-nexon-action]'); if (!button || nexonApiState.status === 'checking') return;
+    const row = button.closest('[data-nexon-character]'), character = state.characters.find(item => item.id === row?.dataset.nexonCharacter);
+    if (!character) return;
+    if (button.dataset.nexonAction === 'unlink') {
+      if (confirm(`${character.name}의 NEXON 캐릭터 연동을 해제할까요? 이미 확인된 이번 주 보스 완료 상태는 유지됩니다.`)) transaction(next => { delete next.characters.find(item => item.id === character.id).nexonCharacter; });
+      return;
+    }
+    const characterName = prompt('연동할 NEXON 메이플스토리 캐릭터명', character.nexonCharacter?.characterName || character.name)?.trim();
+    if (!characterName) return;
+    nexonApiState = {status: 'checking', message: `${character.name} 연동 확인 중…`}; renderNexonSettings();
+    try {
+      const result = await syncNexonCharacter(character.id, {characterName});
+      nexonApiState = {status: 'ok', message: `${character.name} 연동 완료 · 새 완료 ${result.newlyCompleted}개`};
+    } catch (error) {
+      nexonApiState = {status: 'error', message: error.message};
+    }
+    renderNexonSettings();
+  });
   $('#bossCharacterSelect').addEventListener('change', e => { selectedBossCharacterId = e.target.value; renderBosses(viewData()); });
   $$('[data-character-mode]').forEach(button => button.addEventListener('click', () => { characterMode = button.dataset.characterMode; updateCharacterCreateUI(); }));
   $('#characterPreset').addEventListener('change', updateCharacterCreateUI);
@@ -575,8 +760,8 @@ function init() {
     const ci = n(e.target.closest('[data-ci]').dataset.ci), bi = n(e.target.closest('[data-bi]').dataset.bi), value = field === 'done' ? e.target.checked : e.target.value;
     transaction(next => {
       const b = next.characters[ci].bosses[bi];
-      if (field === 'done') { b.done = value; if (value) b.completedIncome = bossValue(b); else delete b.completedIncome; }
-      else { b[field] = field === 'difficulty' ? value : Math.max(field === 'party' ? 1 : 0, n(value)); if (field === 'party') b.partySize = b.party; if (field === 'difficulty') b.price = referencePrice(b.name, value); b.done = false; delete b.completedIncome; }
+      if (field === 'done') { b.done = value; b.manualOverride = value; b.completionSource = 'manual'; if (value) b.completedIncome = bossValue(b); else delete b.completedIncome; }
+      else { b[field] = field === 'difficulty' ? value : Math.max(field === 'party' ? 1 : 0, n(value)); if (field === 'party') b.partySize = b.party; if (field === 'difficulty') b.price = referencePrice(b.name, value); resetBossWeeklyState(b); }
     });
   });
   $('#bossEditor').addEventListener('click', e => {
@@ -638,6 +823,7 @@ if (typeof window !== 'undefined') window.mapleIncomeApp = {
   storageKey: KEY,
   changeEvent: LOCAL_CHANGE_EVENT,
   getState: () => copy(state),
+  normalizeCloudState: raw => migrateState(raw),
   applyCloudState
 };
 if (typeof document !== 'undefined') init();
