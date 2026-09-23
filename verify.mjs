@@ -117,6 +117,8 @@ assert.equal(context.__schedulerState.characters[0].bosses[1].done, true);
 assert.equal(context.__schedulerState.characters[0].bosses[1].completionSource, 'manual');
 context.__appliedDiagnostics = appliedScheduler;
 assert.equal(run('nexonDiagnosticMessage(__appliedDiagnostics)'), 'NEXON 조회 4개 · 완료 2개 · 메기 매칭 2개 · 자동 완료 1개 · 매칭 실패 1개');
+assert.deepEqual(json('Object.keys(nexonDiagnosticGroups(__appliedDiagnostics))'), ['unknownName', 'difficultyMismatch', 'ambiguous', 'localMissing', 'apiMissing']);
+assert.equal(run('nexonDiagnosticGroups(__appliedDiagnostics).unknownName.length'), 1);
 
 // Missing difficulty is safe only when the local bossId has one candidate.
 context.__missingDifficultyState = structuredClone(schedulerState);
@@ -379,9 +381,21 @@ assert.ok(nexonCloudMerge.incomes.some(item => item.id === 'income-with-nexon'))
 
 const sanitizedScheduler = nexonProxyInternals.sanitizeScheduler({
   date: '2026-09-23', character_name: '넥슨본캐', world_name: '루나',
-  boss_contents: [{content_name: '스우', difficulty: '하드', cycle: '주간', registration_flag: 'false', complete_flag: 'true'}]
+  boss_contents: [{content_name: '스우', difficulty: '하드', cycle: '주간', registration_flag: 'N', complete_flag: 'Y'}]
 }, schedulerResponse.character.ocid);
-assert.deepEqual(sanitizedScheduler.bosses[0], {contentName: '스우', difficulty: '하드', cycle: '주간', registered: false, complete: true});
+assert.deepEqual(sanitizedScheduler.bosses[0], {contentName: '스우', difficulty: '하드', cycle: '주간', registered: false, complete: false});
+assert.deepEqual(sanitizedScheduler.diagnostics.samples[0], {
+  contentName: '스우', difficulty: '하드', cycle: '주간', registered: false, complete: false,
+  rawCompleteType: 'string', rawCompleteValue: 'Y', rawRegistrationType: 'string', rawRegistrationValue: 'N'
+});
+assert.equal(JSON.stringify(sanitizedScheduler.diagnostics).includes(schedulerResponse.character.ocid), false);
+const diagnosticLimit = nexonProxyInternals.sanitizeScheduler({boss_contents: Array.from({length: 25}, (_, index) => ({content_name: `보스 ${index}`, complete_flag: index, registration_flag: null}))}, 'ocid');
+assert.equal(diagnosticLimit.diagnostics.samples.length, 20);
+assert.deepEqual(diagnosticLimit.diagnostics.samples[1], {
+  contentName: '보스 1', difficulty: '', cycle: '', registered: false, complete: false,
+  rawCompleteType: 'number', rawCompleteValue: 1, rawRegistrationType: 'null', rawRegistrationValue: null
+});
+assert.deepEqual(nexonProxyInternals.diagnosticRaw({secret: true}), {type: 'object', value: '[unsupported]'});
 assert.equal(nexonProxyInternals.parseFlag(' true '), true);
 assert.equal(nexonProxyInternals.parseFlag('false'), false);
 assert.equal(sanitizedScheduler.mode, 'live');
@@ -401,7 +415,10 @@ assert.match(nexonApiSource, /'x-nxopen-api-key': apiKey/);
 assert.match(nexonApiSource, /\/maplestory\/v1\/scheduler\/character-state/);
 assert.match(envExample, /^NEXON_OPEN_API_KEY=$/m);
 assert.match(source, /throw applyError \|\| new Error\('NEXON 확인 결과를 이 기기에 저장하지 못했습니다\.'\)/);
-assert.match(source, /console\.info\('NEXON scheduler sync diagnostics', applied\)/);
+assert.match(source, /console\.info\('NEXON scheduler sync diagnostics', result\)/);
+assert.match(html, /id="nexonDiagnostics"/);
+assert.match(html, /id="nexonDiagnosticsContent"/);
+assert.match(css, /\.nexon-diagnostic-item/);
 const originalNexonKey = process.env.NEXON_OPEN_API_KEY;
 delete process.env.NEXON_OPEN_API_KEY;
 let missingKeyStatus = 0, missingKeyBody = null;

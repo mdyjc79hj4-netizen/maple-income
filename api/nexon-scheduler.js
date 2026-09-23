@@ -62,10 +62,38 @@ function parseFlag(value) {
   return value === true || (typeof value === 'string' && value.trim().toLowerCase() === 'true');
 }
 
+function diagnosticText(value) {
+  return typeof value === 'string' ? value.slice(0, 120) : '';
+}
+
+function diagnosticRaw(value) {
+  const type = value === null ? 'null' : typeof value;
+  if (type === 'string') return {type, value: value.slice(0, 80)};
+  if (type === 'boolean' || type === 'number' || type === 'null') return {type, value};
+  return {type, value: '[unsupported]'};
+}
+
+function diagnosticSample(item) {
+  const complete = diagnosticRaw(item.complete_flag);
+  const registered = diagnosticRaw(item.registration_flag);
+  return {
+    contentName: diagnosticText(item.content_name),
+    difficulty: diagnosticText(item.difficulty),
+    cycle: diagnosticText(item.cycle),
+    registered: parseFlag(item.registration_flag),
+    complete: parseFlag(item.complete_flag),
+    rawCompleteType: complete.type,
+    rawCompleteValue: complete.value,
+    rawRegistrationType: registered.type,
+    rawRegistrationValue: registered.value
+  };
+}
+
 function sanitizeScheduler(payload, ocid, requestedDate = '') {
   if (!payload || typeof payload !== 'object' || !Array.isArray(payload.boss_contents)) {
     throw Object.assign(new Error('NEXON 스케줄러 응답 구조가 변경되었습니다.'), {status: 502});
   }
+  const bossContents = payload.boss_contents.filter(item => item && typeof item === 'object');
   return {
     ok: true,
     fetchedAt: new Date().toISOString(),
@@ -77,13 +105,16 @@ function sanitizeScheduler(payload, ocid, requestedDate = '') {
       name: typeof payload.character_name === 'string' ? payload.character_name : '',
       world: typeof payload.world_name === 'string' ? payload.world_name : ''
     },
-    bosses: payload.boss_contents.filter(item => item && typeof item === 'object').map(item => ({
+    bosses: bossContents.map(item => ({
       contentName: typeof item.content_name === 'string' ? item.content_name : '',
       difficulty: typeof item.difficulty === 'string' ? item.difficulty : '',
       cycle: typeof item.cycle === 'string' ? item.cycle : '',
       registered: parseFlag(item.registration_flag),
       complete: parseFlag(item.complete_flag)
-    }))
+    })),
+    diagnostics: {
+      samples: bossContents.slice(0, 20).map(diagnosticSample)
+    }
   };
 }
 
@@ -116,4 +147,4 @@ export default async function handler(req, res) {
   }
 }
 
-export const nexonProxyInternals = {parseFlag, publicError, sanitizeScheduler, validDate};
+export const nexonProxyInternals = {diagnosticRaw, diagnosticSample, parseFlag, publicError, sanitizeScheduler, validDate};
