@@ -2,6 +2,8 @@
 
 const KEY = 'maple-income-vercel-v1';
 const BACKUP_KEY = `${KEY}-before-v2`;
+const STATE_VERSION = 5;
+const LOCAL_CHANGE_EVENT = 'maple-income:local-change';
 const items = {hunt: ['메소', '솔 에르다 조각', '코어 젬스톤'], gather: ['쥬니퍼베리 씨앗', '쥬니퍼베리 씨앗 오일', '소형 재물 획득의 비약'], drop: ['보스 드랍 아이템', '칠흑 아이템', '기타 드랍 아이템']};
 const labels = {boss: '보스', hunt: '재획', gather: '채집', drop: '드랍·기타'};
 // KMS reference: https://gi.maplestory.nexon.com/Update/813, 2026-09-17.
@@ -163,7 +165,7 @@ function snapshotTotals(s) {
   return {...computed, ...(s.totals || {}), total: n(s.totals?.total ?? s.totalIncome ?? s.total ?? computed.total)};
 }
 function emptyState(now = new Date()) {
-  return {version: 4, currentWeek: currentWeekKey(now), characters: [{id: uid(), name: '본캐', bosses: presetGroups.middle.bosses.map(makeBoss)}], incomes: [], weeklyHistory: {}, presets: [], settings: {}, saleState: 'acquired'};
+  return {version: STATE_VERSION, updatedAt: now.toISOString(), currentWeek: currentWeekKey(now), characters: [{id: uid(), name: '본캐', bosses: presetGroups.middle.bosses.map(makeBoss)}], incomes: [], weeklyHistory: {}, presets: [], settings: {}, saleState: 'acquired'};
 }
 function recordWeek(r, fallback) {
   if (validWeek(r.weekId)) return r.weekId;
@@ -173,9 +175,10 @@ function recordWeek(r, fallback) {
 function migrateState(raw, now = new Date()) {
   if (!raw) return emptyState(now);
   if (typeof raw !== 'object' || Array.isArray(raw) || !Array.isArray(raw.characters) || !Array.isArray(raw.incomes)) throw new Error('저장 데이터 형식을 읽을 수 없습니다.');
-  if (raw.version > 4) throw new Error('더 최신 버전의 데이터입니다. 페이지를 새로고침해 주세요.');
+  if (raw.version > STATE_VERSION) throw new Error('더 최신 버전의 데이터입니다. 페이지를 새로고침해 주세요.');
   const result = copy(raw), legacy = !raw.version || raw.version < 2;
-  result.version = 4;
+  result.version = STATE_VERSION;
+  result.updatedAt = typeof raw.updatedAt === 'string' && !Number.isNaN(Date.parse(raw.updatedAt)) ? raw.updatedAt : now.toISOString();
   result.currentWeek = validWeek(raw.currentWeek) ? raw.currentWeek : validWeek(raw.weekId) ? raw.weekId : currentWeekKey(now);
   result.characters = result.characters.map(c => ({...c, id: c.id || uid(), bosses: normalizeBosses(c.bosses, legacy && !Array.isArray(c.bosses))}));
   result.settings ||= {}; result.presets ||= [];
@@ -227,13 +230,23 @@ let editingIncomeId = '', editSaleState = 'acquired';
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 function message(text, error = false) { $('#status').textContent = text; $('#status').classList.toggle('error', error); }
-function persist(next) { const raw = JSON.stringify(next); localStorage.setItem(KEY, raw); savedRaw = raw; state = next; }
+function nextUpdatedAt(previous) {
+  const prior = Date.parse(previous || '');
+  return new Date(Math.max(Date.now(), Number.isNaN(prior) ? 0 : prior + 1)).toISOString();
+}
+function persist(next, {touch = true, notify = true} = {}) {
+  next.version = STATE_VERSION;
+  if (touch || !next.updatedAt) next.updatedAt = nextUpdatedAt(next.updatedAt);
+  const raw = JSON.stringify(next); localStorage.setItem(KEY, raw); savedRaw = raw; state = next;
+  if (notify && typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(LOCAL_CHANGE_EVENT, {detail: {updatedAt: next.updatedAt}}));
+}
 function loadState() {
   try {
     savedRaw = localStorage.getItem(KEY); const parsed = savedRaw ? JSON.parse(savedRaw) : null;
     const next = migrateState(parsed);
-    if (parsed && parsed.version !== 4 && !localStorage.getItem(BACKUP_KEY)) localStorage.setItem(BACKUP_KEY, savedRaw);
-    rollover(next); persist(next); storageBlocked = false;
+    const migrated = !!parsed && parsed.version !== STATE_VERSION;
+    if (migrated && !localStorage.getItem(BACKUP_KEY)) localStorage.setItem(BACKUP_KEY, savedRaw);
+    const rolled = rollover(next); persist(next, {touch: migrated || rolled || !parsed, notify: false}); storageBlocked = false;
   } catch (error) { storageBlocked = true; state ||= emptyState(); message(`저장 중단: ${error.message} 원본을 덮어쓰지 않았습니다.`, true); }
 }
 function isPast() { return selectedWeek && selectedWeek !== state.currentWeek; }
@@ -253,6 +266,15 @@ function checkWeek() {
     if (localStorage.getItem(KEY) !== savedRaw) { loadState(); render(); return; }
     const next = copy(state); if (rollover(next)) { persist(next); render(); message('지난 주 기록을 보관하고 새 주차를 시작했습니다.'); }
   } catch (error) { message(`주차 마감을 저장하지 못했습니다: ${error.message}`, true); }
+}
+function applyCloudState(raw) {
+  if (storageBlocked) throw new Error('로컬 저장소를 사용할 수 없어 클라우드 데이터를 적용할 수 없습니다.');
+  const next = migrateState(raw), rolled = rollover(next);
+  persist(next, {touch: rolled, notify: rolled});
+  selectedWeek = ''; selectedBossCharacterId = '';
+  renderIncomeForm(true); render();
+  message(rolled ? '클라우드 데이터를 불러오고 새 주차를 시작했습니다.' : '클라우드의 최신 데이터를 반영했습니다.');
+  return copy(state);
 }
 function option(value, text, selected = false) { return `<option value="${escapeHtml(value)}" ${selected ? 'selected' : ''}>${escapeHtml(text)}</option>`; }
 function money(value) { return `<span title="${won(value)} 메소">${koreanMeso(value)}</span>`; }
@@ -607,9 +629,15 @@ function init() {
     if (button.dataset.presetAction === 'delete' && confirm(`사용자 프리셋 '${preset.name}'을 삭제할까요? 캐릭터의 현재 보스 구성은 유지됩니다.`)) transaction(next => { next.presets = next.presets.filter(item => item.id !== preset.id); });
   });
   $('#resetWeek').addEventListener('click', () => { if (!isPast() && confirm('이번 주 보스 완료 체크와 수익 기록만 초기화할까요? 캐릭터 구성, 프리셋, 과거 주차는 유지됩니다.')) transaction(resetCurrentWeek); });
-  $('#resetAll').addEventListener('click', () => { if (!isPast() && confirm('현재 데이터와 과거 주차를 모두 초기화할까요? 먼저 백업을 권장합니다. 이전 버전 원본 백업은 유지됩니다.')) { try { localStorage.removeItem(KEY); location.reload(); } catch (error) { message(error.message, true); } } });
+  $('#resetAll').addEventListener('click', () => { if (!isPast() && confirm('현재 데이터와 과거 주차를 모두 초기화할까요? 먼저 백업을 권장합니다. 이전 버전 원본 백업은 유지됩니다.')) { try { persist(emptyState()); selectedWeek = ''; selectedBossCharacterId = ''; renderIncomeForm(true); render(); message('전체 데이터를 초기화했습니다.'); } catch (error) { message(error.message, true); } } });
   window.addEventListener('focus', checkWeek);
   window.addEventListener('storage', e => { if (e.key === KEY) { loadState(); render(); renderIncomeForm(); message('다른 탭에서 저장한 변경을 반영했습니다.'); } });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) checkWeek(); }); setInterval(checkWeek, 15000);
 }
+if (typeof window !== 'undefined') window.mapleIncomeApp = {
+  storageKey: KEY,
+  changeEvent: LOCAL_CHANGE_EVENT,
+  getState: () => copy(state),
+  applyCloudState
+};
 if (typeof document !== 'undefined') init();

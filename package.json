@@ -1,0 +1,17 @@
+{
+  "name": "maple-income",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "node verify.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.4"
+  },
+  "devDependencies": {
+    "vite": "^7.1.7"
+  }
+}

@@ -19,6 +19,10 @@ p{overflow-wrap:anywhere}
 .brand-mark{display:grid;place-content:center;width:31px;height:31px;border-radius:10px;background:var(--mint);color:#13291f;font-size:24px;font-weight:900}
 .device-save{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
 .device-save i{width:6px;height:6px;background:var(--mint);border-radius:50%}
+.device-save.sync-pending{color:var(--amber)}
+.device-save.sync-pending i{background:var(--amber)}
+.device-save.sync-error{color:var(--red)}
+.device-save.sync-error i{background:var(--red)}
 .header-stats{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:17px 0 8px}
 .header-stats small{display:block;color:var(--muted);font-size:12px;margin-bottom:3px}
 .header-stats strong{display:block;font-size:17px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
@@ -153,6 +157,14 @@ dd{margin:0;font-size:12px}
 .save-state i{width:7px;height:7px;border-radius:50%;background:var(--mint);box-shadow:0 0 8px #78dfb688}
 .settings-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
 .settings-actions .text-button{grid-column:1/-1;min-height:38px;text-align:left}
+.cloud-auth{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:12px}
+.cloud-auth label{display:grid;gap:5px;color:#c5d4df;font-size:12px}
+.cloud-auth input{font-size:14px}
+.cloud-actions{display:flex;gap:8px;align-items:center;grid-column:1/-1}
+.cloud-actions button{flex:1;min-height:44px}
+.cloud-account{display:grid;gap:12px;margin-top:12px}
+.cloud-account b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cloud-account p,#authMessage{margin-top:4px}
 .preset-manager{display:grid;gap:7px;margin-top:11px}
 .preset-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
 .preset-row:first-child{border-top:0}
@@ -220,6 +232,8 @@ dialog::backdrop{background:#0009;backdrop-filter:blur(3px)}
 .settings-section{padding:13px 12px}
 .settings-actions{grid-template-columns:1fr}
 .settings-actions .text-button{grid-column:1}
+.cloud-auth{grid-template-columns:1fr}
+.cloud-auth .cloud-actions{grid-column:1}
 .danger-action{align-items:flex-start;flex-direction:column}
 .danger-action button{width:100%;min-height:44px}
 }

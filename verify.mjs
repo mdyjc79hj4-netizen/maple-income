@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import {webcrypto} from 'node:crypto';
+import {cloudSyncInternals} from './cloud-sync.js';
 
 const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
+const cloudSource = readFileSync(new URL('./cloud-sync.js', import.meta.url), 'utf8');
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
 const css = readFileSync(new URL('./style.css', import.meta.url), 'utf8');
+const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
 const context = vm.createContext({console, crypto: webcrypto, document: undefined, structuredClone, setTimeout, clearTimeout});
 vm.runInContext(source, context);
 const run = expression => vm.runInContext(expression, context);
@@ -44,7 +47,8 @@ const legacy = {
 };
 context.__legacy = legacy;
 const migrated = json("migrateState(__legacy, new Date('2026-09-20T12:00:00'))");
-assert.equal(migrated.version, 4);
+assert.equal(migrated.version, 5);
+assert.ok(!Number.isNaN(Date.parse(migrated.updatedAt)));
 assert.deepEqual(migrated.characters[0].bosses.map(b => [b.bossId, b.name, b.difficulty, b.partySize]), [
   ['seren', '선택받은 세렌', '하드', 2], ['kalos', '감시자 칼로스', '카오스', 3]
 ]);
@@ -62,7 +66,7 @@ assert.equal(migratedV1.characters[0].bosses.find(b => b.bossId === 'seren').pri
 assert.equal(migratedV1.characters[0].bosses.find(b => b.bossId === 'kalos').price, 1230000000);
 
 context.__backup = JSON.stringify(legacy);
-assert.equal(run("prepareImportedState(__backup, new Date('2026-09-20T12:00:00')).version"), 4);
+assert.equal(run("prepareImportedState(__backup, new Date('2026-09-20T12:00:00')).version"), 5);
 assert.throws(() => run("prepareImportedState('{broken')"), /JSON/);
 assert.throws(() => run("prepareImportedState('{}')"), /저장 데이터 형식/);
 
@@ -92,10 +96,26 @@ assert.equal(run('incomeValue({item:"조각",category:"hunt",recordType:"sold",q
 assert.equal(run("historyFilter='unsold'; historyMatches({item:'조각',category:'hunt',recordType:'acquired'})"), true);
 assert.equal(run("historyMatches({item:'조각',category:'hunt',recordType:'sold'})"), false);
 assert.equal(run("historyFilter='gather'; historyMatches({item:'씨앗',category:'gather',recordType:'acquired'})"), true);
+assert.equal(cloudSyncInternals.meaningfulLocalData({characters: [{name: '본캐', bosses: []}], incomes: [], weeklyHistory: {}, presets: [], settings: {}}), false);
+assert.equal(cloudSyncInternals.meaningfulLocalData({characters: [{name: '본캐', bosses: []}], incomes: [{id: 'i1'}], weeklyHistory: {}, presets: [], settings: {}}), true);
+assert.equal(await cloudSyncInternals.contentHash({version: 5, value: 1}), await cloudSyncInternals.contentHash({version: 5, value: 1}));
+assert.notEqual(await cloudSyncInternals.contentHash({version: 5, value: 1}), await cloudSyncInternals.contentHash({version: 5, value: 2}));
+assert.ok(cloudSyncInternals.timestamp('2026-09-23T00:00:00.000Z') > cloudSyncInternals.timestamp('2026-09-22T00:00:00.000Z'));
+assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: false}), 'upload');
+assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: true, sameContent: true}), 'noop');
+assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: true, sameContent: false, knownDevice: false, initial: true, hasLocalData: true}), 'choose');
+assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: true, sameContent: false, knownDevice: true, localChangedSinceSync: true, localUpdatedAt: '2026-09-23T01:00:00Z', remoteUpdatedAt: '2026-09-23T00:00:00Z'}), 'upload');
+assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: true, sameContent: false, knownDevice: true, localChangedSinceSync: false, localUpdatedAt: '2026-09-23T01:00:00Z', remoteUpdatedAt: '2026-09-23T00:00:00Z'}), 'download');
 const referencedIds = [...source.matchAll(/\$\('#([A-Za-z][A-Za-z0-9_-]*)'\)/g)].map(match => match[1]);
 const htmlIds = new Set([...html.matchAll(/id="([^"]+)"/g)].map(match => match[1]));
 assert.deepEqual([...new Set(referencedIds)].filter(id => !htmlIds.has(id)), []);
+const cloudIds = [...cloudSource.matchAll(/querySelector\('#([A-Za-z][A-Za-z0-9_-]*)'\)/g)].map(match => match[1]);
+assert.deepEqual([...new Set(cloudIds)].filter(id => !htmlIds.has(id)), []);
 assert.match(css, /\.chip-scroll\{[^}]*overflow-x:auto/);
 assert.match(css, /@media\(max-width:430px\)/);
 assert.match(css, /\.danger-action button\{width:100%;min-height:44px\}/);
-console.log('boss roster, preset, migration, backup, reset, rollover and income regression checks passed');
+assert.match(css, /\.cloud-actions button\{[^}]*min-height:44px/);
+assert.match(schema, /alter table public\.maple_income_sync enable row level security/i);
+assert.equal((schema.match(/create policy/gi) || []).length, 3);
+assert.match(schema, /auth\.uid\(\)\) = user_id/);
+console.log('boss roster, preset, migration, backup, reset, rollover, income and cloud sync regression checks passed');
