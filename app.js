@@ -13,25 +13,55 @@ const bossDB = {
   '가디언 엔젤 슬라임': {노멀: 12700000, 카오스: 71300000}, '루시드': {이지: 14900000, 노멀: 17800000, 하드: 59700000},
   '윌': {이지: 16100000, 노멀: 20500000, 하드: 73200000}, '더스크': {노멀: 22000000, 카오스: 66300000},
   '듄켈': {노멀: 23700000, 하드: 89600000}, '진 힐라': {노멀: 67600000, 하드: 100000000},
-  '검은 마법사': {하드: 665000000, 익스트림: 8740000000}, '세렌': {노멀: 167000000, 하드: 302000000, 익스트림: 1840000000},
-  '칼로스': {이지: 238000000, 노멀: 479000000, 카오스: 1230000000}, '카링': {이지: 320000000, 노멀: 593000000, 하드: 1560000000}
+  '검은 마법사': {하드: 665000000, 익스트림: 8740000000},
+  '선택받은 세렌': {노멀: 167000000, 하드: 302000000, 익스트림: 1840000000},
+  '감시자 칼로스': {이지: 238000000, 노멀: 479000000, 카오스: 1230000000, 익스트림: 4104000000},
+  '카링': {이지: 320000000, 노멀: 593000000, 하드: 1560000000, 익스트림: 5387000000},
+  '벨로나': {이지: 396000000, 노멀: 824000000, 하드: 2950000000},
+  '림보': {노멀: 995000000, 하드: 2385000000},
+  '발드릭스': {노멀: 1320000000, 하드: 3078000000},
+  '최초의 대적자': {이지: 261000000, 노멀: 532000000, 하드: 1390000000, 익스트림: 4712000000},
+  '찬란한 흉성': {노멀: 576000000, 하드: 2678000000},
+  '유피테르': {노멀: 1560000000, 하드: 4845000000}
 };
 const bossIds = {
   '자쿰': 'zakum', '피에르': 'pierre', '반반': 'vonbon', '블러디퀸': 'bloodyqueen', '벨룸': 'vellum',
   '매그너스': 'magnus', '파풀라투스': 'papulatus', '스우': 'lotus', '데미안': 'damien',
   '가디언 엔젤 슬라임': 'guardian-angel-slime', '루시드': 'lucid', '윌': 'will', '더스크': 'gloom',
-  '듄켈': 'darknell', '진 힐라': 'verus-hilla', '검은 마법사': 'black-mage', '세렌': 'seren',
-  '칼로스': 'kalos', '카링': 'kaling'
+  '듄켈': 'darknell', '진 힐라': 'verus-hilla', '검은 마법사': 'black-mage', '선택받은 세렌': 'seren',
+  '감시자 칼로스': 'kalos', '카링': 'kaling', '벨로나': 'bellona', '림보': 'limbo',
+  '발드릭스': 'baldrix', '최초의 대적자': 'first-adversary', '찬란한 흉성': 'shining-calamity', '유피테르': 'jupiter'
 };
 const bossNames = Object.fromEntries(Object.entries(bossIds).map(([name, id]) => [id, name]));
+const bossAliases = {'세렌': '선택받은 세렌', '칼로스': '감시자 칼로스'};
 const legacyBossNames = ['스우', '데미안', '가디언 엔젤 슬라임', '루시드', '윌', '더스크', '듄켈', '진 힐라', '검은 마법사', '세렌', '칼로스', '카링'];
 const presetGroups = {
   all: {name: '전체 보스', bosses: presetBosses(Object.keys(bossDB))},
   early: {name: '카루타 ~ 스데미', bosses: presetBosses(['피에르', '반반', '블러디퀸', '벨룸', '스우', '데미안'])},
   middle: {name: '스데미 ~ 루윌', bosses: presetBosses(['스우', '데미안', '가디언 엔젤 슬라임', '루시드', '윌'])},
   late: {name: '루윌 ~ 진듄더', bosses: presetBosses(['루시드', '윌', '더스크', '듄켈', '진 힐라'])},
-  end: {name: '검은 마법사 이상', bosses: presetBosses(['검은 마법사', '세렌', '칼로스', '카링'])}
+  end: {name: '검은 마법사 이상', bosses: presetBosses(['검은 마법사', '선택받은 세렌', '감시자 칼로스', '카링', '벨로나', '림보', '발드릭스', '최초의 대적자', '찬란한 흉성', '유피테르'])}
 };
+function validatePresetIntegrity(groups = presetGroups) {
+  const masterIds = Object.keys(bossDB).map(bossIdFor), errors = [];
+  if (new Set(masterIds).size !== masterIds.length) errors.push('보스 마스터 DB의 bossId가 중복됩니다.');
+  if (masterIds.some(id => id.startsWith('legacy:'))) errors.push('보스 마스터 DB에 안정적인 bossId가 없는 항목이 있습니다.');
+  if (groups.all?.bosses.length !== masterIds.length) errors.push('전체 보스 프리셋 개수가 마스터 DB와 다릅니다.');
+  for (const [key, preset] of Object.entries(groups)) {
+    const seen = new Set();
+    for (const boss of preset.bosses || []) {
+      const name = bossNameFor(boss.bossId);
+      if (!masterIds.includes(boss.bossId)) errors.push(`${key}: 존재하지 않는 bossId ${boss.bossId}`);
+      if (seen.has(boss.bossId)) errors.push(`${key}: 중복 bossId ${boss.bossId}`); else seen.add(boss.bossId);
+      if (!Object.hasOwn(bossDB[name] || {}, boss.difficulty)) errors.push(`${key}: ${name}의 유효하지 않은 난이도 ${boss.difficulty}`);
+      if (!Number.isInteger(boss.partySize) || boss.partySize < 1 || boss.partySize > 6) errors.push(`${key}: ${name}의 유효하지 않은 파티 인원`);
+    }
+  }
+  const allIds = new Set(groups.all?.bosses.map(b => b.bossId));
+  for (const id of masterIds) if (!allIds.has(id)) errors.push(`전체 보스 프리셋 누락: ${id}`);
+  if (errors.length) throw new Error(`프리셋 무결성 오류: ${errors.join(' / ')}`);
+  return true;
+}
 const copy = value => JSON.parse(JSON.stringify(value));
 const uid = () => crypto.randomUUID();
 function n(value) { const result = Number(String(value ?? 0).replace(/,/g, '')); return Number.isFinite(result) ? result : 0; }
@@ -57,13 +87,20 @@ function currentWeekKey(date = new Date()) { const w = weekRange(date); return `
 function validWeek(value) { return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}~\d{4}-\d{2}-\d{2}$/.test(value) && currentWeekKey(new Date(`${value.slice(0, 10)}T12:00:00`)) === value; }
 function shortWeek(value) { return value.split('~').map(d => { const [, m, day] = d.split('-'); return `${n(m)}월 ${n(day)}일`; }).join(' ~ '); }
 function referencePrice(name, difficulty, date = new Date()) {
+  name = canonicalBossName(name);
   if (name === '검은 마법사' && dateKey(date) >= '2026-10-01') return difficulty === '하드' ? 465000000 : difficulty === '익스트림' ? 5680000000 : 0;
   return bossDB[name]?.[difficulty] ?? 0;
 }
-function bossIdFor(name) { return bossIds[name] || `legacy:${name}`; }
-function bossNameFor(id, fallback = '') { return bossNames[id] || (id?.startsWith('legacy:') ? id.slice(7) : fallback); }
+function canonicalBossName(name) { return bossAliases[name] || name; }
+function bossIdFor(name) { return bossIds[canonicalBossName(name)] || `legacy:${name}`; }
+function bossNameFor(id, fallback = '') { return bossNames[id] || canonicalBossName(id?.startsWith('legacy:') ? id.slice(7) : fallback); }
+function validDifficulty(name, difficulty) {
+  const valid = Object.keys(bossDB[canonicalBossName(name)] || {});
+  return valid.includes(difficulty) ? difficulty : valid[0] || difficulty || '노멀';
+}
 function presetBoss(name, difficulty = Object.keys(bossDB[name] || {노멀: 0})[0], partySize = 1) {
-  return {bossId: bossIdFor(name), difficulty, partySize: Math.max(1, Math.trunc(Number(partySize) || 1))};
+  name = canonicalBossName(name);
+  return {bossId: bossIdFor(name), difficulty: validDifficulty(name, difficulty), partySize: Math.min(6, Math.max(1, Math.trunc(Number(partySize) || 1)))};
 }
 function presetBosses(names) { return names.map(name => presetBoss(name)); }
 function presetEntry(boss) {
@@ -72,15 +109,20 @@ function presetEntry(boss) {
 }
 function normalizePreset(preset, index = 0) {
   const source = Array.isArray(preset) ? preset : preset?.bosses || preset?.bossIds || [];
-  const bosses = source.map(value => typeof value === 'string' ? presetBoss(bossNameFor(value, value)) : presetEntry(value)).filter(Boolean);
+  const unique = new Map();
+  source.map(value => typeof value === 'string' ? presetBoss(bossNameFor(value, value)) : presetEntry(value)).filter(Boolean).forEach(boss => {
+    if (!unique.has(boss.bossId)) unique.set(boss.bossId, boss);
+  });
+  const bosses = [...unique.values()];
   return {id: preset?.id || uid(), name: preset?.name || `프리셋 ${index + 1}`, bosses};
 }
 function makeBoss(nameOrPreset, settings = {}) {
   const source = typeof nameOrPreset === 'object' ? nameOrPreset : settings;
-  const name = typeof nameOrPreset === 'string' ? nameOrPreset : bossNameFor(source.bossId, source.name || source.bossName);
-  const difficulty = source.difficulty || Object.keys(bossDB[name] || {노멀: 0})[0];
-  const partySize = Math.max(1, Math.trunc(n(source.partySize ?? source.party) || 1));
-  return {bossId: source.bossId || bossIdFor(name), name, difficulty, party: partySize, partySize, price: source.price == null ? referencePrice(name, difficulty) : n(source.price), done: !!source.done, ...(source.completedIncome == null ? {} : {completedIncome: n(source.completedIncome)})};
+  const name = canonicalBossName(typeof nameOrPreset === 'string' ? nameOrPreset : bossNameFor(source.bossId, source.name || source.bossName));
+  const difficulty = validDifficulty(name, source.difficulty);
+  const partySize = Math.min(6, Math.max(1, Math.trunc(n(source.partySize ?? source.party) || 1)));
+  const bossId = Object.hasOwn(bossDB, name) ? bossIdFor(name) : source.bossId || bossIdFor(name);
+  return {bossId, name, difficulty, party: partySize, partySize, price: source.price == null ? referencePrice(name, difficulty) : n(source.price), done: !!source.done, ...(source.completedIncome == null ? {} : {completedIncome: n(source.completedIncome)})};
 }
 function normalizeBosses(source, legacy = false) {
   if (Array.isArray(source)) {
@@ -121,7 +163,7 @@ function snapshotTotals(s) {
   return {...computed, ...(s.totals || {}), total: n(s.totals?.total ?? s.totalIncome ?? s.total ?? computed.total)};
 }
 function emptyState(now = new Date()) {
-  return {version: 3, currentWeek: currentWeekKey(now), characters: [{id: uid(), name: '본캐', bosses: presetGroups.middle.bosses.map(makeBoss)}], incomes: [], weeklyHistory: {}, presets: [], settings: {}, saleState: 'acquired'};
+  return {version: 4, currentWeek: currentWeekKey(now), characters: [{id: uid(), name: '본캐', bosses: presetGroups.middle.bosses.map(makeBoss)}], incomes: [], weeklyHistory: {}, presets: [], settings: {}, saleState: 'acquired'};
 }
 function recordWeek(r, fallback) {
   if (validWeek(r.weekId)) return r.weekId;
@@ -131,9 +173,9 @@ function recordWeek(r, fallback) {
 function migrateState(raw, now = new Date()) {
   if (!raw) return emptyState(now);
   if (typeof raw !== 'object' || Array.isArray(raw) || !Array.isArray(raw.characters) || !Array.isArray(raw.incomes)) throw new Error('저장 데이터 형식을 읽을 수 없습니다.');
-  if (raw.version > 3) throw new Error('더 최신 버전의 데이터입니다. 페이지를 새로고침해 주세요.');
+  if (raw.version > 4) throw new Error('더 최신 버전의 데이터입니다. 페이지를 새로고침해 주세요.');
   const result = copy(raw), legacy = !raw.version || raw.version < 2;
-  result.version = 3;
+  result.version = 4;
   result.currentWeek = validWeek(raw.currentWeek) ? raw.currentWeek : validWeek(raw.weekId) ? raw.weekId : currentWeekKey(now);
   result.characters = result.characters.map(c => ({...c, id: c.id || uid(), bosses: normalizeBosses(c.bosses, legacy && !Array.isArray(c.bosses))}));
   result.settings ||= {}; result.presets ||= [];
@@ -180,7 +222,8 @@ function rollover(data, now = new Date()) {
 }
 
 let state, savedRaw = null, storageBlocked = false;
-let selectedWeek = '', bossFilter = 'pending', selectedBossCharacterId = '', characterMode = 'preset', presetApplyMode = 'add';
+let selectedWeek = '', bossFilter = 'pending', historyFilter = 'all', selectedBossCharacterId = '', characterMode = 'preset', presetApplyMode = 'add';
+let editingIncomeId = '', editSaleState = 'acquired';
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 function message(text, error = false) { $('#status').textContent = text; $('#status').classList.toggle('error', error); }
@@ -189,7 +232,7 @@ function loadState() {
   try {
     savedRaw = localStorage.getItem(KEY); const parsed = savedRaw ? JSON.parse(savedRaw) : null;
     const next = migrateState(parsed);
-    if (parsed && parsed.version !== 3 && !localStorage.getItem(BACKUP_KEY)) localStorage.setItem(BACKUP_KEY, savedRaw);
+    if (parsed && parsed.version !== 4 && !localStorage.getItem(BACKUP_KEY)) localStorage.setItem(BACKUP_KEY, savedRaw);
     rollover(next); persist(next); storageBlocked = false;
   } catch (error) { storageBlocked = true; state ||= emptyState(); message(`저장 중단: ${error.message} 원본을 덮어쓰지 않았습니다.`, true); }
 }
@@ -248,8 +291,8 @@ function render() {
     return `<button type="button" class="character" data-character="${escapeHtml(c.id)}" aria-label="${escapeHtml(c.name)} 주간 보스 관리"><span class="character-main"><span><b>${escapeHtml(c.name)}</b><small>${s.done} / ${s.count} 완료 · 진행률 ${percent}%</small></span><strong class="character-income mint">${money(s.earned)}</strong></span><span class="character-detail"><progress value="${s.done}" max="${s.count || 1}" aria-label="${escapeHtml(c.name)} 보스 진행률"></progress><dl><div><dt>완료 수익</dt><dd>${money(s.earned)}</dd></div><div><dt>예상 수익</dt><dd>${money(s.expected)}</dd></div><div><dt>남은 수익</dt><dd>${money(s.remaining)}</dd></div></dl></span></button>`;
   }).join('') || '<p class="empty">저장된 캐릭터가 없습니다.</p>';
   $('#addCharacter').disabled = !!isPast() || storageBlocked; $('#incomeFields').disabled = !!isPast() || storageBlocked;
-  $('#incomeReadOnly').classList.toggle('hidden', !isPast()); $('#resetAll').disabled = !!isPast();
-  renderBosses(data); renderHistory(data); renderPrices();
+  $('#incomeReadOnly').classList.toggle('hidden', !isPast()); $('#resetAll').disabled = !!isPast(); $('#resetWeek').disabled = !!isPast();
+  renderBosses(data); renderHistory(data); renderPrices(); renderSettings();
   $('#migrationNote').textContent = state.migrationNote || '기존 기록과 캐릭터 설정을 이 기기에 보관합니다.';
   const recovery = (state.unassignedIncomes?.length || 0) + (state.recoveredWeeks?.length || 0);
   $('#recoveryNote').textContent = recovery ? `마감 기록과 겹칠 수 있는 이전 데이터 ${recovery}건은 중복 합산 없이 백업에 별도 보관했습니다.` : '';
@@ -267,19 +310,37 @@ function renderBosses(data) {
   const list = normalizeBosses(c.bosses), stats = characterStats(c);
   const shown = list.map((b, bi) => ({b, bi})).filter(({b}) => bossFilter === 'all' || (bossFilter === 'done' ? b.done : !b.done));
   $('#bossEditor').innerHTML = `<section class="boss-char" data-ci="${ci}"><div class="panel-head"><div><h3>${escapeHtml(c.name)}</h3><small class="muted">${stats.done} / ${stats.count} 완료 · ${koreanMeso(stats.earned)}</small></div></div>${shown.map(({b, bi}) => {
-    const diffs = [...new Set([...Object.keys(bossDB[b.name] || {}), b.difficulty])];
+    const diffs = Object.keys(bossDB[b.name] || {[b.difficulty]: b.price});
     return `<div class="boss-line ${b.done ? 'completed' : ''}" data-bi="${bi}"><label class="boss-name"><input type="checkbox" data-field="done" aria-label="${escapeHtml(b.name)} 완료" ${b.done ? 'checked' : ''} ${disabled}><span>${escapeHtml(b.name)}</span></label><strong class="boss-earned mint">${money(b.done && b.completedIncome != null ? b.completedIncome : bossValue(b))}</strong><div class="boss-controls"><select data-field="difficulty" aria-label="${escapeHtml(b.name)} 난이도" ${disabled}>${diffs.map(d => option(d, d, d === b.difficulty)).join('')}</select><select data-field="party" aria-label="${escapeHtml(b.name)} 파티 인원" ${disabled}>${Array.from({length: Math.max(6, b.party)}, (_, i) => option(i + 1, i === 0 ? '솔로' : `${i + 1}인`, i + 1 === b.party)).join('')}</select><button class="icon danger" data-action="remove-boss" aria-label="${escapeHtml(b.name)} 삭제" ${disabled}>×</button></div><details class="boss-price-detail"><summary>결정석 ${won(b.price)} · 가격 수정</summary><label>결정석 전체 가격<input class="money-input" data-field="price" inputmode="numeric" value="${won(b.price)}" ${disabled}><small class="money-hint">${koreanMeso(b.price)} 메소</small></label></details></div>`;
   }).join('') || '<p class="empty">이 필터에 해당하는 보스가 없습니다.</p>'}<div class="boss-actions"><button class="ghost" data-action="add-boss" ${disabled}>+ 보스 등록</button></div></section>`;
 }
+function historyDate(row) {
+  const date = row.createdAt ? new Date(row.createdAt) : null;
+  if (!date || Number.isNaN(date.getTime())) return row.date || '';
+  const now = new Date(), sameDay = dateKey(date) === dateKey(now);
+  return `${sameDay ? '오늘' : `${date.getMonth() + 1}월 ${date.getDate()}일`} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+function historyMatches(row) {
+  const kind = recordKind(row);
+  if (historyFilter === 'all') return true;
+  if (historyFilter === 'sold') return kind === 'sold';
+  if (historyFilter === 'unsold') return kind === 'acquired';
+  return row.category === historyFilter;
+}
 function renderHistory(data) {
-  $('#incomeHistory').innerHTML = (data.incomes || []).slice().reverse().map(r => {
-    const kind = recordKind(r), value = incomeValue(r);
-    const detail = kind === 'income' ? '즉시 수익 반영' : kind === 'acquired' ? `획득 ${won(r.qty ?? r.quantity)}개 · 미판매` : `${won(r.qty ?? r.quantity)}개 판매 · 개당 ${won(r.price ?? r.unitPrice)} 메소${n(r.materialCost) ? ` · 소재비 ${won(r.materialCost)}` : ''}`;
-    return `<article class="history-item"><div><b>${escapeHtml(labels[r.category] || r.categoryLabel || '기타')} · ${escapeHtml(r.item)}</b><p class="${kind === 'acquired' ? 'pending' : 'muted'}">${detail}</p>${r.source ? `<small class="muted">${escapeHtml(r.source)}</small>` : ''}${r.memo ? `<p class="muted">${escapeHtml(r.memo)}</p>` : ''}<small class="muted">${escapeHtml(r.date || '')}</small></div><strong class="${kind === 'acquired' ? 'pending' : value < 0 ? 'negative' : 'mint'}">${kind === 'acquired' ? '수익 0원' : `${value > 0 ? '+' : ''}${koreanMeso(value)}`}</strong></article>`;
-  }).join('') || '<p class="empty">아직 기록이 없습니다.</p>';
+  const rows = (data.incomes || []).map((row, index) => ({row, index})).filter(({row}) => historyMatches(row)).sort((a, b) => n(b.row.createdAt) - n(a.row.createdAt) || b.index - a.index);
+  $('#incomeHistory').innerHTML = rows.map(({row: r}) => {
+    const kind = recordKind(r), value = incomeValue(r), qty = won(r.qty ?? r.quantity);
+    const detail = kind === 'income' ? `${value >= 0 ? '+' : ''}${won(value)} 메소` : kind === 'acquired' ? `${qty}개 · 미판매` : `${qty}개 판매${n(r.materialCost) ? ` · 소재비 ${won(r.materialCost)}` : ''}`;
+    const disabled = isPast() || storageBlocked;
+    return `<article class="history-item compact-record"><div class="record-copy"><b>${escapeHtml(labels[r.category] || r.categoryLabel || '기타')} · ${escapeHtml(r.item)}</b><p class="${kind === 'acquired' ? 'pending' : value < 0 ? 'negative' : 'mint'}">${escapeHtml(detail)}</p><small class="muted">${escapeHtml(historyDate(r))}${r.memo ? ` · ${escapeHtml(r.memo)}` : ''}</small></div>${kind === 'sold' ? `<strong class="${value < 0 ? 'negative' : 'mint'}">${value >= 0 ? '+' : ''}${koreanMeso(value)}</strong>` : ''}<details class="more-menu record-more ${disabled ? 'hidden' : ''}"><summary aria-label="${escapeHtml(r.item)} 기록 메뉴">⋯</summary><div class="more-menu-popover"><button type="button" data-income-action="edit" data-income-id="${escapeHtml(r.id)}">수정</button><button type="button" class="danger-text" data-income-action="delete" data-income-id="${escapeHtml(r.id)}">삭제</button></div></details></article>`;
+  }).join('') || '<p class="empty">이 필터에 해당하는 기록이 없습니다.</p>';
 }
 function renderPrices() {
   $('#priceList').innerHTML = Object.entries(state.settings.itemPrices || {}).map(([name, price]) => `<div class="history-item"><b>${escapeHtml(name)}</b><span>${money(price)}</span></div>`).join('') || '<p class="empty">판매를 기록하면 최근 단가가 여기에 표시됩니다.</p>';
+}
+function renderSettings() {
+  $('#presetManager').innerHTML = state.presets.map(preset => `<div class="preset-row" data-preset-id="${escapeHtml(preset.id)}"><div><b>${escapeHtml(preset.name)}</b><small class="muted">보스 ${preset.bosses.length}개</small></div><div><button class="ghost" type="button" data-preset-action="rename">이름 변경</button><button class="ghost danger-text" type="button" data-preset-action="delete">삭제</button></div></div>`).join('') || '<p class="empty">저장한 사용자 프리셋이 없습니다.</p>';
 }
 function renderIncomeForm(resetItems = false) {
   const category = $('#incomeCategory').value;
@@ -338,6 +399,11 @@ function selectedDirectBosses() {
     partySize: n(row.querySelector('[data-direct-field="partySize"]').value)
   }));
 }
+function updateBossDialogOptions() {
+  const name = $('#bossToAdd').value, difficulties = Object.keys(bossDB[name] || {});
+  $('#bossDifficulty').innerHTML = difficulties.map(value => option(value, value)).join('');
+  $('#bossPartySize').innerHTML = Array.from({length: 6}, (_, i) => option(i + 1, i ? `${i + 1}인` : '솔로', i === 0)).join('');
+}
 function openPresetDialog() {
   if (currentCharacterIndex() < 0) return;
   $('#presetSelect').innerHTML = presetOptions('middle'); presetApplyMode = 'add';
@@ -355,14 +421,72 @@ function saveCurrentPreset() {
 function openBossDialog(ci) {
   const c = state.characters[ci], available = Object.keys(bossDB).filter(name => !c.bosses.some(b => b.name === name));
   if (!available.length) { message('등록할 수 있는 보스가 모두 추가되어 있습니다.'); return; }
-  $('#bossDialog').dataset.ci = ci; $('#bossToAdd').innerHTML = available.map(name => option(name, name)).join(''); $('#bossDialog').showModal();
+  $('#bossDialog').dataset.ci = ci; $('#bossToAdd').innerHTML = available.map(name => option(name, name)).join(''); updateBossDialogOptions(); $('#bossDialog').showModal();
 }
 function downloadBackup(original = false) {
   const raw = original ? localStorage.getItem(BACKUP_KEY) || localStorage.getItem(KEY) : storageBlocked ? localStorage.getItem(KEY) : JSON.stringify(state, null, 2);
   const url = URL.createObjectURL(new Blob([raw || '{}'], {type: 'application/json'}));
   const a = document.createElement('a'); a.href = url; a.download = `maple-income-${original ? 'original-' : ''}${dateKey(new Date())}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+function validateImportedState(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('백업 최상위 형식이 올바르지 않습니다.');
+  if (!Array.isArray(data.characters) || !Array.isArray(data.incomes)) throw new Error('캐릭터 또는 수익 기록 배열이 없습니다.');
+  if (!data.weeklyHistory || typeof data.weeklyHistory !== 'object' || Array.isArray(data.weeklyHistory)) throw new Error('과거 주차 데이터 형식이 올바르지 않습니다.');
+  if (!Array.isArray(data.presets) || !data.settings || typeof data.settings !== 'object' || Array.isArray(data.settings)) throw new Error('설정 또는 프리셋 형식이 올바르지 않습니다.');
+  for (const character of data.characters) if (!character || typeof character.name !== 'string' || !Array.isArray(character.bosses)) throw new Error('손상된 캐릭터 데이터가 있습니다.');
+  for (const row of data.incomes) if (!row || typeof row !== 'object' || typeof row.item !== 'string') throw new Error('손상된 수익 기록이 있습니다.');
+  for (const preset of data.presets) if (!preset || typeof preset.name !== 'string' || !Array.isArray(preset.bosses)) throw new Error('손상된 사용자 프리셋이 있습니다.');
+  return true;
+}
+function prepareImportedState(text, now = new Date()) {
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { throw new Error('JSON 파일을 읽을 수 없습니다.'); }
+  const migrated = migrateState(parsed, now); validateImportedState(migrated); validatePresetIntegrity();
+  return migrated;
+}
+function resetCurrentWeek(data) {
+  data.incomes = [];
+  data.characters.forEach(character => character.bosses.forEach(boss => { boss.done = false; delete boss.completedIncome; }));
+  return data;
+}
+function openIncomeEdit(id) {
+  const row = state.incomes.find(item => item.id === id); if (!row || isPast()) return;
+  editingIncomeId = id; editSaleState = recordKind(row) === 'sold' ? 'sold' : 'acquired';
+  const meso = recordKind(row) === 'income';
+  $('#incomeEditLabel').textContent = `${labels[row.category] || row.categoryLabel || '기타'} · ${row.item}`;
+  $('#editCategory').value = row.category || 'drop'; $('#editItem').value = row.item || '';
+  $('#editAmount').value = meso ? won(row.amount ?? row.netIncome) : '';
+  $('#editQty').value = meso ? 1 : n(row.qty ?? row.quantity) || 1;
+  $('#editPrice').value = editSaleState === 'sold' ? won(row.price ?? row.unitPrice) : '';
+  $('#editCost').value = editSaleState === 'sold' ? won(row.materialCost) : '';
+  $('#editSource').value = row.source || ''; $('#editMemo').value = row.memo || '';
+  $('#incomeEditDialog').dataset.meso = meso ? 'true' : 'false'; updateIncomeEditUI(); $('#incomeEditDialog').showModal();
+}
+function updateIncomeEditUI() {
+  const meso = $('#incomeEditDialog').dataset.meso === 'true', sold = editSaleState === 'sold';
+  for (const [id, hide] of Object.entries({editCategoryWrap: meso, editItemWrap: meso, editSaleStateWrap: meso, editAmountWrap: !meso, editQtyWrap: meso, editPriceWrap: meso || !sold, editCostWrap: meso || !sold, editSourceWrap: meso || sold, editMemoWrap: meso})) $('#' + id).classList.toggle('hidden', hide);
+  $$('[data-edit-sale]').forEach(button => { const active = button.dataset.editSale === editSaleState; button.classList.toggle('active', active); button.setAttribute('aria-pressed', active); });
+}
+function saveIncomeEdit() {
+  const index = state.incomes.findIndex(row => row.id === editingIncomeId); if (index < 0) return false;
+  const current = state.incomes[index], meso = recordKind(current) === 'income';
+  const amount = n($('#editAmount').value), qty = n($('#editQty').value), price = n($('#editPrice').value), materialCost = n($('#editCost').value);
+  if (meso ? !Number.isSafeInteger(amount) || amount <= 0 : !Number.isSafeInteger(qty) || qty < 1) { message('금액 또는 수량을 올바르게 입력해 주세요.', true); return false; }
+  if (!meso && editSaleState === 'sold' && (!Number.isSafeInteger(price) || price <= 0 || !Number.isSafeInteger(materialCost) || materialCost < 0 || !Number.isSafeInteger(qty * price))) { message('판매가와 소재비를 올바르게 입력해 주세요.', true); return false; }
+  return transaction(next => {
+    const row = next.incomes[index]; row.memo = $('#editMemo').value.trim();
+    if (meso) Object.assign(row, {amount, netIncome: amount, recordType: 'income', saleState: 'direct'});
+    else {
+      const category = $('#editCategory').value, item = $('#editItem').value.trim(); if (!item) throw new Error('아이템명을 입력해 주세요.');
+      Object.assign(row, {category, categoryLabel: labels[category], item, qty, quantity: qty, recordType: editSaleState, saleState: editSaleState});
+      delete row.amount; delete row.grossIncome;
+      if (editSaleState === 'acquired') { Object.assign(row, {netIncome: 0, source: $('#editSource').value.trim()}); delete row.price; delete row.unitPrice; delete row.materialCost; }
+      else { Object.assign(row, {price, unitPrice: price, materialCost, grossIncome: qty * price, netIncome: qty * price - materialCost}); delete row.source; (next.settings.itemPrices ||= {})[item] = price; }
+    }
+  });
+}
 function init() {
+  validatePresetIntegrity();
   loadState(); renderIncomeForm(true); render(); if (!storageBlocked) message('이 기기에 자동 저장됩니다.');
   $('#weekSelect').addEventListener('change', e => { selectedWeek = e.target.value; render(); });
   $('#returnCurrent').addEventListener('click', () => { selectedWeek = ''; render(); });
@@ -377,6 +501,11 @@ function init() {
   $$('[data-open-income]').forEach(b => b.addEventListener('click', () => $('[data-tab="income"]').click()));
   $$('[data-filter]').forEach(button => button.addEventListener('click', () => {
     bossFilter = button.dataset.filter; $$('[data-filter]').forEach(b => { b.classList.toggle('active', b === button); b.setAttribute('aria-pressed', b === button); }); renderBosses(viewData());
+  }));
+  $$('[data-history-filter]').forEach(button => button.addEventListener('click', () => {
+    historyFilter = button.dataset.historyFilter;
+    $$('[data-history-filter]').forEach(item => { const active = item === button; item.classList.toggle('active', active); item.setAttribute('aria-pressed', active); });
+    renderHistory(viewData());
   }));
   $('#addCharacter').addEventListener('click', openCharacterDialog);
   $('#addCharacterFromBoss').addEventListener('click', openCharacterDialog);
@@ -434,7 +563,8 @@ function init() {
     if (button.dataset.action === 'add-boss') openBossDialog(ci);
     if (button.dataset.action === 'remove-boss') { const bi = n(button.closest('[data-bi]').dataset.bi); if (confirm(`${c.name}의 ${c.bosses[bi].name}을 삭제할까요? 이번 주 완료 수익에서도 제외됩니다.`)) transaction(next => next.characters[ci].bosses.splice(bi, 1)); }
   });
-  $('#bossForm').addEventListener('submit', e => { e.preventDefault(); const ci = n($('#bossDialog').dataset.ci), name = $('#bossToAdd').value; if (transaction(next => { if (!next.characters[ci].bosses.some(b => b.name === name)) next.characters[ci].bosses.push(makeBoss(name)); })) $('#bossDialog').close(); });
+  $('#bossToAdd').addEventListener('change', updateBossDialogOptions);
+  $('#bossForm').addEventListener('submit', e => { e.preventDefault(); const ci = n($('#bossDialog').dataset.ci), name = $('#bossToAdd').value, difficulty = $('#bossDifficulty').value, partySize = n($('#bossPartySize').value); if (transaction(next => { if (!next.characters[ci].bosses.some(b => b.bossId === bossIdFor(name))) next.characters[ci].bosses.push(makeBoss({bossId: bossIdFor(name), difficulty, partySize})); })) $('#bossDialog').close(); });
   $('#incomeCategory').addEventListener('change', () => { $('#materialCost').value = ''; $('#materialCostHint').textContent = ''; renderIncomeForm(true); });
   $('#incomeItem').addEventListener('change', () => { $('#materialCost').value = ''; $('#materialCostHint').textContent = ''; renderIncomeForm(); });
   $$('[data-sale]').forEach(b => b.addEventListener('click', () => { state.saleState = b.dataset.sale; renderIncomeForm(); }));
@@ -452,7 +582,31 @@ function init() {
     });
     if (ok) { for (const id of ['mesoAmount', 'incomePrice', 'materialCost', 'incomeSource', 'incomeMemo']) $('#' + id).value = ''; $('#incomeQty').value = '1'; $$('#incomeForm .money-hint').forEach(el => { el.textContent = ''; }); renderIncomeForm(); }
   });
+  $('#incomeHistory').addEventListener('click', e => {
+    const button = e.target.closest('[data-income-action]'); if (!button || isPast()) return;
+    const row = state.incomes.find(item => item.id === button.dataset.incomeId); if (!row) return;
+    if (button.dataset.incomeAction === 'edit') openIncomeEdit(row.id);
+    if (button.dataset.incomeAction === 'delete' && confirm(`${labels[row.category] || '기타'} · ${row.item} 기록을 삭제할까요? 수익 합계에서 즉시 제외됩니다.`)) transaction(next => { next.incomes = next.incomes.filter(item => item.id !== row.id); });
+  });
+  $$('[data-edit-sale]').forEach(button => button.addEventListener('click', () => { editSaleState = button.dataset.editSale; updateIncomeEditUI(); }));
+  $('#incomeEditForm').addEventListener('submit', e => { e.preventDefault(); if (saveIncomeEdit()) { editingIncomeId = ''; $('#incomeEditDialog').close(); } });
   $('#exportData').addEventListener('click', () => downloadBackup()); $('#exportOriginal').addEventListener('click', () => downloadBackup(true));
+  $('#importData').addEventListener('click', () => $('#importFile').click());
+  $('#importFile').addEventListener('change', async e => {
+    const file = e.target.files?.[0]; e.target.value = ''; if (!file) return;
+    try {
+      const next = prepareImportedState(await file.text());
+      if (!confirm(`백업을 복원할까요? 현재 데이터는 교체됩니다.\n캐릭터 ${next.characters.length}개 · 수익 기록 ${next.incomes.length}개`)) return;
+      rollover(next); persist(next); selectedWeek = ''; selectedBossCharacterId = ''; renderIncomeForm(true); render(); message('백업을 복원하고 화면을 다시 계산했습니다.');
+    } catch (error) { message(`복원하지 못했습니다: ${error.message} 현재 데이터는 변경하지 않았습니다.`, true); }
+  });
+  $('#presetManager').addEventListener('click', e => {
+    const button = e.target.closest('[data-preset-action]'), row = e.target.closest('[data-preset-id]'); if (!button || !row) return;
+    const preset = state.presets.find(item => item.id === row.dataset.presetId); if (!preset) return;
+    if (button.dataset.presetAction === 'rename') { const name = prompt('프리셋 이름', preset.name)?.trim(); if (name) transaction(next => { next.presets.find(item => item.id === preset.id).name = name; }); }
+    if (button.dataset.presetAction === 'delete' && confirm(`사용자 프리셋 '${preset.name}'을 삭제할까요? 캐릭터의 현재 보스 구성은 유지됩니다.`)) transaction(next => { next.presets = next.presets.filter(item => item.id !== preset.id); });
+  });
+  $('#resetWeek').addEventListener('click', () => { if (!isPast() && confirm('이번 주 보스 완료 체크와 수익 기록만 초기화할까요? 캐릭터 구성, 프리셋, 과거 주차는 유지됩니다.')) transaction(resetCurrentWeek); });
   $('#resetAll').addEventListener('click', () => { if (!isPast() && confirm('현재 데이터와 과거 주차를 모두 초기화할까요? 먼저 백업을 권장합니다. 이전 버전 원본 백업은 유지됩니다.')) { try { localStorage.removeItem(KEY); location.reload(); } catch (error) { message(error.message, true); } } });
   window.addEventListener('focus', checkWeek);
   window.addEventListener('storage', e => { if (e.key === KEY) { loadState(); render(); renderIncomeForm(); message('다른 탭에서 저장한 변경을 반영했습니다.'); } });
