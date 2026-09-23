@@ -115,6 +115,18 @@ dd{margin:0;font-size:12px}
 .completed .boss-name{color:var(--mint)}
 .boss-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 .boss-actions button{flex:1;white-space:normal;font-size:11px}
+.weekly-activities{margin-top:20px;padding-top:16px;border-top:1px solid var(--line)}
+.weekly-activities-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+.weekly-activities-head p{margin-top:2px;font-size:10px}
+.weekly-activity-card{display:grid;border:1px solid var(--line);border-radius:12px;background:#0d1922;overflow:hidden}
+.weekly-activity-row{display:grid;grid-template-columns:21px minmax(0,1fr) auto auto;align-items:center;gap:8px;min-height:52px;padding:8px 10px;border-top:1px solid var(--line);cursor:pointer}
+.weekly-activity-row:first-child{border-top:0}
+.weekly-activity-row span{display:grid;gap:1px}
+.weekly-activity-row small{color:var(--muted);font-size:9px}
+.weekly-activity-row b{font-size:12px;overflow-wrap:anywhere}
+.weekly-activity-row>strong{color:var(--amber);font-size:10px;white-space:nowrap}
+.weekly-activity-row.completed>strong,.weekly-activity-row.completed b{color:var(--mint)}
+.compact-empty{padding:12px 8px}
 .footnote{margin-top:16px;line-height:1.7}
 .form{border:0;padding:0;margin:16px 0 0;display:grid;gap:14px}
 .form-pair{display:grid;grid-template-columns:.85fr 1.15fr;gap:10px}

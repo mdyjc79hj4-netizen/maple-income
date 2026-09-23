@@ -89,11 +89,30 @@ function diagnosticSample(item) {
   };
 }
 
+function sanitizeWeeklyContent(item) {
+  const type = diagnosticText(item.type);
+  const nowCount = Number.isFinite(Number(item.now_count)) ? Number(item.now_count) : 0;
+  const maxCount = Number.isFinite(Number(item.max_count)) ? Number(item.max_count) : 0;
+  const questState = diagnosticText(item.quest_state);
+  return {
+    contentName: diagnosticText(item.content_name),
+    type, cycle: 'weekly',
+    registered: parseFlag(item.registration_flag),
+    nowCount,
+    maxCount,
+    questState,
+    complete: type.trim().toLowerCase() === 'quest' ? questState === '2' : nowCount > 0
+  };
+}
+
 function sanitizeScheduler(payload, ocid, requestedDate = '') {
   if (!payload || typeof payload !== 'object' || !Array.isArray(payload.boss_contents)) {
     throw Object.assign(new Error('NEXON 스케줄러 응답 구조가 변경되었습니다.'), {status: 502});
   }
   const bossContents = payload.boss_contents.filter(item => item && typeof item === 'object');
+  const weeklyContents = Array.isArray(payload.weekly_contents)
+    ? payload.weekly_contents.filter(item => item && typeof item === 'object')
+    : [];
   const diagnosticContents = bossContents.map((item, index) => ({item, index})).sort((left, right) => Number(parseFlag(right.item.complete_flag)) - Number(parseFlag(left.item.complete_flag)) || left.index - right.index);
   return {
     ok: true,
@@ -113,8 +132,10 @@ function sanitizeScheduler(payload, ocid, requestedDate = '') {
       registered: parseFlag(item.registration_flag),
       complete: parseFlag(item.complete_flag)
     })),
+    activities: weeklyContents.map(sanitizeWeeklyContent),
     diagnostics: {
-      samples: diagnosticContents.slice(0, 20).map(({item}) => diagnosticSample(item))
+      samples: diagnosticContents.slice(0, 20).map(({item}) => diagnosticSample(item)),
+      activitySamples: weeklyContents.slice(0, 20).map(sanitizeWeeklyContent)
     }
   };
 }
@@ -148,4 +169,4 @@ export default async function handler(req, res) {
   }
 }
 
-export const nexonProxyInternals = {diagnosticRaw, diagnosticSample, parseFlag, publicError, sanitizeScheduler, validDate};
+export const nexonProxyInternals = {diagnosticRaw, diagnosticSample, parseFlag, publicError, sanitizeScheduler, sanitizeWeeklyContent, validDate};

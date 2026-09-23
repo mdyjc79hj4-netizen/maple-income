@@ -31,8 +31,8 @@ async function contentHash(value) {
 function emptySync() {
   return {
     schema: 1,
-    revisions: {root: '', settings: '', incomes: {}, characters: {}, bosses: {}, presets: {}, weeklyHistory: {}},
-    tombstones: {incomes: {}, characters: {}, bosses: {}, presets: {}, weeklyHistory: {}},
+    revisions: {root: '', settings: '', incomes: {}, characters: {}, bosses: {}, activities: {}, presets: {}, weeklyHistory: {}},
+    tombstones: {incomes: {}, characters: {}, bosses: {}, activities: {}, presets: {}, weeklyHistory: {}},
     conflicts: []
   };
 }
@@ -44,7 +44,7 @@ function normalizeSync(value) {
   const tombstones = asObject(source.tombstones);
   result.revisions.root = typeof revisions.root === 'string' ? revisions.root : '';
   result.revisions.settings = typeof revisions.settings === 'string' ? revisions.settings : '';
-  for (const key of ['incomes', 'characters', 'bosses', 'presets', 'weeklyHistory']) {
+  for (const key of ['incomes', 'characters', 'bosses', 'activities', 'presets', 'weeklyHistory']) {
     result.revisions[key] = {...asObject(revisions[key])};
     result.tombstones[key] = {...asObject(tombstones[key])};
   }
@@ -57,7 +57,7 @@ function meaningfulLocalData(state) {
   if (state.incomes?.length || Object.keys(state.weeklyHistory || {}).length || state.presets?.length) return true;
   if (Object.keys(state.settings || {}).length || state.characters?.length !== 1) return true;
   const character = state.characters?.[0];
-  return !!character && (character.name !== '본캐' || character.bosses?.some(boss => boss.done));
+  return !!character && !!(character.name !== '본캐' || character.bosses?.some(boss => boss.done) || character.weeklyActivities?.some(activity => activity.done));
 }
 
 function chooseSyncAction({remoteExists, sameContent, knownDevice, initial, hasLocalData}) {
@@ -77,9 +77,11 @@ const rootData = state => {
 const characterData = character => {
   const value = {...asObject(character)};
   delete value.bosses;
+  delete value.weeklyActivities;
   return value;
 };
 const bossKey = (characterId, bossId) => characterId + '::' + bossId;
+const activityKey = (characterId, activityId) => characterId + '::' + activityId;
 const revisionFor = (sync, group, id, fallback = '') => sync.revisions[group]?.[id] || fallback;
 const tombstoneFor = (sync, group, id) => sync.tombstones[group]?.[id] || '';
 
@@ -133,6 +135,19 @@ function prepareStateForMerge(input, baseInput = null, now = new Date().toISOStr
         sync.tombstones.bosses[key] = isoMax(sync.tombstones.bosses[key], changedAt);
       }
     }
+    const activities = mapBy(character.weeklyActivities);
+    const baseActivities = mapBy(baseCharacters.get(characterId)?.weeklyActivities);
+    for (const [id, value] of activities) {
+      const key = activityKey(characterId, id);
+      if (!same(value, baseActivities.get(id))) sync.revisions.activities[key] = isoMax(sync.revisions.activities[key], changedAt);
+      if (timestamp(sync.tombstones.activities[key]) < timestamp(sync.revisions.activities[key])) delete sync.tombstones.activities[key];
+    }
+    for (const id of baseActivities.keys()) {
+      if (!activities.has(id)) {
+        const key = activityKey(characterId, id);
+        sync.tombstones.activities[key] = isoMax(sync.tombstones.activities[key], changedAt);
+      }
+    }
   }
   for (const [characterId, character] of baseCharacters) {
     if (characters.has(characterId)) continue;
@@ -140,6 +155,12 @@ function prepareStateForMerge(input, baseInput = null, now = new Date().toISOStr
       if (boss?.bossId) {
         const key = bossKey(characterId, boss.bossId);
         sync.tombstones.bosses[key] = isoMax(sync.tombstones.bosses[key], changedAt);
+      }
+    }
+    for (const activity of Array.isArray(character.weeklyActivities) ? character.weeklyActivities : []) {
+      if (activity?.id) {
+        const key = activityKey(characterId, activity.id);
+        sync.tombstones.activities[key] = isoMax(sync.tombstones.activities[key], changedAt);
       }
     }
   }
@@ -214,6 +235,8 @@ function prefixedSync(sync, characterId) {
   const result = normalizeSync(sync);
   result.revisions.bosses = Object.fromEntries(Object.entries(sync.revisions.bosses).filter(([key]) => key.startsWith(prefix)).map(([key, value]) => [key.slice(prefix.length), value]));
   result.tombstones.bosses = Object.fromEntries(Object.entries(sync.tombstones.bosses).filter(([key]) => key.startsWith(prefix)).map(([key, value]) => [key.slice(prefix.length), value]));
+  result.revisions.activities = Object.fromEntries(Object.entries(sync.revisions.activities).filter(([key]) => key.startsWith(prefix)).map(([key, value]) => [key.slice(prefix.length), value]));
+  result.tombstones.activities = Object.fromEntries(Object.entries(sync.tombstones.activities).filter(([key]) => key.startsWith(prefix)).map(([key, value]) => [key.slice(prefix.length), value]));
   return result;
 }
 
@@ -278,11 +301,20 @@ function mergeStates(baseInput, localInput, remoteInput, now = new Date().toISOS
     });
     for (const [id, value] of Object.entries(bossResult.revisions)) sync.revisions.bosses[bossKey(characterId, id)] = value;
     for (const [id, value] of Object.entries(bossResult.tombstones)) sync.tombstones.bosses[bossKey(characterId, id)] = value;
-    characters.push({...body, bosses: [...bossResult.result.values()]});
+    const activityResult = mergeCollection({
+      baseMap: mapBy(baseCharacters.get(characterId)?.weeklyActivities),
+      localMap: mapBy(localCharacters.get(characterId)?.weeklyActivities),
+      remoteMap: mapBy(remoteCharacters.get(characterId)?.weeklyActivities),
+      localSync: prefixedSync(localSync, characterId), remoteSync: prefixedSync(remoteSync, characterId),
+      group: 'activities', scope: 'character.weeklyActivities', conflicts, now
+    });
+    for (const [id, value] of Object.entries(activityResult.revisions)) sync.revisions.activities[activityKey(characterId, id)] = value;
+    for (const [id, value] of Object.entries(activityResult.tombstones)) sync.tombstones.activities[activityKey(characterId, id)] = value;
+    characters.push({...body, bosses: [...bossResult.result.values()], weeklyActivities: [...activityResult.result.values()]});
   }
   for (const source of [localSync, remoteSync]) {
-    for (const [key, value] of Object.entries(source.tombstones.bosses)) {
-      if (!sync.tombstones.bosses[key] || timestamp(value) > timestamp(sync.tombstones.bosses[key])) sync.tombstones.bosses[key] = value;
+    for (const group of ['bosses', 'activities']) for (const [key, value] of Object.entries(source.tombstones[group])) {
+      if (!sync.tombstones[group][key] || timestamp(value) > timestamp(sync.tombstones[group][key])) sync.tombstones[group][key] = value;
     }
   }
 

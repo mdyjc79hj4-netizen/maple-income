@@ -50,7 +50,8 @@ const legacy = {
 };
 context.__legacy = legacy;
 const migrated = json("migrateState(__legacy, new Date('2026-09-20T12:00:00'))");
-assert.equal(migrated.version, 5);
+assert.equal(migrated.version, 6);
+assert.deepEqual(migrated.characters[0].weeklyActivities, []);
 assert.ok(!Number.isNaN(Date.parse(migrated.updatedAt)));
 assert.deepEqual(migrated.characters[0].bosses.map(b => [b.bossId, b.name, b.difficulty, b.partySize]), [
   ['seren', '선택받은 세렌', '하드', 2], ['kalos', '감시자 칼로스', '카오스', 3]
@@ -130,16 +131,47 @@ assert.equal(context.__schedulerState.characters[0].bosses[1].completionSource, 
 assert.equal(JSON.stringify(context.__schedulerState).includes('completedItems'), false);
 context.__appliedDiagnostics = appliedScheduler;
 assert.equal(run('nexonDiagnosticMessage(__appliedDiagnostics)'), 'NEXON 조회 4개 · 완료 2개 · 메기 매칭 2개 · 완료 매칭 1개 · 자동 완료 1개 · 매칭 실패 1개');
-assert.deepEqual(json('Object.keys(nexonDiagnosticGroups(__appliedDiagnostics))'), ['unknownName', 'difficultyMismatch', 'ambiguous', 'localMissing', 'apiMissing', 'ignoredCycle', 'blockedByManualOverride']);
+assert.deepEqual(json('Object.keys(nexonDiagnosticGroups(__appliedDiagnostics))'), ['unknownName', 'difficultyMismatch', 'ambiguous', 'localMissing', 'apiMissing', 'ignoredCycle', 'blockedByManualOverride', 'unsupportedActivity', 'activityBlockedByManualOverride']);
 assert.equal(run('nexonDiagnosticGroups(__appliedDiagnostics).unknownName.length'), 1);
 assert.deepEqual(appliedScheduler.completedItems.map(item => item.result).sort(), ['matched-auto-completed', 'unknown-name'].sort());
 assert.equal(run('nexonUserStatusMessage(__appliedDiagnostics)'), '주간 보스 1개를 자동 확인했습니다.');
-assert.equal(run('nexonUserStatusMessage({...__appliedDiagnostics, autoCompleted: 0})'), '새로 확인된 주간 보스가 없습니다.');
+assert.equal(run('nexonUserStatusMessage({...__appliedDiagnostics, autoCompleted: 0})'), '새로 확인된 주간 기록이 없습니다.');
 assert.equal(run('nexonUserStatusMessage(__appliedDiagnostics, true)'), '최근 확인한 기록입니다.');
 assert.equal(run("latestNexonCheckedAt([{nexonCharacter:{lastCheckedAt:'2026-09-23T01:00:00.000Z'}},{nexonCharacter:{lastCheckedAt:'2026-09-24T02:00:00.000Z'}}])"), '2026-09-24T02:00:00.000Z');
 assert.equal(run("nexonDefaultStatusMessage([{nexonCharacter:{ocid:'linked',lastCheckedAt:'2026-09-24T02:00:00.000Z'}}])"), '최신 상태');
 assert.equal(run('nexonDefaultStatusMessage([{id:"unlinked"}])'), '연동할 캐릭터를 선택해주세요.');
 assert.equal(JSON.stringify(context.__schedulerState).includes('diagnostics'), false);
+
+// Official weekly_contents fields are mapped into supported weekly activities without changing boss behavior.
+context.__activityState = structuredClone(schedulerState);
+context.__activityResponse = {
+  ...structuredClone(schedulerResponse), bosses: [], activities: [
+    {contentName: '에픽 던전 : 아우룸 레기스', type: 'quest', registered: true, nowCount: 0, maxCount: 1, questState: '2', complete: true},
+    {contentName: '무릉도장', type: 'contents', registered: true, nowCount: 54, maxCount: 100, questState: '0', complete: true},
+    {contentName: '길드 지하 수로', type: 'contents', registered: true, nowCount: 0, maxCount: 1, questState: '0', complete: false},
+    {contentName: '새 주간 콘텐츠', type: 'contents', registered: true, nowCount: 1, maxCount: 1, questState: '0', complete: true}
+  ]
+};
+const activityApplied = json("applyNexonSchedulerState(__activityState, 'c1', __activityResponse, '2026-09-23T02:10:00.000Z')");
+assert.equal(activityApplied.activitiesFetched, 4);
+assert.equal(activityApplied.activityMatched, 3);
+assert.equal(activityApplied.activityAutoCompleted, 2);
+assert.equal(activityApplied.unsupportedActivity[0].contentName, '새 주간 콘텐츠');
+assert.deepEqual(JSON.parse(JSON.stringify(context.__activityState.characters[0].weeklyActivities.map(item => [item.type, item.done]))), [
+  ['epic-dungeon', true], ['mu-lung-dojo', true], ['guild', false]
+]);
+assert.equal(context.__activityState.characters[0].weeklyActivities[0].completionSource, 'nexon-api');
+assert.equal(JSON.stringify(context.__activityState).includes('activityCompletedItems'), false);
+assert.equal(run('nexonUserStatusMessage({autoCompleted:2,activityAutoCompleted:1})'), '주간 보스 2개 · 주간 콘텐츠 1개를 자동 확인했습니다.');
+assert.equal(run('nexonUserStatusMessage({autoCompleted:0,activityAutoCompleted:1})'), '주간 콘텐츠 1개를 자동 확인했습니다.');
+
+context.__activityManualState = structuredClone(context.__activityState);
+Object.assign(context.__activityManualState.characters[0].weeklyActivities[0], {done: false, manualOverride: false, completionSource: 'manual'});
+context.__activityManualResponse = {...structuredClone(schedulerResponse), bosses: [], activities: [structuredClone(context.__activityResponse.activities[0])]};
+const activityManual = json("applyNexonSchedulerState(__activityManualState, 'c1', __activityManualResponse, '2026-09-23T02:11:00.000Z')");
+assert.equal(context.__activityManualState.characters[0].weeklyActivities[0].done, false);
+assert.equal(activityManual.activityBlockedByManualOverride.length, 1);
+assert.equal(activityManual.activityAutoCompleted, 0);
 
 context.__duplicateUnknown = [
   {character: '본캐', contentName: '힐라', difficulty: '노멀', cycle: 'bossWeekly'},
@@ -371,7 +403,7 @@ assert.equal(migratedV1.characters[0].bosses.find(b => b.bossId === 'seren').pri
 assert.equal(migratedV1.characters[0].bosses.find(b => b.bossId === 'kalos').price, 1230000000);
 
 context.__backup = JSON.stringify(legacy);
-assert.equal(run("prepareImportedState(__backup, new Date('2026-09-20T12:00:00')).version"), 5);
+assert.equal(run("prepareImportedState(__backup, new Date('2026-09-20T12:00:00')).version"), 6);
 assert.throws(() => run("prepareImportedState('{broken')"), /JSON/);
 assert.throws(() => run("prepareImportedState('{}')"), /저장 데이터 형식/);
 
@@ -406,6 +438,18 @@ context.__postRolloverResponse = {...structuredClone(schedulerResponse), date: '
 run("applyNexonSchedulerState(__nexonRoll, 'c1', __postRolloverResponse, '2026-09-24T00:01:00.000Z')");
 assert.equal(context.__nexonRoll.characters[0].bosses[0].done, true);
 assert.equal(context.__nexonRoll.characters[0].bosses[0].apiCheckedWeek, '2026-09-24~2026-09-30');
+
+context.__activityRoll = structuredClone(context.__activityState);
+run("rollover(__activityRoll, new Date('2026-09-24T00:00:00'))");
+assert.equal(context.__activityRoll.weeklyHistory['2026-09-17~2026-09-23'].characters[0].weeklyActivities[0].done, true);
+assert.equal(context.__activityRoll.weeklyHistory['2026-09-17~2026-09-23'].characters[0].weeklyActivities[0].completionSource, 'nexon-api');
+assert.equal(context.__activityRoll.characters[0].weeklyActivities[0].done, false);
+assert.equal('apiCompleted' in context.__activityRoll.characters[0].weeklyActivities[0], false);
+
+context.__activityReset = structuredClone(context.__activityState);
+run('resetCurrentWeek(__activityReset)');
+assert.equal(context.__activityReset.characters[0].weeklyActivities.every(activity => !activity.done), true);
+assert.equal(context.__activityReset.characters[0].weeklyActivities.every(activity => !('manualOverride' in activity)), true);
 
 assert.equal(run('incomeValue({item:"메소",category:"hunt",amount:82000000})'), 82000000);
 assert.equal(run('incomeValue({item:"조각",category:"hunt",recordType:"sold",qty:30,price:6500000,materialCost:5000000})'), 190000000);
@@ -455,7 +499,10 @@ const syncBase = {
   version: 5, currentWeek: '2026-09-17~2026-09-23', updatedAt: '2026-09-23T00:00:00.000Z',
   settings: {theme: 'dark'},
   incomes: [{id: 'income-base', category: 'hunt', item: '메소', amount: 100, createdAt: 1}],
-  characters: [{id: 'char-a', name: '본캐', bosses: [{bossId: 'lotus', difficulty: '하드', partySize: 1, done: false}]}],
+  characters: [{id: 'char-a', name: '본캐', bosses: [{bossId: 'lotus', difficulty: '하드', partySize: 1, done: false}], weeklyActivities: [
+    {id: 'epic-dungeon:aurum-regis', type: 'epic-dungeon', name: '아우룸 레기스', done: false},
+    {id: 'mu-lung-dojo', type: 'mu-lung-dojo', name: '무릉도장', done: false}
+  ]}],
   presets: [{id: 'preset-a', name: '기본', bosses: [{bossId: 'lotus', difficulty: '하드', partySize: 1}]}],
   weeklyHistory: {'week-old': {weekId: 'week-old', incomes: [], characters: []}}
 };
@@ -508,6 +555,18 @@ const bossesMerged = cloudSyncInternals.mergeStates(syncBase, bossLocal, bossRem
 assert.equal(bossesMerged.find(boss => boss.bossId === 'lotus').partySize, 2);
 assert.ok(bossesMerged.some(boss => boss.bossId === 'damien'));
 
+// Weekly activities merge independently by activity id across devices.
+const activityLocal = clone(syncBase);
+activityLocal.updatedAt = '2026-09-23T01:00:00.000Z';
+Object.assign(activityLocal.characters[0].weeklyActivities[0], {done: true, completionSource: 'nexon-api', apiCompleted: true});
+const activityRemote = clone(syncBase);
+activityRemote.updatedAt = '2026-09-23T02:00:00.000Z';
+Object.assign(activityRemote.characters[0].weeklyActivities[1], {done: true, manualOverride: true, completionSource: 'manual'});
+const activitiesMerged = cloudSyncInternals.mergeStates(syncBase, activityLocal, activityRemote, '2026-09-23T03:00:00.000Z').state.characters[0].weeklyActivities;
+assert.equal(activitiesMerged.find(activity => activity.id === 'epic-dungeon:aurum-regis').done, true);
+assert.equal(activitiesMerged.find(activity => activity.id === 'mu-lung-dojo').done, true);
+assert.ok(cloudSyncInternals.prepareStateForMerge(activityLocal, syncBase).sync.revisions.activities['char-a::epic-dungeon:aurum-regis']);
+
 // A tombstone beats a stale copy, so deleted data does not reappear.
 const deleteLocal = clone(syncBase);
 deleteLocal.updatedAt = '2026-09-23T03:00:00.000Z';
@@ -550,9 +609,20 @@ assert.ok(nexonCloudMerge.incomes.some(item => item.id === 'income-with-nexon'))
 
 const sanitizedScheduler = nexonProxyInternals.sanitizeScheduler({
   date: '2026-09-23', character_name: '넥슨본캐', world_name: '루나',
-  boss_contents: [{content_name: '스우', difficulty: '하드', cycle: '주간', registration_flag: 'N', complete_flag: 'Y'}]
+  boss_contents: [{content_name: '스우', difficulty: '하드', cycle: '주간', registration_flag: 'N', complete_flag: 'Y'}],
+  weekly_contents: [
+    {content_name: '아우룸 레기스', type: 'quest', registration_flag: 'true', now_count: 0, max_count: 1, quest_state: '2'},
+    {content_name: '무릉도장', type: 'contents', registration_flag: 'true', now_count: 50, max_count: 100, quest_state: '0'},
+    {content_name: '지하 수로', type: 'contents', registration_flag: 'false', now_count: 0, max_count: 1, quest_state: '0'}
+  ]
 }, schedulerResponse.character.ocid);
 assert.deepEqual(sanitizedScheduler.bosses[0], {contentName: '스우', difficulty: '하드', cycle: '주간', registered: false, complete: false});
+assert.deepEqual(sanitizedScheduler.activities, [
+  {contentName: '아우룸 레기스', type: 'quest', cycle: 'weekly', registered: true, nowCount: 0, maxCount: 1, questState: '2', complete: true},
+  {contentName: '무릉도장', type: 'contents', cycle: 'weekly', registered: true, nowCount: 50, maxCount: 100, questState: '0', complete: true},
+  {contentName: '지하 수로', type: 'contents', cycle: 'weekly', registered: false, nowCount: 0, maxCount: 1, questState: '0', complete: false}
+]);
+assert.equal(sanitizedScheduler.diagnostics.activitySamples.length, 3);
 assert.deepEqual(sanitizedScheduler.diagnostics.samples[0], {
   contentName: '스우', difficulty: '하드', cycle: '주간', registered: false, complete: false,
   rawCompleteType: 'string', rawCompleteValue: 'Y', rawRegistrationType: 'string', rawRegistrationValue: 'N'
@@ -596,7 +666,10 @@ assert.match(html, /id="nexonDiagnosticsContent"/);
 assert.match(html, /<details id="nexonDiagnostics" class="nexon-diagnostics hidden"><summary>상세 진단 보기<\/summary>/);
 assert.doesNotMatch(html, /<details id="nexonDiagnostics"[^>]*\sopen(?:\s|=|>)/);
 assert.match(html, /id="nexonLastChecked"/);
+assert.match(html, /id="weeklyActivityList"/);
+assert.match(html, /주간 콘텐츠/);
 assert.match(css, /\.nexon-diagnostic-item/);
+assert.match(css, /\.weekly-activity-row/);
 assert.match(css, /\.nexon-sync-summary/);
 assert.match(source, /<details class="nexon-diagnostic-group"><summary>/);
 assert.doesNotMatch(source, /<details class="nexon-diagnostic-group" open/);
