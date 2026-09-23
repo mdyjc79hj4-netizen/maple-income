@@ -84,6 +84,8 @@ const schedulerState = {
 };
 const schedulerResponse = {
   date: '2026-09-23',
+  requestedDate: null,
+  mode: 'live',
   character: {ocid: '0123456789abcdef0123456789abcdef', name: '넥슨본캐', world: '루나'},
   bosses: [
     {contentName: '스우', difficulty: '하드', cycle: '주간', complete: false},
@@ -103,6 +105,24 @@ assert.equal(context.__schedulerState.characters[0].bosses[0].completionSource, 
 assert.equal(context.__schedulerState.characters[0].bosses[0].completedIncome, 24450000);
 assert.equal(context.__schedulerState.characters[0].bosses[1].done, true);
 assert.equal(context.__schedulerState.characters[0].bosses[1].completionSource, 'manual');
+
+// Live responses always apply to the active week. Their response date is metadata only.
+for (const responseDate of ['2026-09-16', '2026-09-16T23:59:59+09:00', 'not-a-date']) {
+  context.__liveDateState = structuredClone(schedulerState);
+  context.__liveDateResponse = {...structuredClone(schedulerResponse), date: responseDate};
+  run("applyNexonSchedulerState(__liveDateState, 'c1', __liveDateResponse, '2026-09-23T01:10:00.000Z')");
+  assert.equal(context.__liveDateState.characters[0].bosses[0].done, true);
+}
+
+// Only an explicitly requested historical date is validated against the active week.
+context.__historicalState = structuredClone(schedulerState);
+context.__historicalResponse = {...structuredClone(schedulerResponse), mode: 'historical', requestedDate: '2026-09-20'};
+run("applyNexonSchedulerState(__historicalState, 'c1', __historicalResponse, '2026-09-23T01:20:00.000Z')");
+assert.equal(context.__historicalState.characters[0].bosses[0].done, true);
+context.__historicalIsoState = structuredClone(schedulerState);
+context.__historicalIsoResponse = {...structuredClone(schedulerResponse), mode: 'historical', requestedDate: '2026-09-20T12:30:00+09:00'};
+run("applyNexonSchedulerState(__historicalIsoState, 'c1', __historicalIsoResponse, '2026-09-23T01:21:00.000Z')");
+assert.equal(context.__historicalIsoState.characters[0].bosses[0].done, true);
 
 // Re-reading the same result does not rewrite boss state.
 const bossesBeforeRepeat = JSON.stringify(context.__schedulerState.characters[0].bosses);
@@ -132,8 +152,11 @@ context.__invalidState = structuredClone(schedulerState);
 const invalidBefore = JSON.stringify(context.__invalidState);
 assert.throws(() => run("applyNexonSchedulerState(__invalidState, 'c1', {error:'failed'})"), /응답/);
 assert.equal(JSON.stringify(context.__invalidState), invalidBefore);
-context.__wrongWeekResponse = {...structuredClone(schedulerResponse), date: '2026-09-16'};
+context.__wrongWeekResponse = {...structuredClone(schedulerResponse), mode: 'historical', requestedDate: '2026-09-16'};
 assert.throws(() => run("applyNexonSchedulerState(__invalidState, 'c1', __wrongWeekResponse)"), /주차/);
+assert.equal(JSON.stringify(context.__invalidState), invalidBefore);
+context.__badHistoricalResponse = {...structuredClone(schedulerResponse), mode: 'historical', requestedDate: 'invalid-date'};
+assert.throws(() => run("applyNexonSchedulerState(__invalidState, 'c1', __badHistoricalResponse)"), /날짜/);
 assert.equal(JSON.stringify(context.__invalidState), invalidBefore);
 
 context.__v1 = {characters:[{name:'구버전',bosses:{세렌:{difficulty:'하드',price:302000000,done:false},칼로스:{difficulty:'카오스',price:1230000000,done:false}}}],incomes:[],weeklyHistory:{},presets:{},settings:{}};
@@ -174,6 +197,10 @@ assert.equal(context.__nexonRoll.weeklyHistory['2026-09-17~2026-09-23'].characte
 assert.equal(context.__nexonRoll.characters[0].bosses[0].done, false);
 assert.equal('apiCompleted' in context.__nexonRoll.characters[0].bosses[0], false);
 assert.equal(context.__nexonRoll.characters[0].nexonCharacter.ocid, schedulerResponse.character.ocid);
+context.__postRolloverResponse = {...structuredClone(schedulerResponse), date: '2026-09-23', mode: 'live', requestedDate: null};
+run("applyNexonSchedulerState(__nexonRoll, 'c1', __postRolloverResponse, '2026-09-24T00:01:00.000Z')");
+assert.equal(context.__nexonRoll.characters[0].bosses[0].done, true);
+assert.equal(context.__nexonRoll.characters[0].bosses[0].apiCheckedWeek, '2026-09-24~2026-09-30');
 
 assert.equal(run('incomeValue({item:"메소",category:"hunt",amount:82000000})'), 82000000);
 assert.equal(run('incomeValue({item:"조각",category:"hunt",recordType:"sold",qty:30,price:6500000,materialCost:5000000})'), 190000000);
@@ -296,6 +323,11 @@ const sanitizedScheduler = nexonProxyInternals.sanitizeScheduler({
   boss_contents: [{content_name: '스우', difficulty: '하드', cycle: '주간', registration_flag: 'true', complete_flag: 'true'}]
 }, schedulerResponse.character.ocid);
 assert.deepEqual(sanitizedScheduler.bosses[0], {contentName: '스우', difficulty: '하드', cycle: '주간', registered: true, complete: true});
+assert.equal(sanitizedScheduler.mode, 'live');
+assert.equal(sanitizedScheduler.requestedDate, null);
+const historicalScheduler = nexonProxyInternals.sanitizeScheduler({date: '2026-09-20', boss_contents: []}, schedulerResponse.character.ocid, '2026-09-20');
+assert.equal(historicalScheduler.mode, 'historical');
+assert.equal(historicalScheduler.requestedDate, '2026-09-20');
 assert.throws(() => nexonProxyInternals.sanitizeScheduler({boss_contents: null}, 'ocid'), /응답 구조/);
 assert.equal(nexonProxyInternals.publicError(400).code, 'BAD_REQUEST');
 assert.equal(nexonProxyInternals.publicError(403).code, 'FORBIDDEN');
@@ -307,6 +339,7 @@ assert.doesNotMatch(nexonApiSource, /VITE_NEXON/);
 assert.match(nexonApiSource, /'x-nxopen-api-key': apiKey/);
 assert.match(nexonApiSource, /\/maplestory\/v1\/scheduler\/character-state/);
 assert.match(envExample, /^NEXON_OPEN_API_KEY=$/m);
+assert.match(source, /throw applyError \|\| new Error\('NEXON 확인 결과를 이 기기에 저장하지 못했습니다\.'\)/);
 const originalNexonKey = process.env.NEXON_OPEN_API_KEY;
 delete process.env.NEXON_OPEN_API_KEY;
 let missingKeyStatus = 0, missingKeyBody = null;

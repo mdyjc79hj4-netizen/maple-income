@@ -191,9 +191,25 @@ function mapNexonBossEntry(entry) {
   if (/일간|daily|월간|monthly/i.test(cycle)) return null;
   return {bossId, difficulty, complete: entry.complete === true || entry.complete_flag === true || entry.complete_flag === 'true'};
 }
+function parseNexonDate(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const text = value.trim(), dateOnly = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dateOnly) {
+    const [, year, month, day] = dateOnly.map(Number);
+    const parsed = new Date(year, month - 1, day, 12);
+    return parsed.getFullYear() === year && parsed.getMonth() === month - 1 && parsed.getDate() === day ? parsed : null;
+  }
+  const timestamp = Date.parse(text);
+  return Number.isNaN(timestamp) ? null : new Date(timestamp);
+}
 function applyNexonSchedulerState(data, characterId, response, checkedAt = new Date().toISOString()) {
   if (!data || !Array.isArray(data.characters) || !response || !Array.isArray(response.bosses)) throw new Error('NEXON 스케줄러 응답을 적용할 수 없습니다.');
-  if (response.date && currentWeekKey(new Date(response.date + 'T12:00:00')) !== data.currentWeek) throw new Error('NEXON 조회 주차가 현재 주차와 일치하지 않습니다.');
+  const historical = response.mode === 'historical' || !!response.requestedDate;
+  if (historical) {
+    const requestedDate = parseNexonDate(response.requestedDate || response.date);
+    if (!requestedDate) throw new Error('NEXON 과거 조회 날짜를 확인할 수 없습니다.');
+    if (currentWeekKey(requestedDate) !== data.currentWeek) throw new Error('NEXON 과거 조회 주차가 현재 주차와 일치하지 않습니다.');
+  }
   const character = data.characters.find(item => item.id === characterId);
   if (!character) throw new Error('연동할 메기 캐릭터를 찾을 수 없습니다.');
   const mapped = new Map(), unknown = new Set();
@@ -486,26 +502,30 @@ function renderSettings() {
   renderNexonSettings();
 }
 
-async function fetchNexonScheduler(character, characterName = '') {
+async function fetchNexonScheduler(character, characterName = '', requestDate = '') {
   const params = new URLSearchParams();
   if (characterName) params.set('characterName', characterName);
   else params.set('ocid', character.nexonCharacter.ocid);
+  if (requestDate) params.set('date', requestDate);
   const response = await fetch('/api/nexon-scheduler?' + params);
   let data;
   try { data = await response.json(); } catch { throw new Error('NEXON API 응답을 읽지 못했습니다.'); }
   if (!response.ok || !data?.ok) throw new Error(data?.message || 'NEXON 보스 기록을 확인하지 못했습니다.');
   return data;
 }
-async function syncNexonCharacter(characterId, {characterName = '', ignoreCooldown = false} = {}) {
+async function syncNexonCharacter(characterId, {characterName = '', requestDate = '', ignoreCooldown = false} = {}) {
   const character = state.characters.find(item => item.id === characterId);
   if (!character) throw new Error('메기 캐릭터를 찾을 수 없습니다.');
   if (!characterName && !character.nexonCharacter?.ocid) throw new Error('먼저 NEXON 캐릭터를 연동해주세요.');
   const lastChecked = Date.parse(character.nexonCharacter?.lastCheckedAt || '');
   if (!characterName && !ignoreCooldown && !Number.isNaN(lastChecked) && Date.now() - lastChecked < NEXON_CHECK_COOLDOWN_MS) return {cooldown: true, character: character.name};
-  const response = await fetchNexonScheduler(character, characterName);
-  let applied;
-  const saved = transaction(next => { applied = applyNexonSchedulerState(next, characterId, response, response.fetchedAt); });
-  if (!saved) throw new Error('NEXON 확인 결과를 이 기기에 저장하지 못했습니다.');
+  const response = await fetchNexonScheduler(character, characterName, requestDate);
+  let applied, applyError;
+  const saved = transaction(next => {
+    try { applied = applyNexonSchedulerState(next, characterId, response, response.fetchedAt); }
+    catch (error) { applyError = error; throw error; }
+  });
+  if (!saved) throw applyError || new Error('NEXON 확인 결과를 이 기기에 저장하지 못했습니다.');
   if (applied.unknown.length) console.info('NEXON Scheduler unknown bosses', applied.unknown);
   return {...applied, character: character.name};
 }

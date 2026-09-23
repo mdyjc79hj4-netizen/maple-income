@@ -58,7 +58,7 @@ async function requestNexon(path, params, apiKey) {
   }
 }
 
-function sanitizeScheduler(payload, ocid) {
+function sanitizeScheduler(payload, ocid, requestedDate = '') {
   if (!payload || typeof payload !== 'object' || !Array.isArray(payload.boss_contents)) {
     throw Object.assign(new Error('NEXON 스케줄러 응답 구조가 변경되었습니다.'), {status: 502});
   }
@@ -66,6 +66,8 @@ function sanitizeScheduler(payload, ocid) {
     ok: true,
     fetchedAt: new Date().toISOString(),
     date: typeof payload.date === 'string' ? payload.date : '',
+    requestedDate: requestedDate || null,
+    mode: requestedDate ? 'historical' : 'live',
     character: {
       ocid,
       name: typeof payload.character_name === 'string' ? payload.character_name : '',
@@ -101,7 +103,7 @@ export default async function handler(req, res) {
       ocid = identity.ocid;
     }
     const payload = await requestNexon('/maplestory/v1/scheduler/character-state', {ocid, date}, apiKey);
-    const value = sanitizeScheduler(payload, ocid);
+    const value = sanitizeScheduler(payload, ocid, date);
     cache.set(cacheKey, {savedAt: Date.now(), value});
     return send(res, 200, value);
   } catch (error) {
