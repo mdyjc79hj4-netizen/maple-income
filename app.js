@@ -16,13 +16,21 @@ const bossDB = {
   '검은 마법사': {하드: 665000000, 익스트림: 8740000000}, '세렌': {노멀: 167000000, 하드: 302000000, 익스트림: 1840000000},
   '칼로스': {이지: 238000000, 노멀: 479000000, 카오스: 1230000000}, '카링': {이지: 320000000, 노멀: 593000000, 하드: 1560000000}
 };
+const bossIds = {
+  '자쿰': 'zakum', '피에르': 'pierre', '반반': 'vonbon', '블러디퀸': 'bloodyqueen', '벨룸': 'vellum',
+  '매그너스': 'magnus', '파풀라투스': 'papulatus', '스우': 'lotus', '데미안': 'damien',
+  '가디언 엔젤 슬라임': 'guardian-angel-slime', '루시드': 'lucid', '윌': 'will', '더스크': 'gloom',
+  '듄켈': 'darknell', '진 힐라': 'verus-hilla', '검은 마법사': 'black-mage', '세렌': 'seren',
+  '칼로스': 'kalos', '카링': 'kaling'
+};
+const bossNames = Object.fromEntries(Object.entries(bossIds).map(([name, id]) => [id, name]));
 const legacyBossNames = ['스우', '데미안', '가디언 엔젤 슬라임', '루시드', '윌', '더스크', '듄켈', '진 힐라', '검은 마법사', '세렌', '칼로스', '카링'];
 const presetGroups = {
-  all: {name: '전체 보스', names: Object.keys(bossDB)},
-  early: {name: '카루타 ~ 스데미', names: ['피에르', '반반', '블러디퀸', '벨룸', '스우', '데미안']},
-  middle: {name: '스데미 ~ 루윌', names: ['스우', '데미안', '가디언 엔젤 슬라임', '루시드', '윌']},
-  late: {name: '루윌 ~ 진듄더', names: ['루시드', '윌', '더스크', '듄켈', '진 힐라']},
-  end: {name: '검마 이상', names: ['검은 마법사', '세렌', '칼로스', '카링']}
+  all: {name: '전체 보스', bosses: presetBosses(Object.keys(bossDB))},
+  early: {name: '카루타 ~ 스데미', bosses: presetBosses(['피에르', '반반', '블러디퀸', '벨룸', '스우', '데미안'])},
+  middle: {name: '스데미 ~ 루윌', bosses: presetBosses(['스우', '데미안', '가디언 엔젤 슬라임', '루시드', '윌'])},
+  late: {name: '루윌 ~ 진듄더', bosses: presetBosses(['루시드', '윌', '더스크', '듄켈', '진 힐라'])},
+  end: {name: '검은 마법사 이상', bosses: presetBosses(['검은 마법사', '세렌', '칼로스', '카링'])}
 };
 const copy = value => JSON.parse(JSON.stringify(value));
 const uid = () => crypto.randomUUID();
@@ -52,17 +60,42 @@ function referencePrice(name, difficulty, date = new Date()) {
   if (name === '검은 마법사' && dateKey(date) >= '2026-10-01') return difficulty === '하드' ? 465000000 : difficulty === '익스트림' ? 5680000000 : 0;
   return bossDB[name]?.[difficulty] ?? 0;
 }
-function makeBoss(name) {
-  const difficulty = Object.keys(bossDB[name] || {노멀: 0})[0];
-  return {name, difficulty, party: 1, price: referencePrice(name, difficulty), done: false};
+function bossIdFor(name) { return bossIds[name] || `legacy:${name}`; }
+function bossNameFor(id, fallback = '') { return bossNames[id] || (id?.startsWith('legacy:') ? id.slice(7) : fallback); }
+function presetBoss(name, difficulty = Object.keys(bossDB[name] || {노멀: 0})[0], partySize = 1) {
+  return {bossId: bossIdFor(name), difficulty, partySize: Math.max(1, Math.trunc(Number(partySize) || 1))};
+}
+function presetBosses(names) { return names.map(name => presetBoss(name)); }
+function presetEntry(boss) {
+  const normalized = normalizeBosses([boss])[0];
+  return normalized ? {bossId: normalized.bossId, difficulty: normalized.difficulty, partySize: normalized.partySize} : null;
+}
+function normalizePreset(preset, index = 0) {
+  const source = Array.isArray(preset) ? preset : preset?.bosses || preset?.bossIds || [];
+  const bosses = source.map(value => typeof value === 'string' ? presetBoss(bossNameFor(value, value)) : presetEntry(value)).filter(Boolean);
+  return {id: preset?.id || uid(), name: preset?.name || `프리셋 ${index + 1}`, bosses};
+}
+function makeBoss(nameOrPreset, settings = {}) {
+  const source = typeof nameOrPreset === 'object' ? nameOrPreset : settings;
+  const name = typeof nameOrPreset === 'string' ? nameOrPreset : bossNameFor(source.bossId, source.name || source.bossName);
+  const difficulty = source.difficulty || Object.keys(bossDB[name] || {노멀: 0})[0];
+  const partySize = Math.max(1, Math.trunc(n(source.partySize ?? source.party) || 1));
+  return {bossId: source.bossId || bossIdFor(name), name, difficulty, party: partySize, partySize, price: source.price == null ? referencePrice(name, difficulty) : n(source.price), done: !!source.done, ...(source.completedIncome == null ? {} : {completedIncome: n(source.completedIncome)})};
 }
 function normalizeBosses(source, legacy = false) {
-  if (Array.isArray(source)) return source.map(b => ({...b, name: b.name || b.bossName, party: Math.max(1, Math.trunc(n(b.party ?? b.partySize) || 1)), price: n(b.price), done: !!b.done}));
+  if (Array.isArray(source)) {
+    const unique = new Map();
+    for (const value of source) {
+      const b = typeof value === 'string' ? makeBoss(bossNameFor(value, value)) : makeBoss(value);
+      if (b.name && !unique.has(b.bossId)) unique.set(b.bossId, b);
+    }
+    return [...unique.values()];
+  }
   const keys = Object.keys(source || {}), names = legacy ? [...new Set([...legacyBossNames, ...keys])] : keys;
   return names.map(name => {
     const b = source?.[name] || {};
     // v1 credited price directly and had no party field. Never replace it with DB prices.
-    return {...b, name, difficulty: b.difficulty || '노멀', party: Math.max(1, Math.trunc(n(b.party ?? b.partySize) || 1)), price: n(b.price), done: !!b.done};
+    return makeBoss(name, {...b, price: n(b.price), difficulty: b.difficulty || '노멀'});
   });
 }
 function recordKind(r) { return r.item === '메소' && r.category !== 'drop' ? 'income' : r.recordType || (r.saleState === 'sold' ? 'sold' : 'acquired'); }
@@ -88,7 +121,7 @@ function snapshotTotals(s) {
   return {...computed, ...(s.totals || {}), total: n(s.totals?.total ?? s.totalIncome ?? s.total ?? computed.total)};
 }
 function emptyState(now = new Date()) {
-  return {version: 2, currentWeek: currentWeekKey(now), characters: [{id: uid(), name: '본캐', bosses: presetGroups.middle.names.map(makeBoss)}], incomes: [], weeklyHistory: {}, presets: [], settings: {}, saleState: 'acquired'};
+  return {version: 3, currentWeek: currentWeekKey(now), characters: [{id: uid(), name: '본캐', bosses: presetGroups.middle.bosses.map(makeBoss)}], incomes: [], weeklyHistory: {}, presets: [], settings: {}, saleState: 'acquired'};
 }
 function recordWeek(r, fallback) {
   if (validWeek(r.weekId)) return r.weekId;
@@ -98,14 +131,18 @@ function recordWeek(r, fallback) {
 function migrateState(raw, now = new Date()) {
   if (!raw) return emptyState(now);
   if (typeof raw !== 'object' || Array.isArray(raw) || !Array.isArray(raw.characters) || !Array.isArray(raw.incomes)) throw new Error('저장 데이터 형식을 읽을 수 없습니다.');
-  if (raw.version > 2) throw new Error('더 최신 버전의 데이터입니다. 페이지를 새로고침해 주세요.');
-  const result = copy(raw), legacy = raw.version !== 2;
-  result.version = 2;
+  if (raw.version > 3) throw new Error('더 최신 버전의 데이터입니다. 페이지를 새로고침해 주세요.');
+  const result = copy(raw), legacy = !raw.version || raw.version < 2;
+  result.version = 3;
   result.currentWeek = validWeek(raw.currentWeek) ? raw.currentWeek : validWeek(raw.weekId) ? raw.weekId : currentWeekKey(now);
   result.characters = result.characters.map(c => ({...c, id: c.id || uid(), bosses: normalizeBosses(c.bosses, legacy && !Array.isArray(c.bosses))}));
   result.settings ||= {}; result.presets ||= [];
   result.weeklyHistory = Array.isArray(raw.weeklyHistory) ? Object.fromEntries(raw.weeklyHistory.map((s, i) => [s.weekId || s.id || `legacy-${i}`, copy(s)])) : copy(raw.weeklyHistory || {});
   if (!Array.isArray(result.presets)) result.presets = Object.entries(result.presets).map(([name, p]) => ({id: uid(), name, bosses: Array.isArray(p) ? p : p.bosses || []}));
+  result.presets = result.presets.map(normalizePreset);
+  for (const snapshot of Object.values(result.weeklyHistory)) {
+    if (Array.isArray(snapshot?.characters)) snapshot.characters = snapshot.characters.map(c => ({...c, id: c.id || uid(), bosses: normalizeBosses(c.bosses, legacy && !Array.isArray(c.bosses))}));
+  }
   if (legacy) {
     result.migrationNote = '이전 보스 완료 기록은 저장된 주차가 없으면 이전한 주에 유지됩니다. 수익 기록은 저장된 주차·작성일을 따릅니다.';
     const active = [], newHistory = new Set();
@@ -143,8 +180,7 @@ function rollover(data, now = new Date()) {
 }
 
 let state, savedRaw = null, storageBlocked = false;
-let selectedWeek = '', bossFilter = 'pending';
-const expanded = new Set();
+let selectedWeek = '', bossFilter = 'pending', selectedBossCharacterId = '', characterMode = 'preset', presetApplyMode = 'add';
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 function message(text, error = false) { $('#status').textContent = text; $('#status').classList.toggle('error', error); }
@@ -153,7 +189,7 @@ function loadState() {
   try {
     savedRaw = localStorage.getItem(KEY); const parsed = savedRaw ? JSON.parse(savedRaw) : null;
     const next = migrateState(parsed);
-    if (parsed && parsed.version !== 2 && !localStorage.getItem(BACKUP_KEY)) localStorage.setItem(BACKUP_KEY, savedRaw);
+    if (parsed && parsed.version !== 3 && !localStorage.getItem(BACKUP_KEY)) localStorage.setItem(BACKUP_KEY, savedRaw);
     rollover(next); persist(next); storageBlocked = false;
   } catch (error) { storageBlocked = true; state ||= emptyState(); message(`저장 중단: ${error.message} 원본을 덮어쓰지 않았습니다.`, true); }
 }
@@ -177,6 +213,25 @@ function checkWeek() {
 }
 function option(value, text, selected = false) { return `<option value="${escapeHtml(value)}" ${selected ? 'selected' : ''}>${escapeHtml(text)}</option>`; }
 function money(value) { return `<span title="${won(value)} 메소">${koreanMeso(value)}</span>`; }
+function presetOptions(selected = '') {
+  return Object.entries(presetGroups).map(([key, p]) => option(key, p.name, key === selected)).join('') + state.presets.map(p => option(`user:${p.id}`, p.name, `user:${p.id}` === selected)).join('');
+}
+function presetConfig(value) {
+  if (value.startsWith('user:')) return copy(state.presets.find(p => p.id === value.slice(5))?.bosses || []);
+  return copy(presetGroups[value]?.bosses || []);
+}
+function applyPresetBosses(existingBosses, settings, mode = 'add') {
+  const incoming = normalizeBosses(settings.map(makeBoss)).map(b => ({...b, done: false}));
+  if (mode === 'replace') return incoming;
+  const existing = new Set(existingBosses.map(b => b.bossId || bossIdFor(b.name)));
+  return [...existingBosses, ...incoming.filter(b => !existing.has(b.bossId))];
+}
+function selectedCharacter(data = viewData()) {
+  const list = data.characters || [];
+  if (!list.some(c => c.id === selectedBossCharacterId)) selectedBossCharacterId = list[0]?.id || '';
+  return list.find(c => c.id === selectedBossCharacterId) || null;
+}
+function currentCharacterIndex() { return state.characters.findIndex(c => c.id === selectedBossCharacterId); }
 function render() {
   if (selectedWeek && !state.weeklyHistory[selectedWeek]) selectedWeek = '';
   const data = viewData(), totals = isPast() ? snapshotTotals(data) : totalsFor(state), current = totalsFor(state);
@@ -190,7 +245,7 @@ function render() {
   $('#metrics').innerHTML = Object.entries(labels).map(([key, label]) => `<div class="metric"><small>${label}</small><b>${money(totals[key])}</b></div>`).join('');
   $('#characterList').innerHTML = (data.characters || []).map(c => {
     const s = characterStats(c), percent = s.count ? Math.round(s.done / s.count * 100) : 0;
-    return `<details class="character" data-character="${escapeHtml(c.id)}" ${expanded.has(c.id) ? 'open' : ''}><summary><div><b>${escapeHtml(c.name)}</b><small>${s.done} / ${s.count} 완료</small></div><strong class="mint">${money(s.earned)}</strong></summary><div class="character-detail"><div class="progress-label">진행률 ${percent}%</div><progress value="${s.done}" max="${s.count || 1}" aria-label="${escapeHtml(c.name)} 보스 진행률"></progress><dl><div><dt>완료 수익</dt><dd>${money(s.earned)}</dd></div><div><dt>예상 수익</dt><dd>${money(s.expected)}</dd></div><div><dt>남은 수익</dt><dd>${money(s.remaining)}</dd></div></dl></div></details>`;
+    return `<button type="button" class="character" data-character="${escapeHtml(c.id)}" aria-label="${escapeHtml(c.name)} 주간 보스 관리"><span class="character-main"><span><b>${escapeHtml(c.name)}</b><small>${s.done} / ${s.count} 완료 · 진행률 ${percent}%</small></span><strong class="character-income mint">${money(s.earned)}</strong></span><span class="character-detail"><progress value="${s.done}" max="${s.count || 1}" aria-label="${escapeHtml(c.name)} 보스 진행률"></progress><dl><div><dt>완료 수익</dt><dd>${money(s.earned)}</dd></div><div><dt>예상 수익</dt><dd>${money(s.expected)}</dd></div><div><dt>남은 수익</dt><dd>${money(s.remaining)}</dd></div></dl></span></button>`;
   }).join('') || '<p class="empty">저장된 캐릭터가 없습니다.</p>';
   $('#addCharacter').disabled = !!isPast() || storageBlocked; $('#incomeFields').disabled = !!isPast() || storageBlocked;
   $('#incomeReadOnly').classList.toggle('hidden', !isPast()); $('#resetAll').disabled = !!isPast();
@@ -198,18 +253,23 @@ function render() {
   $('#migrationNote').textContent = state.migrationNote || '기존 기록과 캐릭터 설정을 이 기기에 보관합니다.';
   const recovery = (state.unassignedIncomes?.length || 0) + (state.recoveredWeeks?.length || 0);
   $('#recoveryNote').textContent = recovery ? `마감 기록과 겹칠 수 있는 이전 데이터 ${recovery}건은 중복 합산 없이 백업에 별도 보관했습니다.` : '';
-  if (!$('#characterDialog').open) $('#characterPreset').innerHTML = Object.entries(presetGroups).map(([key, p]) => option(key, p.name)).join('') + option('custom', '직접 선택') + state.presets.map(p => option(`user:${p.id}`, p.name)).join('');
+  if (!$('#characterDialog').open) $('#characterPreset').innerHTML = presetOptions();
+  if (!$('#presetDialog').open) $('#presetSelect').innerHTML = presetOptions();
 }
 function renderBosses(data) {
   const disabled = isPast() || storageBlocked ? 'disabled' : '';
-  $('#bossEditor').innerHTML = (data.characters || []).map((c, ci) => {
-    const list = normalizeBosses(c.bosses), stats = characterStats(c);
-    const shown = list.map((b, bi) => ({b, bi})).filter(({b}) => bossFilter === 'all' || (bossFilter === 'done' ? b.done : !b.done));
-    return `<section class="boss-char" data-ci="${ci}"><div class="panel-head"><div><h3>${escapeHtml(c.name)}</h3><small class="muted">${stats.done} / ${stats.count} 완료 · ${koreanMeso(stats.earned)}</small></div><button class="ghost" data-action="rename" ${disabled} aria-label="${escapeHtml(c.name)} 이름 변경">이름 변경</button></div>${shown.map(({b, bi}) => {
-      const diffs = [...new Set([...Object.keys(bossDB[b.name] || {}), b.difficulty])];
-      return `<div class="boss-line ${b.done ? 'completed' : ''}" data-bi="${bi}"><label class="boss-name"><input type="checkbox" data-field="done" aria-label="${escapeHtml(b.name)} 완료" ${b.done ? 'checked' : ''} ${disabled}><span>${escapeHtml(b.name)}</span></label><strong class="boss-earned mint">${money(b.done && b.completedIncome != null ? b.completedIncome : bossValue(b))}</strong><div class="boss-controls"><select data-field="difficulty" aria-label="${escapeHtml(b.name)} 난이도" ${disabled}>${diffs.map(d => option(d, d, d === b.difficulty)).join('')}</select><select data-field="party" aria-label="${escapeHtml(b.name)} 파티 인원" ${disabled}>${Array.from({length: Math.max(6, b.party)}, (_, i) => option(i + 1, i === 0 ? '솔로' : `${i + 1}인`, i + 1 === b.party)).join('')}</select><button class="icon danger" data-action="remove-boss" aria-label="${escapeHtml(b.name)} 삭제" ${disabled}>×</button></div><details class="boss-price-detail"><summary>결정석 ${won(b.price)} · 가격 수정</summary><label>결정석 전체 가격<input class="money-input" data-field="price" inputmode="numeric" value="${won(b.price)}" ${disabled}><small class="money-hint">${koreanMeso(b.price)} 메소</small></label></details></div>`;
-    }).join('') || '<p class="empty">이 필터에 해당하는 보스가 없습니다.</p>'}<div class="boss-actions"><button class="ghost" data-action="add-boss" ${disabled}>+ 보스 등록</button><button class="ghost" data-action="save-preset" ${disabled}>현재 구성을 프리셋으로 저장</button></div></section>`;
-  }).join('') || '<p class="empty">요약에서 캐릭터를 추가해 주세요.</p>';
+  const characters = data.characters || [], c = selectedCharacter(data), ci = c ? characters.findIndex(x => x.id === c.id) : -1;
+  $('#bossCharacterSelect').innerHTML = characters.map(character => option(character.id, character.name, character.id === c?.id)).join('');
+  $('#bossCharacterSelect').disabled = !characters.length;
+  $('#addCharacterFromBoss').disabled = !!disabled;
+  $('#characterMenu').classList.toggle('hidden', !c || !!disabled);
+  if (!c) { $('#bossEditor').innerHTML = '<p class="empty">캐릭터를 추가해 주세요.</p>'; return; }
+  const list = normalizeBosses(c.bosses), stats = characterStats(c);
+  const shown = list.map((b, bi) => ({b, bi})).filter(({b}) => bossFilter === 'all' || (bossFilter === 'done' ? b.done : !b.done));
+  $('#bossEditor').innerHTML = `<section class="boss-char" data-ci="${ci}"><div class="panel-head"><div><h3>${escapeHtml(c.name)}</h3><small class="muted">${stats.done} / ${stats.count} 완료 · ${koreanMeso(stats.earned)}</small></div></div>${shown.map(({b, bi}) => {
+    const diffs = [...new Set([...Object.keys(bossDB[b.name] || {}), b.difficulty])];
+    return `<div class="boss-line ${b.done ? 'completed' : ''}" data-bi="${bi}"><label class="boss-name"><input type="checkbox" data-field="done" aria-label="${escapeHtml(b.name)} 완료" ${b.done ? 'checked' : ''} ${disabled}><span>${escapeHtml(b.name)}</span></label><strong class="boss-earned mint">${money(b.done && b.completedIncome != null ? b.completedIncome : bossValue(b))}</strong><div class="boss-controls"><select data-field="difficulty" aria-label="${escapeHtml(b.name)} 난이도" ${disabled}>${diffs.map(d => option(d, d, d === b.difficulty)).join('')}</select><select data-field="party" aria-label="${escapeHtml(b.name)} 파티 인원" ${disabled}>${Array.from({length: Math.max(6, b.party)}, (_, i) => option(i + 1, i === 0 ? '솔로' : `${i + 1}인`, i + 1 === b.party)).join('')}</select><button class="icon danger" data-action="remove-boss" aria-label="${escapeHtml(b.name)} 삭제" ${disabled}>×</button></div><details class="boss-price-detail"><summary>결정석 ${won(b.price)} · 가격 수정</summary><label>결정석 전체 가격<input class="money-input" data-field="price" inputmode="numeric" value="${won(b.price)}" ${disabled}><small class="money-hint">${koreanMeso(b.price)} 메소</small></label></details></div>`;
+  }).join('') || '<p class="empty">이 필터에 해당하는 보스가 없습니다.</p>'}<div class="boss-actions"><button class="ghost" data-action="add-boss" ${disabled}>+ 보스 등록</button></div></section>`;
 }
 function renderHistory(data) {
   $('#incomeHistory').innerHTML = (data.incomes || []).slice().reverse().map(r => {
@@ -250,6 +310,48 @@ function formatMoneyInput(input) {
   input.setSelectionRange(position, position);
   const hint = input.parentElement.querySelector('.money-hint'); if (hint) hint.textContent = digits ? `${koreanMeso(digits)} 메소` : '';
 }
+function renderDirectBosses() {
+  $('#customBosses').innerHTML = Object.entries(bossDB).map(([name, prices]) => {
+    const difficulty = Object.keys(prices)[0];
+    return `<div class="direct-boss-row" data-direct-boss="${escapeHtml(bossIdFor(name))}"><label><input type="checkbox" value="${escapeHtml(bossIdFor(name))}"><span>${escapeHtml(name)}</span></label><select data-direct-field="difficulty" aria-label="${escapeHtml(name)} 난이도">${Object.keys(prices).map(value => option(value, value, value === difficulty)).join('')}</select><select data-direct-field="partySize" aria-label="${escapeHtml(name)} 파티 인원">${Array.from({length: 6}, (_, i) => option(i + 1, i ? `${i + 1}인` : '솔로', i === 0)).join('')}</select></div>`;
+  }).join('');
+}
+function updateCharacterCreateUI() {
+  const direct = characterMode === 'direct';
+  $('#characterPresetWrap').classList.toggle('hidden', direct);
+  $('#customBosses').classList.toggle('hidden', !direct);
+  const count = direct ? $$('#customBosses input[type="checkbox"]:checked').length : presetConfig($('#characterPreset').value).length;
+  $('#characterBossCount').textContent = `포함 보스 ${count}개`;
+  $$('[data-character-mode]').forEach(button => {
+    const active = button.dataset.characterMode === characterMode;
+    button.classList.toggle('active', active); button.setAttribute('aria-pressed', active);
+  });
+}
+function openCharacterDialog() {
+  $('#characterForm').reset(); $('#characterPreset').innerHTML = presetOptions('middle'); characterMode = 'preset';
+  renderDirectBosses(); updateCharacterCreateUI(); $('#characterDialog').showModal(); $('#characterName').focus();
+}
+function selectedDirectBosses() {
+  return $$('#customBosses [data-direct-boss]').filter(row => row.querySelector('input').checked).map(row => ({
+    bossId: row.dataset.directBoss,
+    difficulty: row.querySelector('[data-direct-field="difficulty"]').value,
+    partySize: n(row.querySelector('[data-direct-field="partySize"]').value)
+  }));
+}
+function openPresetDialog() {
+  if (currentCharacterIndex() < 0) return;
+  $('#presetSelect').innerHTML = presetOptions('middle'); presetApplyMode = 'add';
+  $$('[data-preset-mode]').forEach(button => { const active = button.dataset.presetMode === 'add'; button.classList.toggle('active', active); button.setAttribute('aria-pressed', active); });
+  $('#presetReplaceWarning').classList.add('hidden'); $('#presetDialog').showModal();
+}
+function saveCurrentPreset() {
+  const ci = currentCharacterIndex(), c = state.characters[ci]; if (!c) return;
+  const name = prompt('저장할 프리셋 이름', `${c.name} 구성`)?.trim(); if (!name) return;
+  transaction(next => {
+    const bosses = next.characters[ci].bosses.map(presetEntry).filter(Boolean);
+    next.presets.push({id: uid(), name, bosses});
+  });
+}
 function openBossDialog(ci) {
   const c = state.characters[ci], available = Object.keys(bossDB).filter(name => !c.bosses.some(b => b.name === name));
   if (!available.length) { message('등록할 수 있는 보스가 모두 추가되어 있습니다.'); return; }
@@ -264,7 +366,10 @@ function init() {
   loadState(); renderIncomeForm(true); render(); if (!storageBlocked) message('이 기기에 자동 저장됩니다.');
   $('#weekSelect').addEventListener('change', e => { selectedWeek = e.target.value; render(); });
   $('#returnCurrent').addEventListener('click', () => { selectedWeek = ''; render(); });
-  $('#characterList').addEventListener('toggle', e => { if (e.target.dataset.character) e.target.open ? expanded.add(e.target.dataset.character) : expanded.delete(e.target.dataset.character); }, true);
+  $('#characterList').addEventListener('click', e => {
+    const card = e.target.closest('[data-character]'); if (!card) return;
+    selectedBossCharacterId = card.dataset.character; $('[data-tab="boss"]').click(); renderBosses(viewData());
+  });
   $$('[data-tab]').forEach(button => button.addEventListener('click', () => {
     $$('[data-tab]').forEach(b => { b.classList.toggle('active', b === button); b.setAttribute('aria-current', b === button ? 'page' : 'false'); });
     $$('[data-page]').forEach(page => page.classList.toggle('hidden', page.dataset.page !== button.dataset.tab)); checkWeek();
@@ -273,18 +378,46 @@ function init() {
   $$('[data-filter]').forEach(button => button.addEventListener('click', () => {
     bossFilter = button.dataset.filter; $$('[data-filter]').forEach(b => { b.classList.toggle('active', b === button); b.setAttribute('aria-pressed', b === button); }); renderBosses(viewData());
   }));
-  $('#addCharacter').addEventListener('click', () => { $('#characterPreset').value = 'middle'; $('#customBosses').classList.add('hidden'); $('#characterDialog').showModal(); });
-  $('#customBosses').innerHTML = Object.keys(bossDB).map(name => `<label><input type="checkbox" value="${escapeHtml(name)}">${escapeHtml(name)}</label>`).join('');
-  $('#characterPreset').addEventListener('change', () => $('#customBosses').classList.toggle('hidden', $('#characterPreset').value !== 'custom'));
+  $('#addCharacter').addEventListener('click', openCharacterDialog);
+  $('#addCharacterFromBoss').addEventListener('click', openCharacterDialog);
+  $('#bossCharacterSelect').addEventListener('change', e => { selectedBossCharacterId = e.target.value; renderBosses(viewData()); });
+  $$('[data-character-mode]').forEach(button => button.addEventListener('click', () => { characterMode = button.dataset.characterMode; updateCharacterCreateUI(); }));
+  $('#characterPreset').addEventListener('change', updateCharacterCreateUI);
+  $('#customBosses').addEventListener('change', updateCharacterCreateUI);
   $$('[data-close]').forEach(b => b.addEventListener('click', () => $('#' + b.dataset.close).close()));
   $('#characterForm').addEventListener('submit', e => {
-    e.preventDefault(); const name = $('#characterName').value.trim(), preset = $('#characterPreset').value; if (!name) return;
-    let bosses;
-    if (preset === 'custom') bosses = $$('#customBosses input:checked').map(input => makeBoss(input.value));
-    else if (preset.startsWith('user:')) bosses = normalizeBosses(copy(state.presets.find(p => p.id === preset.slice(5))?.bosses || []));
-    else bosses = presetGroups[preset].names.map(makeBoss);
+    e.preventDefault(); const name = $('#characterName').value.trim(); if (!name) return;
+    const settings = characterMode === 'direct' ? selectedDirectBosses() : presetConfig($('#characterPreset').value);
+    if (!settings.length) { message('보스를 한 개 이상 선택해 주세요.', true); return; }
+    const bosses = normalizeBosses(settings.map(makeBoss));
     bosses.forEach(b => { b.done = false; delete b.completedIncome; });
-    if (transaction(next => next.characters.push({id: uid(), name, bosses}))) { $('#characterForm').reset(); $('#characterDialog').close(); }
+    const id = uid(), previousCharacterId = selectedBossCharacterId; selectedBossCharacterId = id;
+    if (transaction(next => next.characters.push({id, name, bosses}))) { $('#characterForm').reset(); $('#characterDialog').close(); }
+    else selectedBossCharacterId = previousCharacterId;
+  });
+  $$('[data-preset-mode]').forEach(button => button.addEventListener('click', () => {
+    presetApplyMode = button.dataset.presetMode;
+    $$('[data-preset-mode]').forEach(item => { const active = item === button; item.classList.toggle('active', active); item.setAttribute('aria-pressed', active); });
+    $('#presetReplaceWarning').classList.toggle('hidden', presetApplyMode !== 'replace');
+  }));
+  $('#presetForm').addEventListener('submit', e => {
+    e.preventDefault(); const ci = currentCharacterIndex(), settings = presetConfig($('#presetSelect').value);
+    if (ci < 0 || !settings.length) return;
+    if (presetApplyMode === 'replace' && !confirm('현재 보스 구성을 선택한 프리셋으로 교체할까요? 완료 체크도 초기화됩니다.')) return;
+    if (transaction(next => {
+      next.characters[ci].bosses = applyPresetBosses(next.characters[ci].bosses, settings, presetApplyMode);
+    })) $('#presetDialog').close();
+  });
+  $('#characterMenu').addEventListener('click', e => {
+    const button = e.target.closest('[data-character-action]'); if (!button || isPast()) return;
+    const ci = currentCharacterIndex(), c = state.characters[ci]; if (!c) return;
+    $('#characterMenu').open = false;
+    if (button.dataset.characterAction === 'rename') { const name = prompt('캐릭터 이름', c.name)?.trim(); if (name) transaction(next => { next.characters[ci].name = name; }); }
+    if (button.dataset.characterAction === 'apply-preset') openPresetDialog();
+    if (button.dataset.characterAction === 'save-preset') saveCurrentPreset();
+    if (button.dataset.characterAction === 'delete' && confirm(`${c.name} 캐릭터를 삭제할까요? 현재 주차의 보스 진행 상태도 함께 삭제됩니다.`)) {
+      transaction(next => next.characters.splice(ci, 1)); selectedBossCharacterId = state.characters[0]?.id || '';
+    }
   });
   $('#bossEditor').addEventListener('change', e => {
     const field = e.target.dataset.field; if (!field) return;
@@ -292,7 +425,7 @@ function init() {
     transaction(next => {
       const b = next.characters[ci].bosses[bi];
       if (field === 'done') { b.done = value; if (value) b.completedIncome = bossValue(b); else delete b.completedIncome; }
-      else { b[field] = field === 'difficulty' ? value : Math.max(field === 'party' ? 1 : 0, n(value)); if (field === 'difficulty') b.price = referencePrice(b.name, value); b.done = false; delete b.completedIncome; }
+      else { b[field] = field === 'difficulty' ? value : Math.max(field === 'party' ? 1 : 0, n(value)); if (field === 'party') b.partySize = b.party; if (field === 'difficulty') b.price = referencePrice(b.name, value); b.done = false; delete b.completedIncome; }
     });
   });
   $('#bossEditor').addEventListener('click', e => {
@@ -300,11 +433,6 @@ function init() {
     const ci = n(button.closest('[data-ci]').dataset.ci), c = state.characters[ci];
     if (button.dataset.action === 'add-boss') openBossDialog(ci);
     if (button.dataset.action === 'remove-boss') { const bi = n(button.closest('[data-bi]').dataset.bi); if (confirm(`${c.name}의 ${c.bosses[bi].name}을 삭제할까요? 이번 주 완료 수익에서도 제외됩니다.`)) transaction(next => next.characters[ci].bosses.splice(bi, 1)); }
-    if (button.dataset.action === 'rename') { const name = prompt('캐릭터 이름', c.name)?.trim(); if (name) transaction(next => { next.characters[ci].name = name; }); }
-    if (button.dataset.action === 'save-preset') {
-      const name = prompt('저장할 프리셋 이름', `${c.name} 구성`)?.trim();
-      if (name) transaction(next => { const bosses = copy(next.characters[ci].bosses); bosses.forEach(b => { b.done = false; delete b.completedIncome; }); next.presets.push({id: uid(), name, bosses}); });
-    }
   });
   $('#bossForm').addEventListener('submit', e => { e.preventDefault(); const ci = n($('#bossDialog').dataset.ci), name = $('#bossToAdd').value; if (transaction(next => { if (!next.characters[ci].bosses.some(b => b.name === name)) next.characters[ci].bosses.push(makeBoss(name)); })) $('#bossDialog').close(); });
   $('#incomeCategory').addEventListener('change', () => { $('#materialCost').value = ''; $('#materialCostHint').textContent = ''; renderIncomeForm(true); });
