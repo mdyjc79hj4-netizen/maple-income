@@ -71,6 +71,7 @@ export function startCloudSync(app) {
   const supabase = createClient(url, publishableKey, {auth: {persistSession: true, autoRefreshToken: true, detectSessionInUrl: true}});
   let user = null, syncQueue = Promise.resolve(), pushTimer = 0;
   let meta = safeJson(localStorage.getItem(META_KEY), {});
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) meta = {};
   if (!meta.clientId) meta.clientId = crypto.randomUUID();
   const saveMeta = changes => {
     meta = {...meta, ...changes};
