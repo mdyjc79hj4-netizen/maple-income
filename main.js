@@ -19,6 +19,7 @@ async function bootCloudSync() {
   const form = document.querySelector('#authForm');
   const loginButton = form?.querySelector('button[type="submit"]');
   const signUpButton = document.querySelector('#signUp');
+  const resendButton = document.querySelector('#resendConfirmation');
   const message = document.querySelector('#authMessage');
 
   if (!form || !loginButton || !signUpButton) return;
@@ -28,6 +29,7 @@ async function bootCloudSync() {
 
   loginButton.disabled = true;
   signUpButton.disabled = true;
+  if (resendButton) resendButton.disabled = true;
   if (message) message.textContent = '클라우드 로그인 준비 중…';
 
   try {
@@ -37,6 +39,7 @@ async function bootCloudSync() {
     form.removeEventListener('submit', blockNativeSubmit);
     loginButton.disabled = false;
     signUpButton.disabled = false;
+    if (resendButton) resendButton.disabled = false;
 
     if (message?.textContent === '클라우드 로그인 준비 중…') {
       message.textContent = '';
@@ -44,6 +47,7 @@ async function bootCloudSync() {
   } catch (error) {
     loginButton.disabled = false;
     signUpButton.disabled = false;
+    if (resendButton) resendButton.disabled = false;
     showCloudBootError(error);
   }
 }

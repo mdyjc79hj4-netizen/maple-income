@@ -104,8 +104,100 @@ assert.ok(cloudSyncInternals.timestamp('2026-09-23T00:00:00.000Z') > cloudSyncIn
 assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: false}), 'upload');
 assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: true, sameContent: true}), 'noop');
 assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: true, sameContent: false, knownDevice: false, initial: true, hasLocalData: true}), 'choose');
-assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: true, sameContent: false, knownDevice: true, localChangedSinceSync: true, localUpdatedAt: '2026-09-23T01:00:00Z', remoteUpdatedAt: '2026-09-23T00:00:00Z'}), 'upload');
-assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: true, sameContent: false, knownDevice: true, localChangedSinceSync: false, localUpdatedAt: '2026-09-23T01:00:00Z', remoteUpdatedAt: '2026-09-23T00:00:00Z'}), 'download');
+assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: true, sameContent: false, knownDevice: true}), 'merge');
+assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: true, sameContent: false, knownDevice: true, localChangedSinceSync: false}), 'merge');
+assert.deepEqual(cloudSyncInternals.normalizeMeta(null), {});
+assert.deepEqual(cloudSyncInternals.normalizeMeta('{broken'), {});
+assert.equal(cloudSyncInternals.authErrorMessage({message: 'Email not confirmed'}, '로그인'), '이메일 인증이 아직 완료되지 않았습니다. 인증 메일을 확인해주세요.');
+
+const syncBase = {
+  version: 5, currentWeek: '2026-09-17~2026-09-23', updatedAt: '2026-09-23T00:00:00.000Z',
+  settings: {theme: 'dark'},
+  incomes: [{id: 'income-base', category: 'hunt', item: '메소', amount: 100, createdAt: 1}],
+  characters: [{id: 'char-a', name: '본캐', bosses: [{bossId: 'lotus', difficulty: '하드', partySize: 1, done: false}]}],
+  presets: [{id: 'preset-a', name: '기본', bosses: [{bossId: 'lotus', difficulty: '하드', partySize: 1}]}],
+  weeklyHistory: {'week-old': {weekId: 'week-old', incomes: [], characters: []}}
+};
+const clone = value => structuredClone(value);
+
+// Two devices add different records from the same remote version.
+const addLocal = clone(syncBase);
+addLocal.updatedAt = '2026-09-23T01:00:00.000Z';
+addLocal.incomes.push({id: 'income-local', category: 'hunt', item: '메소', amount: 200, createdAt: 2});
+const addRemote = clone(syncBase);
+addRemote.updatedAt = '2026-09-23T02:00:00.000Z';
+addRemote.incomes.push({id: 'income-remote', category: 'gather', item: '씨앗', qty: 3, createdAt: 3});
+const additions = cloudSyncInternals.mergeStates(syncBase, addLocal, addRemote, '2026-09-23T03:00:00.000Z').state;
+assert.deepEqual(new Set(additions.incomes.map(item => item.id)), new Set(['income-base', 'income-local', 'income-remote']));
+
+// Same income ID: independent fields merge; same-field conflict keeps the newer revision and is audited.
+const editLocal = clone(syncBase);
+editLocal.updatedAt = '2026-09-23T01:00:00.000Z';
+editLocal.incomes[0].amount = 150;
+editLocal.incomes[0].memo = 'local memo';
+const editRemote = clone(syncBase);
+editRemote.updatedAt = '2026-09-23T02:00:00.000Z';
+editRemote.incomes[0].amount = 175;
+editRemote.incomes[0].qty = 4;
+const edited = cloudSyncInternals.mergeStates(syncBase, editLocal, editRemote, '2026-09-23T03:00:00.000Z');
+assert.equal(edited.state.incomes[0].amount, 175);
+assert.equal(edited.state.incomes[0].memo, 'local memo');
+assert.equal(edited.state.incomes[0].qty, 4);
+assert.ok(edited.conflicts.some(conflict => conflict.scope === 'incomes' && conflict.id === 'income-base' && conflict.field === 'amount'));
+
+// A character change and an income created on another device both survive.
+const characterLocal = clone(syncBase);
+characterLocal.updatedAt = '2026-09-23T01:00:00.000Z';
+characterLocal.characters[0].name = '부캐';
+const incomeRemote = clone(syncBase);
+incomeRemote.updatedAt = '2026-09-23T02:00:00.000Z';
+incomeRemote.incomes.push({id: 'income-other-device', category: 'drop', item: '아이템', qty: 1, createdAt: 4});
+const crossType = cloudSyncInternals.mergeStates(syncBase, characterLocal, incomeRemote, '2026-09-23T03:00:00.000Z').state;
+assert.equal(crossType.characters[0].name, '부캐');
+assert.ok(crossType.incomes.some(item => item.id === 'income-other-device'));
+
+// Bosses are merged by bossId inside each character.
+const bossLocal = clone(syncBase);
+bossLocal.updatedAt = '2026-09-23T01:00:00.000Z';
+bossLocal.characters[0].bosses[0].partySize = 2;
+const bossRemote = clone(syncBase);
+bossRemote.updatedAt = '2026-09-23T02:00:00.000Z';
+bossRemote.characters[0].bosses.push({bossId: 'damien', difficulty: '하드', partySize: 1, done: false});
+const bossesMerged = cloudSyncInternals.mergeStates(syncBase, bossLocal, bossRemote, '2026-09-23T03:00:00.000Z').state.characters[0].bosses;
+assert.equal(bossesMerged.find(boss => boss.bossId === 'lotus').partySize, 2);
+assert.ok(bossesMerged.some(boss => boss.bossId === 'damien'));
+
+// A tombstone beats a stale copy, so deleted data does not reappear.
+const deleteLocal = clone(syncBase);
+deleteLocal.updatedAt = '2026-09-23T03:00:00.000Z';
+deleteLocal.incomes = [];
+const staleRemote = clone(syncBase);
+staleRemote.updatedAt = '2026-09-23T01:00:00.000Z';
+const deleted = cloudSyncInternals.mergeStates(syncBase, deleteLocal, staleRemote, '2026-09-23T04:00:00.000Z').state;
+assert.equal(deleted.incomes.some(item => item.id === 'income-base'), false);
+assert.ok(deleted.sync.tombstones.incomes['income-base']);
+
+// A stale local state cannot overwrite a newer remote edit.
+const unchangedLocal = clone(syncBase);
+const newerRemote = clone(syncBase);
+newerRemote.updatedAt = '2026-09-23T05:00:00.000Z';
+newerRemote.incomes[0].amount = 999;
+const remoteWins = cloudSyncInternals.mergeStates(syncBase, unchangedLocal, newerRemote, '2026-09-23T06:00:00.000Z').state;
+assert.equal(remoteWins.incomes[0].amount, 999);
+
+// Offline local work and a remote change are merged on reconnect.
+const offlineLocal = clone(syncBase);
+offlineLocal.updatedAt = '2026-09-23T02:00:00.000Z';
+offlineLocal.presets.push({id: 'preset-offline', name: '오프라인', bosses: []});
+const onlineRemote = clone(syncBase);
+onlineRemote.updatedAt = '2026-09-23T03:00:00.000Z';
+onlineRemote.weeklyHistory['week-remote'] = {weekId: 'week-remote', incomes: [], characters: []};
+const reconnected = cloudSyncInternals.mergeStates(syncBase, offlineLocal, onlineRemote, '2026-09-23T04:00:00.000Z').state;
+assert.ok(reconnected.presets.some(preset => preset.id === 'preset-offline'));
+assert.ok(reconnected.weeklyHistory['week-remote']);
+assert.match(cloudSource, /auth\.resend\(\{/);
+assert.match(cloudSource, /emailRedirectTo: window\.location\.origin/);
+assert.match(html, /id="resendConfirmation"/);
 const referencedIds = [...source.matchAll(/\$\('#([A-Za-z][A-Za-z0-9_-]*)'\)/g)].map(match => match[1]);
 const htmlIds = new Set([...html.matchAll(/id="([^"]+)"/g)].map(match => match[1]));
 assert.deepEqual([...new Set(referencedIds)].filter(id => !htmlIds.has(id)), []);
@@ -118,4 +210,4 @@ assert.match(css, /\.cloud-actions button\{[^}]*min-height:44px/);
 assert.match(schema, /alter table public\.maple_income_sync enable row level security/i);
 assert.equal((schema.match(/create policy/gi) || []).length, 3);
 assert.match(schema, /auth\.uid\(\)\) = user_id/);
-console.log('boss roster, preset, migration, backup, reset, rollover, income and cloud sync regression checks passed');
+console.log('boss roster, preset, migration, backup, reset, rollover, income and multi-device cloud sync regression checks passed');

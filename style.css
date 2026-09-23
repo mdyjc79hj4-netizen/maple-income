@@ -162,6 +162,8 @@ dd{margin:0;font-size:12px}
 .cloud-auth input{font-size:14px}
 .cloud-actions{display:flex;gap:8px;align-items:center;grid-column:1/-1}
 .cloud-actions button{flex:1;min-height:44px}
+.cloud-auth .cloud-actions{flex-wrap:wrap}
+.cloud-actions .resend-confirmation{flex-basis:100%;font-size:12px;color:var(--blue)}
 .cloud-account{display:grid;gap:12px;margin-top:12px}
 .cloud-account b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cloud-account p,#authMessage{margin-top:4px}
