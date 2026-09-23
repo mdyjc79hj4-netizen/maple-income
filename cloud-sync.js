@@ -44,6 +44,7 @@ export function startCloudSync(app) {
     signUp: document.querySelector('#signUp'), account: document.querySelector('#cloudAccount'), cloudEmail: document.querySelector('#cloudEmail'),
     status: document.querySelector('#cloudStatus'), authMessage: document.querySelector('#authMessage'), syncNow: document.querySelector('#syncNow'), signOut: document.querySelector('#signOut')
   };
+  const loginButton = elements.form?.querySelector('button[type="submit"]');
   if (!app || !elements.form) return;
 
   const setBadge = (label, mode = 'local') => {
@@ -54,6 +55,12 @@ export function startCloudSync(app) {
   const setMessage = (text, error = false) => {
     elements.authMessage.textContent = text;
     elements.authMessage.classList.toggle('negative', error);
+  };
+  const setAuthBusy = busy => {
+    if (loginButton) loginButton.disabled = busy;
+    if (elements.signUp) elements.signUp.disabled = busy;
+    elements.email.disabled = busy;
+    elements.password.disabled = busy;
   };
   if (!url || !publishableKey) {
     elements.unavailable.classList.remove('hidden'); elements.form.classList.add('hidden');
@@ -153,15 +160,53 @@ export function startCloudSync(app) {
   };
 
   elements.form.addEventListener('submit', async event => {
-    event.preventDefault(); setMessage('로그인 중…');
-    const {error} = await supabase.auth.signInWithPassword({email: elements.email.value.trim(), password: elements.password.value});
-    if (error) setMessage(`로그인 실패: ${error.message}`, true); else { elements.password.value = ''; setMessage('로그인했습니다. 데이터를 확인하고 있습니다.'); }
+    event.preventDefault();
+    if (!elements.form.reportValidity()) return;
+    setAuthBusy(true); setMessage('濡쒓렇??以묅?);
+    try {
+      const {error} = await supabase.auth.signInWithPassword({
+        email: elements.email.value.trim(),
+        password: elements.password.value
+      });
+      if (error) {
+        setMessage(`濡쒓렇???ㅽ뙣: ${error.message}`, true);
+      } else {
+        elements.password.value = '';
+        setMessage('濡쒓렇?명뻽?듬땲?? ?곗씠?곕? ?뺤씤?섍퀬 ?덉뒿?덈떎.');
+      }
+    } catch (error) {
+      console.error('Supabase sign-in failed', error);
+      setMessage(`濡쒓렇???ㅽ뙣: ${error?.message || 'Supabase ?곌껐 以??ㅻ쪟媛 諛쒖깮?덉뒿?덈떎.'}`, true);
+    } finally {
+      setAuthBusy(false);
+    }
   });
+
   elements.signUp.addEventListener('click', async () => {
-    if (!elements.form.reportValidity()) return; setMessage('계정 생성 중…');
-    const {data, error} = await supabase.auth.signUp({email: elements.email.value.trim(), password: elements.password.value});
-    if (error) setMessage(`회원가입 실패: ${error.message}`, true);
-    else setMessage(data.session ? '가입과 로그인이 완료되었습니다.' : '확인 메일을 보냈습니다. 이메일 인증 후 로그인해 주세요.');
+    if (!elements.form.reportValidity()) return;
+    setAuthBusy(true); setMessage('怨꾩젙 ?앹꽦 以묅?);
+    try {
+      const {data, error} = await supabase.auth.signUp({
+        email: elements.email.value.trim(),
+        password: elements.password.value
+      });
+      if (error) {
+        setMessage(`?뚯썝媛???ㅽ뙣: ${error.message}`, true);
+      } else if (data.session) {
+        elements.password.value = '';
+        setMessage('?뚯썝媛?낃낵 濡쒓렇?몄씠 ?꾨즺?섏뿀?듬땲??');
+      } else if (data.user) {
+        elements.password.value = '';
+        setMessage('?뚯썝媛???붿껌???꾨즺?섏뿀?듬땲?? ?낅젰???대찓?쇱쓽 ?몄쬆 硫붿씪???뺤씤????濡쒓렇?명빐 二쇱꽭??');
+      } else {
+        setMessage('?뚯썝媛???붿껌? ?꾩넚?먯?留??묐떟???뺤씤?섏? 紐삵뻽?듬땲?? ?좎떆 ???ㅼ떆 ?쒕룄??二쇱꽭??', true);
+      }
+    } catch (error) {
+      console.error('Supabase sign-up failed', error);
+      setMessage(`?뚯썝媛???ㅽ뙣: ${error?.message || 'Supabase ?곌껐 以??ㅻ쪟媛 諛쒖깮?덉뒿?덈떎.'}`, true);
+    } finally {
+      setAuthBusy(false);
+    }
   });
   elements.signOut.addEventListener('click', async () => { const {error} = await supabase.auth.signOut(); if (error) setMessage(error.message, true); else setMessage('로그아웃했습니다. 이 기기의 데이터는 그대로 사용할 수 있습니다.'); });
   elements.syncNow.addEventListener('click', () => enqueue(() => reconcile()));
