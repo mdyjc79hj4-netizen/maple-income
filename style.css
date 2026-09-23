@@ -188,8 +188,14 @@ dd{margin:0;font-size:12px}
 .nexon-diagnostic-summary{padding:8px 10px;border-radius:9px;background:#0c1821;font-weight:700}
 .nexon-diagnostic-samples{display:grid;gap:6px;max-height:360px;overflow:auto}
 .nexon-diagnostic-item,.nexon-diagnostic-group{padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:#0c1821}
+.nexon-diagnostic-character{display:block;margin-bottom:3px;color:var(--blue)!important}
 .nexon-diagnostic-item p{margin-top:3px;overflow-wrap:anywhere;color:var(--muted)}
 .nexon-diagnostic-item small{color:var(--amber)}
+.nexon-completed-items{display:grid;gap:6px;padding:9px 10px;border:1px solid #315c50;border-radius:9px;background:#0d1c1a}
+.nexon-completed-item{padding-top:6px;border-top:1px solid #29483f}
+.nexon-completed-item small{display:block;color:var(--blue)}
+.nexon-completed-item p{margin-top:2px;color:var(--muted);overflow-wrap:anywhere}
+.nexon-completed-item strong{display:block;margin-top:2px;color:var(--mint)}
 .nexon-diagnostic-group ul{margin:5px 0 0;padding-left:18px;color:var(--muted)}
 .nexon-diagnostic-group li{margin-top:3px;overflow-wrap:anywhere}
 .nexon-diagnostic-empty{margin:2px 0 6px}

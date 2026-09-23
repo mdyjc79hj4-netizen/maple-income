@@ -126,10 +126,34 @@ assert.equal(context.__schedulerState.characters[0].bosses[0].completionSource, 
 assert.equal(context.__schedulerState.characters[0].bosses[0].completedIncome, 24450000);
 assert.equal(context.__schedulerState.characters[0].bosses[1].done, true);
 assert.equal(context.__schedulerState.characters[0].bosses[1].completionSource, 'manual');
+assert.equal(JSON.stringify(context.__schedulerState).includes('completedItems'), false);
 context.__appliedDiagnostics = appliedScheduler;
-assert.equal(run('nexonDiagnosticMessage(__appliedDiagnostics)'), 'NEXON 조회 4개 · 완료 2개 · 메기 매칭 2개 · 자동 완료 1개 · 매칭 실패 1개');
+assert.equal(run('nexonDiagnosticMessage(__appliedDiagnostics)'), 'NEXON 조회 4개 · 완료 2개 · 메기 매칭 2개 · 완료 매칭 1개 · 자동 완료 1개 · 매칭 실패 1개');
 assert.deepEqual(json('Object.keys(nexonDiagnosticGroups(__appliedDiagnostics))'), ['unknownName', 'difficultyMismatch', 'ambiguous', 'localMissing', 'apiMissing', 'ignoredCycle']);
 assert.equal(run('nexonDiagnosticGroups(__appliedDiagnostics).unknownName.length'), 1);
+assert.deepEqual(appliedScheduler.completedItems.map(item => item.result), ['matched-auto-completed', 'unknown-name']);
+
+// Multi-character aggregation collects every sample before completion-first limiting.
+context.__diagnosticTotal = {
+  fetched: 0, apiCompleted: 0, matched: 0, matchedCompleted: 0, autoCompleted: 0,
+  unknown: [], difficultyMismatch: [], ambiguous: [], notConfigured: [], localNotFound: [], ignoredCycle: [], completedItems: [], blockedByManualOverride: [], diagnosticSamples: []
+};
+context.__diagnosticA = {
+  fetched: 20, apiCompleted: 0, matched: 4, matchedCompleted: 0, autoCompleted: 0,
+  diagnosticSamples: Array.from({length: 20}, (_, index) => ({character: 'A', nexonCharacter: '넥슨A', contentName: `미완료 ${index}`, complete: false}))
+};
+context.__diagnosticB = {
+  fetched: 1, apiCompleted: 1, matched: 1, matchedCompleted: 1, autoCompleted: 1,
+  diagnosticSamples: [{character: 'B', nexonCharacter: '넥슨B', contentName: '완료 보스', complete: true}]
+};
+run('appendNexonDiagnostics(__diagnosticTotal, __diagnosticA)');
+run('appendNexonDiagnostics(__diagnosticTotal, __diagnosticB)');
+assert.equal(run('__diagnosticTotal.apiCompleted'), 1);
+assert.equal(run('__diagnosticTotal.matchedCompleted'), 1);
+const prioritizedMultiCharacterSamples = json('prioritizeNexonDiagnosticSamples(__diagnosticTotal.diagnosticSamples)');
+assert.equal(prioritizedMultiCharacterSamples.length, 21);
+assert.equal(prioritizedMultiCharacterSamples[0].character, 'B');
+assert.equal(prioritizedMultiCharacterSamples[0].contentName, '완료 보스');
 
 // The live API's English difficulty codes match the app's Korean canonical values.
 context.__englishDifficultyState = {
@@ -171,6 +195,7 @@ const multiDifficultyResult = json("applyNexonSchedulerState(__multiDifficultySt
 assert.equal(multiDifficultyResult.matched, 1);
 assert.equal(multiDifficultyResult.matchedCompleted, 1);
 assert.equal(multiDifficultyResult.difficultyMismatch.length, 2);
+assert.deepEqual(multiDifficultyResult.completedItems.map(item => item.result), ['matched-auto-completed', 'difficulty-mismatch']);
 assert.equal(context.__multiDifficultyState.characters[0].bosses[0].done, true);
 assert.equal(context.__multiDifficultyState.characters[0].bosses[0].completionSource, 'nexon-api');
 assert.equal(context.__multiDifficultyState.characters[0].bosses[0].completedIncome, 24450000);
@@ -182,6 +207,7 @@ context.__dailyCycleResponse = {...structuredClone(schedulerResponse), bosses: [
 const dailyCycleResult = json("applyNexonSchedulerState(__dailyCycleState, 'c1', __dailyCycleResponse, '2026-09-23T01:01:40.000Z')");
 assert.equal(dailyCycleResult.matched, 0);
 assert.equal(dailyCycleResult.ignoredCycle.length, 1);
+assert.equal(dailyCycleResult.completedItems[0].result, 'ignored-cycle');
 assert.equal(context.__dailyCycleState.characters[0].bosses[0].done, false);
 
 // Unknown names remain diagnostic-only even when the API marks them complete.
@@ -191,7 +217,15 @@ context.__unknownOnlyResponse = {...structuredClone(schedulerResponse), bosses: 
 const unknownOnlyResult = json("applyNexonSchedulerState(__unknownOnlyState, 'c1', __unknownOnlyResponse, '2026-09-23T01:01:50.000Z')");
 assert.equal(unknownOnlyResult.unknown.length, 1);
 assert.equal(unknownOnlyResult.matched, 0);
+assert.equal(unknownOnlyResult.completedItems[0].result, 'unknown-name');
 assert.equal(JSON.stringify(context.__unknownOnlyState.characters[0].bosses), unknownBossesBefore);
+
+// A completed known boss absent from the local character remains diagnostic-only.
+context.__notConfiguredState = structuredClone(schedulerState);
+context.__notConfiguredState.characters[0].bosses = [structuredClone(schedulerState.characters[0].bosses[0])];
+context.__notConfiguredResponse = {...structuredClone(schedulerResponse), bosses: [{contentName: '루시드', difficulty: 'hard', cycle: 'bossWeekly', complete: 'true'}]};
+const notConfiguredResult = json("applyNexonSchedulerState(__notConfiguredState, 'c1', __notConfiguredResponse, '2026-09-23T01:01:55.000Z')");
+assert.equal(notConfiguredResult.completedItems[0].result, 'not-configured');
 
 // Missing difficulty is safe only when the local bossId has one candidate.
 context.__missingDifficultyState = structuredClone(schedulerState);
@@ -272,6 +306,18 @@ assert.equal(context.__manualState.characters[0].bosses[0].apiCompleted, true);
 assert.equal(context.__manualState.characters[0].bosses[0].done, false);
 assert.equal(manualResult.matchedCompleted, 1);
 assert.equal(manualResult.autoCompleted, 0);
+assert.equal(manualResult.blockedByManualOverride.length, 1);
+assert.equal(manualResult.blockedByManualOverride[0].character, '본캐');
+assert.equal(manualResult.completedItems[0].result, 'blocked-manual-override');
+context.__manualDiagnostics = manualResult;
+assert.match(run('nexonDiagnosticMessage(__manualDiagnostics)'), /수동 해제 보호로 자동 완료 차단 1개/);
+
+// A completed local boss is reported separately from a newly auto-completed boss.
+context.__alreadyDoneState = structuredClone(schedulerState);
+context.__alreadyDoneResponse = {...structuredClone(schedulerResponse), bosses: [{contentName: '데미안', difficulty: 'hard', cycle: 'bossWeekly', complete: 'true'}]};
+const alreadyDoneResult = json("applyNexonSchedulerState(__alreadyDoneState, 'c1', __alreadyDoneResponse, '2026-09-23T02:01:00.000Z')");
+assert.equal(alreadyDoneResult.completedItems[0].result, 'matched-already-done');
+assert.equal(context.__alreadyDoneState.characters[0].bosses[1].done, true);
 
 // Cloud field-level merges are normalized so a manual incomplete override cannot be revived by API metadata.
 context.__mergedOverride = structuredClone(context.__manualState);
