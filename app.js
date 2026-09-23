@@ -432,11 +432,21 @@ function checkWeek() {
     const next = copy(state); if (rollover(next)) { persist(next); render(); message('지난 주 기록을 보관하고 새 주차를 시작했습니다.'); }
   } catch (error) { message(`주차 마감을 저장하지 못했습니다: ${error.message}`, true); }
 }
+function reconcileCloudSelection(previousBossCharacterId, previousWeek, nextState) {
+  const characters = Array.isArray(nextState?.characters) ? nextState.characters : [];
+  const bossCharacterId = previousBossCharacterId && characters.some(character => character.id === previousBossCharacterId)
+    ? previousBossCharacterId
+    : characters[0]?.id || '';
+  const week = previousWeek && nextState?.weeklyHistory?.[previousWeek] ? previousWeek : '';
+  return {bossCharacterId, week};
+}
 function applyCloudState(raw) {
   if (storageBlocked) throw new Error('로컬 저장소를 사용할 수 없어 클라우드 데이터를 적용할 수 없습니다.');
+  const previousBossCharacterId = selectedBossCharacterId, previousWeek = selectedWeek;
   const next = migrateState(raw), rolled = rollover(next);
   persist(next, {touch: rolled, notify: rolled});
-  selectedWeek = ''; selectedBossCharacterId = '';
+  const selection = reconcileCloudSelection(previousBossCharacterId, previousWeek, state);
+  selectedBossCharacterId = selection.bossCharacterId; selectedWeek = selection.week;
   renderIncomeForm(true); render();
   message(rolled ? '클라우드 데이터를 불러오고 새 주차를 시작했습니다.' : '클라우드의 최신 데이터를 반영했습니다.');
   return copy(state);

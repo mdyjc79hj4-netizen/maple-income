@@ -401,6 +401,31 @@ assert.deepEqual(cloudSyncInternals.normalizeMeta(null), {});
 assert.deepEqual(cloudSyncInternals.normalizeMeta('{broken'), {});
 assert.equal(cloudSyncInternals.authErrorMessage({message: 'Email not confirmed'}, '로그인'), '이메일 인증이 아직 완료되지 않았습니다. 인증 메일을 확인해주세요.');
 
+const cloudSelectionState = {
+  characters: [
+    {id: 'char-a', name: 'A', bosses: [{bossId: 'lotus', difficulty: '하드', done: false}]},
+    {id: 'char-b', name: 'B', bosses: [{bossId: 'vellum', difficulty: '카오스', done: false}]}
+  ],
+  weeklyHistory: {'2026-09-10~2026-09-16': {weekId: '2026-09-10~2026-09-16', characters: []}}
+};
+for (const mutate of [
+  state => state,
+  state => { state.characters[1].bosses[0].done = true; return state; },
+  state => { state.characters[1].bosses[0].difficulty = '하드'; return state; },
+  state => { Object.assign(state.characters[1].bosses[0], {done: true, apiCompleted: true, completionSource: 'nexon-api'}); return state; }
+]) {
+  context.__cloudSelectionState = mutate(structuredClone(cloudSelectionState));
+  assert.deepEqual(json("reconcileCloudSelection('char-b', '', __cloudSelectionState)"), {bossCharacterId: 'char-b', week: ''});
+}
+context.__cloudSelectionDeleted = {...structuredClone(cloudSelectionState), characters: [structuredClone(cloudSelectionState.characters[0])]};
+assert.deepEqual(json("reconcileCloudSelection('char-b', '', __cloudSelectionDeleted)"), {bossCharacterId: 'char-a', week: ''});
+context.__cloudSelectionEmpty = {...structuredClone(cloudSelectionState), characters: []};
+assert.deepEqual(json("reconcileCloudSelection('char-b', '', __cloudSelectionEmpty)"), {bossCharacterId: '', week: ''});
+context.__cloudSelectionState = structuredClone(cloudSelectionState);
+assert.deepEqual(json("reconcileCloudSelection('char-b', '2026-09-10~2026-09-16', __cloudSelectionState)"), {bossCharacterId: 'char-b', week: '2026-09-10~2026-09-16'});
+assert.deepEqual(json("reconcileCloudSelection('char-b', '2026-09-03~2026-09-09', __cloudSelectionState)"), {bossCharacterId: 'char-b', week: ''});
+assert.match(source, /const selection = reconcileCloudSelection\(previousBossCharacterId, previousWeek, state\)/);
+
 const syncBase = {
   version: 5, currentWeek: '2026-09-17~2026-09-23', updatedAt: '2026-09-23T00:00:00.000Z',
   settings: {theme: 'dark'},
