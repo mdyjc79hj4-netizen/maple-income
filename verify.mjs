@@ -74,6 +74,12 @@ for (const [name, bossId] of Object.entries(nexonNames)) {
   context.__nexonEntry = {contentName: name, difficulty: '하드', cycle: '주간', complete: true};
   assert.equal(run('mapNexonBossEntry(__nexonEntry)?.bossId'), bossId);
 }
+for (const [name, bossId] of [['  블러디   퀸  ', 'bloodyqueen'], ['세렌', 'seren'], ['칼로스', 'kalos']]) {
+  context.__nexonEntry = {contentName: name, difficulty: '하드', cycle: '주간', complete: true};
+  assert.equal(run('mapNexonBossEntry(__nexonEntry)?.bossId'), bossId);
+}
+context.__nexonEntry = {content_name: '스우', difficulty: ' 노말 ', cycle: '일간', registration_flag: 'false', complete_flag: 'true'};
+assert.deepEqual(json('mapNexonBossEntry(__nexonEntry)'), {bossId: 'lotus', contentName: '스우', difficulty: '노멀', cycle: '일간', registered: false, complete: true});
 
 const schedulerState = {
   version: 5, updatedAt: '2026-09-23T00:00:00.000Z', currentWeek: '2026-09-17~2026-09-23',
@@ -98,13 +104,64 @@ context.__schedulerState = structuredClone(schedulerState);
 context.__schedulerResponse = structuredClone(schedulerResponse);
 const appliedScheduler = json("applyNexonSchedulerState(__schedulerState, 'c1', __schedulerResponse, '2026-09-23T01:00:00.000Z')");
 assert.equal(appliedScheduler.newlyCompleted, 1);
+assert.equal(appliedScheduler.fetched, 4);
+assert.equal(appliedScheduler.apiCompleted, 2);
 assert.equal(appliedScheduler.matched, 2);
-assert.deepEqual(appliedScheduler.unknown, ['알 수 없는 신규 보스']);
+assert.equal(appliedScheduler.matchedCompleted, 1);
+assert.equal(appliedScheduler.autoCompleted, 1);
+assert.equal(appliedScheduler.unknown[0].contentName, '알 수 없는 신규 보스');
 assert.equal(context.__schedulerState.characters[0].bosses[0].done, true);
 assert.equal(context.__schedulerState.characters[0].bosses[0].completionSource, 'nexon-api');
 assert.equal(context.__schedulerState.characters[0].bosses[0].completedIncome, 24450000);
 assert.equal(context.__schedulerState.characters[0].bosses[1].done, true);
 assert.equal(context.__schedulerState.characters[0].bosses[1].completionSource, 'manual');
+context.__appliedDiagnostics = appliedScheduler;
+assert.equal(run('nexonDiagnosticMessage(__appliedDiagnostics)'), 'NEXON 조회 4개 · 완료 2개 · 메기 매칭 2개 · 자동 완료 1개 · 매칭 실패 1개');
+
+// Missing difficulty is safe only when the local bossId has one candidate.
+context.__missingDifficultyState = structuredClone(schedulerState);
+context.__missingDifficultyState.characters[0].bosses = [structuredClone(schedulerState.characters[0].bosses[0])];
+context.__missingDifficultyResponse = {...structuredClone(schedulerResponse), bosses: [{contentName: '스우', difficulty: '', cycle: '주간', registered: false, complete: true}]};
+const missingDifficulty = json("applyNexonSchedulerState(__missingDifficultyState, 'c1', __missingDifficultyResponse, '2026-09-23T01:02:00.000Z')");
+assert.equal(missingDifficulty.matched, 1);
+assert.equal(missingDifficulty.autoCompleted, 1);
+assert.equal(context.__missingDifficultyState.characters[0].bosses[0].done, true);
+
+// The same bossId with multiple local difficulties is ambiguous when the API omits difficulty.
+context.__ambiguousState = structuredClone(schedulerState);
+context.__ambiguousState.characters[0].bosses = [
+  {...structuredClone(schedulerState.characters[0].bosses[0]), difficulty: '노멀', price: 8350000},
+  {...structuredClone(schedulerState.characters[0].bosses[0]), difficulty: '하드', price: 48900000}
+];
+context.__ambiguousResponse = {...structuredClone(schedulerResponse), bosses: [{contentName: '스우', difficulty: '', cycle: '주간', registered: true, complete: true}]};
+const ambiguousResult = json("applyNexonSchedulerState(__ambiguousState, 'c1', __ambiguousResponse, '2026-09-23T01:03:00.000Z')");
+assert.equal(ambiguousResult.matched, 0);
+assert.equal(ambiguousResult.ambiguous.length, 1);
+assert.equal(context.__ambiguousState.characters[0].bosses.some(boss => boss.done), false);
+
+// A known name with a different difficulty is diagnosed and never applied to the wrong local row.
+context.__difficultyMismatchState = structuredClone(schedulerState);
+context.__difficultyMismatchResponse = {...structuredClone(schedulerResponse), bosses: [{contentName: '스우', difficulty: '노멀', cycle: '주간', registered: true, complete: true}]};
+const difficultyMismatch = json("applyNexonSchedulerState(__difficultyMismatchState, 'c1', __difficultyMismatchResponse, '2026-09-23T01:04:00.000Z')");
+assert.equal(difficultyMismatch.matched, 0);
+assert.equal(difficultyMismatch.difficultyMismatch.length, 1);
+assert.equal(context.__difficultyMismatchState.characters[0].bosses[0].done, false);
+
+// The existing Korean spelling alias matches the app's canonical 노멀 difficulty.
+context.__difficultyAliasState = structuredClone(schedulerState);
+context.__difficultyAliasState.characters[0].bosses[0].difficulty = '노멀';
+context.__difficultyAliasResponse = {...structuredClone(schedulerResponse), bosses: [{contentName: '스우', difficulty: '노말', cycle: '주간', registered: true, complete: true}]};
+const difficultyAlias = json("applyNexonSchedulerState(__difficultyAliasState, 'c1', __difficultyAliasResponse, '2026-09-23T01:04:30.000Z')");
+assert.equal(difficultyAlias.matchedCompleted, 1);
+assert.equal(context.__difficultyAliasState.characters[0].bosses[0].done, true);
+
+context.__incompleteState = structuredClone(schedulerState);
+context.__incompleteResponse = {...structuredClone(schedulerResponse), bosses: [{contentName: '스우', difficulty: '하드', cycle: '주간', registered: true, complete: false}]};
+const incompleteResult = json("applyNexonSchedulerState(__incompleteState, 'c1', __incompleteResponse, '2026-09-23T01:04:40.000Z')");
+assert.equal(incompleteResult.matched, 1);
+assert.equal(incompleteResult.matchedCompleted, 0);
+assert.equal(context.__incompleteState.characters[0].bosses[0].done, false);
+assert.equal(incompleteResult.localNotFound.some(item => item.bossId === 'damien'), true);
 
 // Live responses always apply to the active week. Their response date is metadata only.
 for (const responseDate of ['2026-09-16', '2026-09-16T23:59:59+09:00', 'not-a-date']) {
@@ -135,9 +192,11 @@ context.__manualState = structuredClone(schedulerState);
 context.__manualState.characters[0].bosses[0].manualOverride = false;
 context.__manualState.characters[0].bosses[0].completionSource = 'manual';
 context.__manualResponse = {date: '2026-09-23', character: schedulerResponse.character, bosses: [{contentName: '스우', difficulty: '하드', cycle: '주간', complete: true}]};
-run("applyNexonSchedulerState(__manualState, 'c1', __manualResponse, '2026-09-23T02:00:00.000Z')");
+const manualResult = json("applyNexonSchedulerState(__manualState, 'c1', __manualResponse, '2026-09-23T02:00:00.000Z')");
 assert.equal(context.__manualState.characters[0].bosses[0].apiCompleted, true);
 assert.equal(context.__manualState.characters[0].bosses[0].done, false);
+assert.equal(manualResult.matchedCompleted, 1);
+assert.equal(manualResult.autoCompleted, 0);
 
 // Cloud field-level merges are normalized so a manual incomplete override cannot be revived by API metadata.
 context.__mergedOverride = structuredClone(context.__manualState);
@@ -320,9 +379,11 @@ assert.ok(nexonCloudMerge.incomes.some(item => item.id === 'income-with-nexon'))
 
 const sanitizedScheduler = nexonProxyInternals.sanitizeScheduler({
   date: '2026-09-23', character_name: '넥슨본캐', world_name: '루나',
-  boss_contents: [{content_name: '스우', difficulty: '하드', cycle: '주간', registration_flag: 'true', complete_flag: 'true'}]
+  boss_contents: [{content_name: '스우', difficulty: '하드', cycle: '주간', registration_flag: 'false', complete_flag: 'true'}]
 }, schedulerResponse.character.ocid);
-assert.deepEqual(sanitizedScheduler.bosses[0], {contentName: '스우', difficulty: '하드', cycle: '주간', registered: true, complete: true});
+assert.deepEqual(sanitizedScheduler.bosses[0], {contentName: '스우', difficulty: '하드', cycle: '주간', registered: false, complete: true});
+assert.equal(nexonProxyInternals.parseFlag(' true '), true);
+assert.equal(nexonProxyInternals.parseFlag('false'), false);
 assert.equal(sanitizedScheduler.mode, 'live');
 assert.equal(sanitizedScheduler.requestedDate, null);
 const historicalScheduler = nexonProxyInternals.sanitizeScheduler({date: '2026-09-20', boss_contents: []}, schedulerResponse.character.ocid, '2026-09-20');
@@ -340,6 +401,7 @@ assert.match(nexonApiSource, /'x-nxopen-api-key': apiKey/);
 assert.match(nexonApiSource, /\/maplestory\/v1\/scheduler\/character-state/);
 assert.match(envExample, /^NEXON_OPEN_API_KEY=$/m);
 assert.match(source, /throw applyError \|\| new Error\('NEXON 확인 결과를 이 기기에 저장하지 못했습니다\.'\)/);
+assert.match(source, /console\.info\('NEXON scheduler sync diagnostics', applied\)/);
 const originalNexonKey = process.env.NEXON_OPEN_API_KEY;
 delete process.env.NEXON_OPEN_API_KEY;
 let missingKeyStatus = 0, missingKeyBody = null;

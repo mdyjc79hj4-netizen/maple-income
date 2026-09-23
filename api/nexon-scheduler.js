@@ -58,6 +58,10 @@ async function requestNexon(path, params, apiKey) {
   }
 }
 
+function parseFlag(value) {
+  return value === true || (typeof value === 'string' && value.trim().toLowerCase() === 'true');
+}
+
 function sanitizeScheduler(payload, ocid, requestedDate = '') {
   if (!payload || typeof payload !== 'object' || !Array.isArray(payload.boss_contents)) {
     throw Object.assign(new Error('NEXON 스케줄러 응답 구조가 변경되었습니다.'), {status: 502});
@@ -77,8 +81,8 @@ function sanitizeScheduler(payload, ocid, requestedDate = '') {
       contentName: typeof item.content_name === 'string' ? item.content_name : '',
       difficulty: typeof item.difficulty === 'string' ? item.difficulty : '',
       cycle: typeof item.cycle === 'string' ? item.cycle : '',
-      registered: item.registration_flag === true || item.registration_flag === 'true',
-      complete: item.complete_flag === true || item.complete_flag === 'true'
+      registered: parseFlag(item.registration_flag),
+      complete: parseFlag(item.complete_flag)
     }))
   };
 }
@@ -112,4 +116,4 @@ export default async function handler(req, res) {
   }
 }
 
-export const nexonProxyInternals = {publicError, sanitizeScheduler, validDate};
+export const nexonProxyInternals = {parseFlag, publicError, sanitizeScheduler, validDate};
