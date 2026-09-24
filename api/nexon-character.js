@@ -1,6 +1,8 @@
 const NEXON_BASE_URL = 'https://open.api.nexon.com';
 const PROFILE_CACHE_TTL_MS = 30 * 60_000;
-const cache = new Map();
+const STAT_CACHE_TTL_MS = 15 * 60_000;
+const UNION_CACHE_TTL_MS = 60 * 60_000;
+const resourceCaches = {basic: new Map(), stat: new Map(), union: new Map()};
 
 const statusMessages = {
   400: '캐릭터 식별 정보를 확인해주세요.',
@@ -18,7 +20,7 @@ function send(res, status, body) {
 function publicError(status) {
   return {
     code: status === 429 ? 'RATE_LIMITED' : status === 403 ? 'FORBIDDEN' : status === 400 ? 'BAD_REQUEST' : 'UPSTREAM_ERROR',
-    message: statusMessages[status] || 'NEXON 캐릭터 기본정보를 확인하지 못했습니다.'
+    message: statusMessages[status] || 'NEXON 캐릭터 정보를 확인하지 못했습니다.'
   };
 }
 
@@ -41,27 +43,49 @@ function safeImageUrl(value) {
   }
 }
 
-function sanitizeProfile(payload) {
-  if (!payload || typeof payload !== 'object') {
-    throw Object.assign(new Error('NEXON 캐릭터 기본정보 응답 구조가 변경되었습니다.'), {status: 502});
-  }
-  const level = Number(payload.character_level);
+function safeInteger(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) && Number.isInteger(number) && number >= 0 ? number : null;
+}
+
+function sanitizeBasic(payload) {
+  if (!payload || typeof payload !== 'object') throw Object.assign(new Error('NEXON 캐릭터 기본정보 응답 구조가 변경되었습니다.'), {status: 502});
   return {
-    ok: true,
-    fetchedAt: new Date().toISOString(),
     date: typeof payload.date === 'string' ? payload.date : '',
-    character: {
-      name: typeof payload.character_name === 'string' ? payload.character_name : '',
-      world: typeof payload.world_name === 'string' ? payload.world_name : '',
-      className: typeof payload.character_class === 'string' ? payload.character_class : '',
-      level: Number.isInteger(level) && level >= 0 ? level : null,
-      image: safeImageUrl(payload.character_image)
-    }
+    name: typeof payload.character_name === 'string' ? payload.character_name : '',
+    world: typeof payload.world_name === 'string' ? payload.world_name : '',
+    className: typeof payload.character_class === 'string' ? payload.character_class : '',
+    level: safeInteger(payload.character_level),
+    image: safeImageUrl(payload.character_image)
   };
 }
 
-async function requestProfile(ocid, apiKey) {
-  const target = new URL('/maplestory/v1/character/basic', NEXON_BASE_URL);
+function sanitizeStat(payload) {
+  if (!payload || typeof payload !== 'object') throw Object.assign(new Error('NEXON 캐릭터 능력치 응답 구조가 변경되었습니다.'), {status: 502});
+  const entry = Array.isArray(payload.final_stat)
+    ? payload.final_stat.find(item => item && item.stat_name === '전투력')
+    : null;
+  return {combatPower: safeInteger(entry?.stat_value)};
+}
+
+function sanitizeUnion(payload) {
+  if (!payload || typeof payload !== 'object') throw Object.assign(new Error('NEXON 유니온 응답 구조가 변경되었습니다.'), {status: 502});
+  return {
+    unionLevel: safeInteger(payload.union_level),
+    unionGrade: typeof payload.union_grade === 'string' ? payload.union_grade : ''
+  };
+}
+
+function sanitizeProfile(payload) {
+  const basic = sanitizeBasic(payload);
+  return {ok: true, fetchedAt: new Date().toISOString(), date: basic.date, character: {
+    name: basic.name, world: basic.world, className: basic.className, level: basic.level, image: basic.image
+  }};
+}
+
+async function requestNexon(path, ocid, apiKey) {
+  const target = new URL(path, NEXON_BASE_URL);
   target.searchParams.set('ocid', ocid);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8_000);
@@ -78,13 +102,41 @@ async function requestProfile(ocid, apiKey) {
     const status = [400, 403, 429, 500, 503].includes(response.status) ? response.status : 502;
     let payload = null;
     try { payload = await response.json(); } catch {}
-    throw Object.assign(new Error(publicError(status).message), {status, code: upstreamErrorCode(payload) || publicError(status).code});
+    const fallback = publicError(status);
+    throw Object.assign(new Error(fallback.message), {status, code: upstreamErrorCode(payload) || fallback.code});
   }
   try {
     return await response.json();
   } catch {
     throw Object.assign(new Error('NEXON API 응답 형식이 올바르지 않습니다.'), {status: 502});
   }
+}
+
+async function loadResource(resource, path, ttl, sanitizer, ocid, apiKey) {
+  const cache = resourceCaches[resource];
+  const cached = cache.get(ocid);
+  if (cached && Date.now() - cached.savedAt < ttl) return {...cached, cached: true};
+  const payload = await requestNexon(path, ocid, apiKey);
+  // Validate before caching so a transient malformed upstream response does not
+  // remain successful for the full resource TTL.
+  const value = {savedAt: Date.now(), data: sanitizer(payload)};
+  cache.set(ocid, value);
+  return {...value, cached: false};
+}
+
+function resourceWarning(resource, reason) {
+  const status = Number(reason?.status) || 502;
+  const fallback = publicError(status);
+  return {
+    resource,
+    status,
+    code: typeof reason?.code === 'string' ? reason.code : fallback.code,
+    message: reason?.message || fallback.message
+  };
+}
+
+function clearCaches() {
+  for (const cache of Object.values(resourceCaches)) cache.clear();
 }
 
 export default async function handler(req, res) {
@@ -94,20 +146,52 @@ export default async function handler(req, res) {
   const ocid = String(req.query.ocid || '').trim();
   if (!validOcid(ocid)) return send(res, 400, {ok: false, ...publicError(400)});
 
-  const cached = cache.get(ocid);
-  if (cached && Date.now() - cached.savedAt < PROFILE_CACHE_TTL_MS) return send(res, 200, {...cached.value, cached: true});
-  try {
-    const value = sanitizeProfile(await requestProfile(ocid, apiKey));
-    cache.set(ocid, {savedAt: Date.now(), value});
-    return send(res, 200, value);
-  } catch (error) {
-    const status = Number(error?.status) || 502;
-    const fallback = publicError(status);
-    const code = typeof error?.code === 'string' ? error.code : fallback.code;
-    const message = error?.message || fallback.message;
-    console.error('NEXON character profile request failed', {status, code, message});
-    return send(res, status, {ok: false, ...fallback, code, message});
+  const requests = [
+    ['basic', '/maplestory/v1/character/basic', PROFILE_CACHE_TTL_MS, sanitizeBasic],
+    ['stat', '/maplestory/v1/character/stat', STAT_CACHE_TTL_MS, sanitizeStat],
+    ['union', '/maplestory/v1/user/union', UNION_CACHE_TTL_MS, sanitizeUnion]
+  ];
+  const settled = await Promise.allSettled(requests.map(([resource, path, ttl, sanitizer]) => loadResource(resource, path, ttl, sanitizer, ocid, apiKey)));
+  const resources = {}, warnings = [], parts = {};
+  settled.forEach((result, index) => {
+    const [resource] = requests[index];
+    if (result.status === 'fulfilled') {
+      parts[resource] = result.value.data;
+      resources[resource] = {ok: true, cached: result.value.cached};
+    } else {
+      resources[resource] = {ok: false};
+      warnings.push(resourceWarning(resource, result.reason));
+    }
+  });
+
+  if (!Object.values(resources).some(resource => resource.ok)) {
+    const first = warnings[0] || resourceWarning('basic', null);
+    console.error('NEXON character requests failed', {warnings});
+    return send(res, first.status, {ok: false, code: first.code, message: first.message, warnings});
   }
+
+  const basic = parts.basic || {}, stat = parts.stat || {}, union = parts.union || {};
+  return send(res, 200, {
+    ok: true,
+    fetchedAt: new Date().toISOString(),
+    date: basic.date || '',
+    character: {
+      name: basic.name || '',
+      world: basic.world || '',
+      className: basic.className || '',
+      level: basic.level ?? null,
+      image: basic.image || '',
+      combatPower: stat.combatPower ?? null,
+      unionLevel: union.unionLevel ?? null,
+      unionGrade: union.unionGrade || ''
+    },
+    resources,
+    warnings
+  });
 }
 
-export const nexonCharacterInternals = {PROFILE_CACHE_TTL_MS, publicError, safeImageUrl, sanitizeProfile, upstreamErrorCode, validOcid};
+export const nexonCharacterInternals = {
+  PROFILE_CACHE_TTL_MS, STAT_CACHE_TTL_MS, UNION_CACHE_TTL_MS,
+  clearCaches, publicError, resourceWarning, safeImageUrl, safeInteger,
+  sanitizeBasic, sanitizeProfile, sanitizeStat, sanitizeUnion, upstreamErrorCode, validOcid
+};

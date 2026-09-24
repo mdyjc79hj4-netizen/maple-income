@@ -91,6 +91,17 @@ function koreanMeso(value) {
   if (rest) parts.push(won(rest));
   return `${n(value) < 0 ? '−' : ''}${parts.join(' ') || '0'}`;
 }
+function koreanNumber(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '정보 없음';
+  let rest = Math.abs(Math.trunc(number)); const parts = [];
+  for (const [size, unit] of [[1e12, '조'], [1e8, '억'], [1e4, '만']]) {
+    const group = Math.floor(rest / size); rest -= group * size;
+    if (group) parts.push(`${group.toLocaleString('ko-KR')}${unit}`);
+  }
+  if (rest) parts.push(rest.toLocaleString('ko-KR'));
+  return `${number < 0 ? '−' : ''}${parts.join(' ') || '0'}`;
+}
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'}[c])); }
 function safeNexonImageUrl(value) {
   if (typeof value !== 'string' || !value.trim()) return '';
@@ -99,15 +110,19 @@ function safeNexonImageUrl(value) {
     return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
   } catch { return ''; }
 }
+function safeOptionalInteger(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isInteger(number) && number >= 0 ? number : null;
+}
 function normalizeNexonCharacter(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const result = {...value};
-  for (const key of ['ocid', 'characterName', 'world', 'className', 'linkedAt', 'lastCheckedAt', 'lastCheckedWeek', 'profileCheckedAt', 'status']) {
+  for (const key of ['ocid', 'characterName', 'world', 'className', 'unionGrade', 'linkedAt', 'lastCheckedAt', 'lastCheckedWeek', 'profileCheckedAt', 'statsCheckedAt', 'status']) {
     if (result[key] != null) result[key] = String(result[key]);
   }
-  if (result.level != null) {
-    const level = Number(result.level);
-    result.level = Number.isInteger(level) && level >= 0 ? level : null;
+  for (const key of ['level', 'combatPower', 'unionLevel']) {
+    if (result[key] != null) result[key] = safeOptionalInteger(result[key]);
   }
   result.image = safeNexonImageUrl(result.image);
   return result;
@@ -431,16 +446,29 @@ function applyNexonProfileState(data, characterId, response, checkedAt = new Dat
   const character = data.characters.find(item => item.id === characterId);
   if (!character?.nexonCharacter?.ocid) throw new Error('프로필을 저장할 연동 캐릭터를 찾을 수 없습니다.');
   const profile = response.character, previous = JSON.stringify(character.nexonCharacter);
+  const resourceState = response.resources && typeof response.resources === 'object' ? response.resources : null;
+  const basicOk = resourceState ? resourceState.basic?.ok === true : true;
+  const statOk = resourceState ? resourceState.stat?.ok === true : Object.hasOwn(profile, 'combatPower');
+  const unionOk = resourceState ? resourceState.union?.ok === true : Object.hasOwn(profile, 'unionLevel');
   const level = Number(profile.level);
-  character.nexonCharacter = normalizeNexonCharacter({
+  const nextProfile = {
     ...character.nexonCharacter,
-    ...(profile.name ? {characterName: profile.name} : {}),
-    ...(profile.world ? {world: profile.world} : {}),
-    className: typeof profile.className === 'string' ? profile.className : character.nexonCharacter.className || '',
-    level: Number.isInteger(level) && level >= 0 ? level : character.nexonCharacter.level ?? null,
-    image: safeNexonImageUrl(profile.image),
-    profileCheckedAt: checkedAt
-  });
+    ...(basicOk && profile.name ? {characterName: profile.name} : {}),
+    ...(basicOk && profile.world ? {world: profile.world} : {}),
+    ...(basicOk ? {
+      className: typeof profile.className === 'string' ? profile.className : character.nexonCharacter.className || '',
+      level: Number.isInteger(level) && level >= 0 ? level : character.nexonCharacter.level ?? null,
+      image: safeNexonImageUrl(profile.image),
+      profileCheckedAt: checkedAt
+    } : {}),
+    ...(statOk ? {combatPower: safeOptionalInteger(profile.combatPower)} : {}),
+    ...(unionOk ? {
+      unionLevel: safeOptionalInteger(profile.unionLevel),
+      unionGrade: typeof profile.unionGrade === 'string' ? profile.unionGrade : ''
+    } : {}),
+    ...(statOk || unionOk ? {statsCheckedAt: checkedAt} : {})
+  };
+  character.nexonCharacter = normalizeNexonCharacter(nextProfile);
   return previous !== JSON.stringify(character.nexonCharacter);
 }
 function characterStats(c) {
@@ -641,6 +669,12 @@ function nexonProfileCopy(character, className = '') {
   const profile = nexonProfileLines(character);
   return `${profile.primary ? `<span class="nexon-profile-primary ${escapeHtml(className)}">${escapeHtml(profile.primary)}</span>` : ''}${profile.world ? `<span class="nexon-profile-world">${escapeHtml(profile.world)}</span>` : ''}`;
 }
+function nexonSpecSummary(character) {
+  const profile = character?.nexonCharacter;
+  const combatPower = Number.isInteger(profile?.combatPower) ? koreanNumber(profile.combatPower) : '정보 없음';
+  const unionLevel = Number.isInteger(profile?.unionLevel) ? profile.unionLevel.toLocaleString('ko-KR') : '정보 없음';
+  return `<span class="character-spec"><small class="character-spec-title">스펙 요약</small><span class="character-spec-grid"><span><small>전투력</small><b>${escapeHtml(combatPower)}</b></span><span><small>유니온</small><b>${escapeHtml(unionLevel)}</b></span></span></span>`;
+}
 function render() {
   if (selectedWeek && !state.weeklyHistory[selectedWeek]) selectedWeek = '';
   const data = viewData(), totals = isPast() ? snapshotTotals(data) : totalsFor(state), current = totalsFor(state);
@@ -654,7 +688,7 @@ function render() {
   $('#metrics').innerHTML = Object.entries(labels).map(([key, label]) => `<div class="metric"><small>${label}</small><b>${money(totals[key])}</b></div>`).join('');
   $('#characterList').innerHTML = (data.characters || []).map(c => {
     const s = characterStats(c), percent = s.count ? Math.round(s.done / s.count * 100) : 0;
-    return `<button type="button" class="character" data-character="${escapeHtml(c.id)}" aria-label="${escapeHtml(c.name)} 주간 보스 관리"><span class="character-main"><span class="character-identity">${nexonProfileAvatar(c, 'summary-art')}<span class="character-identity-copy"><b>${escapeHtml(c.name)}</b>${nexonProfileCopy(c)}<small>${s.done} / ${s.count} 완료 · 진행률 ${percent}%</small></span></span><strong class="character-income mint">${money(s.earned)}</strong></span><span class="character-detail"><progress value="${s.done}" max="${s.count || 1}" aria-label="${escapeHtml(c.name)} 보스 진행률"></progress><dl><div><dt>완료 수익</dt><dd>${money(s.earned)}</dd></div><div><dt>예상 수익</dt><dd>${money(s.expected)}</dd></div><div><dt>남은 수익</dt><dd>${money(s.remaining)}</dd></div></dl></span></button>`;
+    return `<button type="button" class="character" data-character="${escapeHtml(c.id)}" aria-label="${escapeHtml(c.name)} 주간 보스 관리"><span class="character-main"><span class="character-identity">${nexonProfileAvatar(c, 'summary-art')}<span class="character-identity-copy"><b>${escapeHtml(c.name)}</b>${nexonProfileCopy(c)}<small>${s.done} / ${s.count} 완료 · 진행률 ${percent}%</small></span></span><strong class="character-income mint">${money(s.earned)}</strong></span><span class="character-detail"><span class="character-performance"><progress value="${s.done}" max="${s.count || 1}" aria-label="${escapeHtml(c.name)} 보스 진행률"></progress><dl><div><dt>완료 수익</dt><dd>${money(s.earned)}</dd></div><div><dt>예상 수익</dt><dd>${money(s.expected)}</dd></div><div><dt>남은 수익</dt><dd>${money(s.remaining)}</dd></div></dl></span>${nexonSpecSummary(c)}</span></button>`;
   }).join('') || '<p class="empty">저장된 캐릭터가 없습니다.</p>';
   $('#addCharacter').disabled = !!isPast() || storageBlocked; $('#incomeFields').disabled = !!isPast() || storageBlocked;
   $('#incomeReadOnly').classList.toggle('hidden', !isPast()); $('#resetAll').disabled = !!isPast(); $('#resetWeek').disabled = !!isPast();
@@ -737,7 +771,7 @@ function nexonDefaultStatusMessage(characters = []) {
 function nexonProfileNeedsBackfill(character) {
   const profile = character?.nexonCharacter;
   if (!profile?.ocid) return false;
-  return !profile.profileCheckedAt || !profile.className || !Number.isInteger(profile.level) || !safeNexonImageUrl(profile.image);
+  return !profile.profileCheckedAt || !profile.statsCheckedAt || !profile.className || !Number.isInteger(profile.level) || !safeNexonImageUrl(profile.image);
 }
 function nexonSyncPlan(character, {characterName = '', ignoreCooldown = false, now = Date.now()} = {}) {
   const lastChecked = Date.parse(character?.nexonCharacter?.lastCheckedAt || '');
@@ -956,7 +990,11 @@ async function syncNexonCharacter(characterId, {characterName = '', requestDate 
   if (!saved) throw applyError || new Error('NEXON 확인 결과를 이 기기에 저장하지 못했습니다.');
   const diagnosticSamples = Array.isArray(response?.diagnostics?.samples) ? response.diagnostics.samples.map(sample => ({...sample, character: character.name, nexonCharacter})) : [];
   const diagnosticActivitySamples = Array.isArray(response?.diagnostics?.activitySamples) ? response.diagnostics.activitySamples.map(sample => ({...sample, character: character.name, nexonCharacter})) : [];
-  const result = {...applied, diagnosticSamples, diagnosticActivitySamples, character: character.name, nexonCharacter, cooldown: plan.schedulerCooldown, profileChanged, profileUpdated: Number(profileChanged), profileError: profileFailure?.message || '', profileFailures: profileFailure ? [profileFailure] : []};
+  const partialProfileFailures = Array.isArray(profileResponse?.warnings)
+    ? profileResponse.warnings.map(warning => nexonProfileFailure(character, warning, nexonCharacter))
+    : [];
+  const profileFailures = [...(profileFailure ? [profileFailure] : []), ...partialProfileFailures];
+  const result = {...applied, diagnosticSamples, diagnosticActivitySamples, character: character.name, nexonCharacter, cooldown: plan.schedulerCooldown, profileChanged, profileUpdated: Number(profileChanged), profileError: profileFailures[0]?.message || '', profileFailures};
   console.info('NEXON scheduler sync diagnostics', result);
   return result;
 }

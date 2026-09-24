@@ -78,6 +78,20 @@ const characterData = character => {
   const value = {...asObject(character)};
   delete value.bosses;
   delete value.weeklyActivities;
+  const nexonCharacter = asObject(value.nexonCharacter);
+  delete value.nexonCharacter;
+  for (const [key, fieldValue] of Object.entries(nexonCharacter)) value['nexonCharacter.' + key] = fieldValue;
+  return value;
+};
+const restoreCharacterData = character => {
+  const value = {...asObject(character)};
+  const nexonCharacter = {};
+  for (const key of Object.keys(value)) {
+    if (!key.startsWith('nexonCharacter.')) continue;
+    if (value[key] !== undefined) nexonCharacter[key.slice('nexonCharacter.'.length)] = value[key];
+    delete value[key];
+  }
+  if (Object.keys(nexonCharacter).length) value.nexonCharacter = nexonCharacter;
   return value;
 };
 const bossKey = (characterId, bossId) => characterId + '::' + bossId;
@@ -310,7 +324,7 @@ function mergeStates(baseInput, localInput, remoteInput, now = new Date().toISOS
     });
     for (const [id, value] of Object.entries(activityResult.revisions)) sync.revisions.activities[activityKey(characterId, id)] = value;
     for (const [id, value] of Object.entries(activityResult.tombstones)) sync.tombstones.activities[activityKey(characterId, id)] = value;
-    characters.push({...body, bosses: [...bossResult.result.values()], weeklyActivities: [...activityResult.result.values()]});
+    characters.push({...restoreCharacterData(body), bosses: [...bossResult.result.values()], weeklyActivities: [...activityResult.result.values()]});
   }
   for (const source of [localSync, remoteSync]) {
     for (const group of ['bosses', 'activities']) for (const [key, value] of Object.entries(source.tombstones[group])) {

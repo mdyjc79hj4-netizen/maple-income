@@ -74,6 +74,14 @@ const migratedProfileState = json("migrateState(__legacyProfileState, new Date('
 assert.equal(migratedProfileState.characters[0].nexonCharacter.characterName, '넥슨본캐');
 assert.equal(migratedProfileState.characters[0].nexonCharacter.image, '');
 assert.equal('className' in migratedProfileState.characters[0].nexonCharacter, false);
+assert.equal('combatPower' in migratedProfileState.characters[0].nexonCharacter, false);
+assert.equal('unionLevel' in migratedProfileState.characters[0].nexonCharacter, false);
+assert.deepEqual(json("normalizeNexonCharacter({ocid:'abcdefghijklmnop',combatPower:'284300000',unionLevel:'9450',unionGrade:'그랜드 마스터 유니온',statsCheckedAt:'2026-09-24T00:00:00.000Z'})"), {
+  ocid: 'abcdefghijklmnop', combatPower: 284300000, unionLevel: 9450, unionGrade: '그랜드 마스터 유니온', statsCheckedAt: '2026-09-24T00:00:00.000Z', image: ''
+});
+assert.deepEqual(json("normalizeNexonCharacter({ocid:'abcdefghijklmnop',combatPower:'',unionLevel:'invalid'})"), {
+  ocid: 'abcdefghijklmnop', combatPower: null, unionLevel: null, image: ''
+});
 assert.equal(run("safeNexonImageUrl('https://example.com/avatar.png')"), 'https://example.com/avatar.png');
 assert.equal(run("safeNexonImageUrl('javascript:alert(1)')"), '');
 assert.equal(run("nexonProfileAvatar({name:'본캐',nexonCharacter:{ocid:'abcdefghijklmnop'}})"), '');
@@ -82,7 +90,7 @@ assert.match(avatarMarkup, /data-nexon-profile-image/);
 assert.match(avatarMarkup, /nexon-profile-image summary-art/);
 assert.equal((avatarMarkup.match(/<span/g) || []).length, 1);
 assert.doesNotMatch(avatarMarkup, />본</);
-context.__profileUiCharacter = {name: '본캐', nexonCharacter: {ocid: 'abcdefghijklmnop', characterName: '넥슨본캐', world: '루나', className: '나이트로드', level: 285, image: 'https://example.com/avatar.png', profileCheckedAt: '2026-09-23T01:00:00.000Z'}};
+context.__profileUiCharacter = {name: '본캐', nexonCharacter: {ocid: 'abcdefghijklmnop', characterName: '넥슨본캐', world: '루나', className: '나이트로드', level: 285, image: 'https://example.com/avatar.png', profileCheckedAt: '2026-09-23T01:00:00.000Z', combatPower: 284300000, unionLevel: 9450, unionGrade: '그랜드 마스터 유니온', statsCheckedAt: '2026-09-23T01:00:00.000Z'}};
 const profileUiMarkup = run("nexonProfileAvatar(__profileUiCharacter, 'summary-art') + nexonProfileCopy(__profileUiCharacter)");
 assert.match(profileUiMarkup, /data-nexon-profile-image/);
 assert.match(profileUiMarkup, /넥슨본캐/);
@@ -95,6 +103,14 @@ assert.doesNotMatch(profileUiWithoutImage, /<img/);
 assert.match(profileUiWithoutImage, /Lv\. 285/);
 assert.match(profileUiWithoutImage, /나이트로드/);
 assert.match(profileUiWithoutImage, /루나/);
+assert.equal(run('koreanNumber(284300000)'), '2억 8,430만');
+assert.equal(run('koreanNumber(null)'), '0');
+const specSummaryMarkup = run('nexonSpecSummary(__profileUiCharacter)');
+assert.match(specSummaryMarkup, /스펙 요약/);
+assert.match(specSummaryMarkup, /2억 8,430만/);
+assert.match(specSummaryMarkup, /9,450/);
+assert.doesNotMatch(specSummaryMarkup, /메소/);
+assert.match(run("nexonSpecSummary({nexonCharacter:{combatPower:null,unionLevel:null}})"), /정보 없음/);
 
 const nexonNames = {
   '자쿰': 'zakum', '피에르': 'pierre', '반반': 'vonbon', '블러디 퀸': 'bloodyqueen', '벨룸': 'vellum',
@@ -191,14 +207,22 @@ assert.equal(run("diagnosticEntryLabel('profileFailures', __profileFailure)"), '
 
 context.__profileResponse = {
   ok: true, fetchedAt: '2026-09-23T01:00:10.000Z',
-  character: {name: '넥슨본캐', world: '루나', className: '나이트로드', level: 285, image: 'https://example.com/maple-character.png'}
+  character: {name: '넥슨본캐', world: '루나', className: '나이트로드', level: 285, image: 'https://example.com/maple-character.png', combatPower: 284300000, unionLevel: 9450, unionGrade: '그랜드 마스터 유니온'},
+  resources: {basic: {ok: true}, stat: {ok: true}, union: {ok: true}}, warnings: []
 };
 assert.equal(run("applyNexonProfileState(__schedulerState, 'c1', __profileResponse, __profileResponse.fetchedAt)"), true);
 assert.deepEqual(json('__schedulerState.characters[0].nexonCharacter'), {
   ocid: schedulerResponse.character.ocid, characterName: '넥슨본캐', world: '루나', linkedAt: '2026-09-23T01:00:00.000Z',
   lastCheckedAt: '2026-09-23T01:00:00.000Z', lastCheckedWeek: '2026-09-17~2026-09-23', status: 'ok',
-  className: '나이트로드', level: 285, image: 'https://example.com/maple-character.png', profileCheckedAt: '2026-09-23T01:00:10.000Z'
+  className: '나이트로드', level: 285, image: 'https://example.com/maple-character.png', profileCheckedAt: '2026-09-23T01:00:10.000Z',
+  combatPower: 284300000, unionLevel: 9450, unionGrade: '그랜드 마스터 유니온', statsCheckedAt: '2026-09-23T01:00:10.000Z'
 });
+context.__partialStatsProfile = {character: {name: '', world: '', className: '', level: null, image: '', combatPower: 300000000, unionLevel: null, unionGrade: ''}, resources: {basic: {ok: false}, stat: {ok: true}, union: {ok: false}}};
+run("applyNexonProfileState(__schedulerState, 'c1', __partialStatsProfile, '2026-09-23T01:30:00.000Z')");
+assert.equal(context.__schedulerState.characters[0].nexonCharacter.characterName, '넥슨본캐');
+assert.equal(context.__schedulerState.characters[0].nexonCharacter.image, 'https://example.com/maple-character.png');
+assert.equal(context.__schedulerState.characters[0].nexonCharacter.combatPower, 300000000);
+assert.equal(context.__schedulerState.characters[0].nexonCharacter.unionLevel, 9450);
 context.__profileWithoutImage = {character: {name: '넥슨본캐', world: '루나', className: '나이트로드', level: 286, image: ''}};
 run("applyNexonProfileState(__schedulerState, 'c1', __profileWithoutImage, '2026-09-23T02:00:00.000Z')");
 assert.equal(context.__schedulerState.characters[0].nexonCharacter.image, '');
@@ -688,6 +712,25 @@ assert.equal(profileAndBossMerged.bosses[0].done, true);
 assert.equal(profileAndBossMerged.nexonCharacter.level, 285);
 assert.equal(profileAndBossMerged.nexonCharacter.className, '나이트로드');
 
+// NEXON metadata is merged by nested field, so profile and stat refreshes from two devices both survive.
+const nexonFieldMergeBase = clone(syncBase);
+nexonFieldMergeBase.characters[0].nexonCharacter = {
+  ocid: schedulerResponse.character.ocid, characterName: '넥슨본캐', level: 284,
+  combatPower: 280000000, unionLevel: 9400, profileCheckedAt: '2026-09-23T01:00:00.000Z', statsCheckedAt: '2026-09-23T01:00:00.000Z'
+};
+const nexonProfileDevice = clone(nexonFieldMergeBase);
+nexonProfileDevice.updatedAt = '2026-09-23T04:00:00.000Z';
+Object.assign(nexonProfileDevice.characters[0].nexonCharacter, {level: 285, className: '나이트로드', profileCheckedAt: '2026-09-23T04:00:00.000Z'});
+const nexonStatsDevice = clone(nexonFieldMergeBase);
+nexonStatsDevice.updatedAt = '2026-09-23T05:00:00.000Z';
+Object.assign(nexonStatsDevice.characters[0].nexonCharacter, {combatPower: 300000000, unionLevel: 9450, unionGrade: '그랜드 마스터 유니온', statsCheckedAt: '2026-09-23T05:00:00.000Z'});
+const nexonFieldMerged = cloudSyncInternals.mergeStates(nexonFieldMergeBase, nexonProfileDevice, nexonStatsDevice, '2026-09-23T06:00:00.000Z').state.characters[0].nexonCharacter;
+assert.equal(nexonFieldMerged.level, 285);
+assert.equal(nexonFieldMerged.className, '나이트로드');
+assert.equal(nexonFieldMerged.combatPower, 300000000);
+assert.equal(nexonFieldMerged.unionLevel, 9450);
+assert.equal(nexonFieldMerged.unionGrade, '그랜드 마스터 유니온');
+
 const sanitizedScheduler = nexonProxyInternals.sanitizeScheduler({
   date: '2026-09-23', character_name: '넥슨본캐', world_name: '루나',
   boss_contents: [{content_name: '스우', difficulty: '하드', cycle: '주간', registration_flag: 'N', complete_flag: 'Y'}],
@@ -749,6 +792,14 @@ assert.equal(nexonCharacterInternals.sanitizeProfile({character_name: '이미지
 assert.equal(nexonCharacterInternals.sanitizeProfile({character_image: 'javascript:alert(1)'}).character.image, '');
 assert.equal(nexonCharacterInternals.safeImageUrl('http://example.com/character.png'), 'http://example.com/character.png');
 assert.equal(nexonCharacterInternals.PROFILE_CACHE_TTL_MS, 30 * 60_000);
+assert.equal(nexonCharacterInternals.STAT_CACHE_TTL_MS, 15 * 60_000);
+assert.equal(nexonCharacterInternals.UNION_CACHE_TTL_MS, 60 * 60_000);
+assert.deepEqual(nexonCharacterInternals.sanitizeStat({final_stat: [{stat_name: '전투력', stat_value: '284300000'}]}), {combatPower: 284300000});
+assert.deepEqual(nexonCharacterInternals.sanitizeStat({final_stat: [{stat_name: '보스 몬스터 데미지', stat_value: '300'}]}), {combatPower: null});
+assert.deepEqual(nexonCharacterInternals.sanitizeStat({final_stat: [{stat_name: '전투력', stat_value: 'invalid'}]}), {combatPower: null});
+assert.deepEqual(nexonCharacterInternals.sanitizeUnion({union_level: 9450, union_grade: '그랜드 마스터 유니온'}), {unionLevel: 9450, unionGrade: '그랜드 마스터 유니온'});
+assert.deepEqual(nexonCharacterInternals.sanitizeUnion({union_level: null}), {unionLevel: null, unionGrade: ''});
+assert.deepEqual(nexonCharacterInternals.sanitizeUnion({union_level: 'invalid'}), {unionLevel: null, unionGrade: ''});
 for (const sample of ['abcdefghijklmnop', 'ABCDEF0123456789_-']) assert.equal(nexonCharacterInternals.validOcid(sample), nexonProxyInternals.validOcid(sample));
 for (const sample of ['', 'short', 'invalid ocid', '한글식별자abcdefghijklmnop']) assert.equal(nexonCharacterInternals.validOcid(sample), nexonProxyInternals.validOcid(sample));
 assert.equal(nexonCharacterInternals.upstreamErrorCode({error: {name: 'OPENAPI00003'}}), 'OPENAPI00003');
@@ -759,6 +810,10 @@ assert.match(nexonCharacterApiSource, /process\.env\.NEXON_OPEN_API_KEY/);
 assert.doesNotMatch(nexonCharacterApiSource, /VITE_NEXON/);
 assert.match(nexonCharacterApiSource, /'x-nxopen-api-key': apiKey/);
 assert.match(nexonCharacterApiSource, /\/maplestory\/v1\/character\/basic/);
+assert.match(nexonCharacterApiSource, /\/maplestory\/v1\/character\/stat/);
+assert.match(nexonCharacterApiSource, /\/maplestory\/v1\/user\/union/);
+assert.match(nexonCharacterApiSource, /Promise\.allSettled/);
+assert.doesNotMatch(nexonCharacterApiSource, /Promise\.all\(/);
 assert.doesNotMatch(JSON.stringify(sanitizedProfile), /ocid|api.?key/i);
 assert.match(source, /throw applyError \|\| new Error\('NEXON 확인 결과를 이 기기에 저장하지 못했습니다\.'\)/);
 assert.match(source, /try \{ profileResponse = await fetchNexonProfile\(profileOcid\); \}\s*catch/);
@@ -784,6 +839,10 @@ assert.match(css, /\.summary-art img,.boss-art img\{[^}]*object-position:center 
 assert.match(css, /\.settings-avatar\{[^}]*width:clamp\(56px,14vw,60px\);height:clamp\(56px,14vw,60px\);border:1px/);
 assert.match(css, /\.settings-avatar img\{[^}]*transform:scale\(1\.8\)/);
 assert.match(css, /\.nexon-profile-image\[hidden\]\{display:none\}/);
+assert.match(css, /\.character-spec\{/);
+assert.match(css, /\.character-spec-grid\{/);
+assert.match(css, /@media\(min-width:1000px\)\{/);
+assert.match(css, /\.app\{max-width:1180px\}/);
 for (const viewport of [360, 390, 430]) {
   const artWidth = Math.min(100, Math.max(80, viewport * 0.2));
   const artHeight = Math.min(96, Math.max(82, viewport * 0.2));
@@ -798,6 +857,7 @@ assert.match(source, /data-nexon-profile-image/);
 assert.doesNotMatch(source, /classList\.add\('image-failed'\)/);
 assert.match(source, /if \(avatar\) avatar\.hidden = true/);
 assert.match(source, /nexonProfileAvatar\(c, 'summary-art'\)/);
+assert.match(source, /nexonSpecSummary\(c\)/);
 assert.match(source, /nexonProfileAvatar\(c, 'boss-art'\)/);
 assert.match(source, /nexonProfileAvatar\(character, 'settings-avatar'\)/);
 assert.match(source, /delete next\.characters\.find\(item => item\.id === character\.id\)\.nexonCharacter/);
@@ -832,6 +892,62 @@ await nexonCharacterHandler(
 );
 assert.equal(invalidProfileOcidStatus, 400);
 assert.equal(invalidProfileOcidBody.code, 'BAD_REQUEST');
+const originalFetch = globalThis.fetch;
+const basicPayload = {date: '2026-09-24T00:00+09:00', character_name: '넥슨본캐', world_name: '루나', character_class: '나이트로드', character_level: 286, character_image: 'https://example.com/profile.png'};
+const statPayload = {final_stat: [{stat_name: '전투력', stat_value: '284300000'}]};
+const unionPayload = {union_level: 9450, union_grade: '그랜드 마스터 유니온'};
+const apiResponse = (ok, status, payload) => ({ok, status, json: async () => payload});
+const mockCharacterFetch = ({failStat = false, failUnion = false} = {}) => async target => {
+  const path = new URL(String(target)).pathname;
+  if (path.endsWith('/character/basic')) return apiResponse(true, 200, basicPayload);
+  if (path.endsWith('/character/stat')) return failStat
+    ? apiResponse(false, 500, {error: {name: 'OPENAPI00001'}})
+    : apiResponse(true, 200, statPayload);
+  if (path.endsWith('/user/union')) return failUnion
+    ? apiResponse(false, 503, {error: {name: 'OPENAPI00011'}})
+    : apiResponse(true, 200, unionPayload);
+  throw new Error('unexpected NEXON path: ' + path);
+};
+async function invokeNexonCharacter() {
+  let status = 0, body = null;
+  await nexonCharacterHandler(
+    {method: 'GET', query: {ocid: schedulerResponse.character.ocid}},
+    {status(code) { status = code; return this; }, json(value) { body = value; return this; }, setHeader() {}}
+  );
+  return {status, body};
+}
+try {
+  nexonCharacterInternals.clearCaches();
+  globalThis.fetch = mockCharacterFetch();
+  const fullCharacterResponse = await invokeNexonCharacter();
+  assert.equal(fullCharacterResponse.status, 200);
+  assert.equal(fullCharacterResponse.body.ok, true);
+  assert.deepEqual(fullCharacterResponse.body.character, {
+    name: '넥슨본캐', world: '루나', className: '나이트로드', level: 286, image: 'https://example.com/profile.png',
+    combatPower: 284300000, unionLevel: 9450, unionGrade: '그랜드 마스터 유니온'
+  });
+  assert.deepEqual(fullCharacterResponse.body.warnings, []);
+
+  nexonCharacterInternals.clearCaches();
+  globalThis.fetch = mockCharacterFetch({failStat: true});
+  const statFailureResponse = await invokeNexonCharacter();
+  assert.equal(statFailureResponse.status, 200);
+  assert.equal(statFailureResponse.body.character.name, '넥슨본캐');
+  assert.equal(statFailureResponse.body.character.combatPower, null);
+  assert.equal(statFailureResponse.body.character.unionLevel, 9450);
+  assert.equal(statFailureResponse.body.warnings[0].resource, 'stat');
+
+  nexonCharacterInternals.clearCaches();
+  globalThis.fetch = mockCharacterFetch({failUnion: true});
+  const unionFailureResponse = await invokeNexonCharacter();
+  assert.equal(unionFailureResponse.status, 200);
+  assert.equal(unionFailureResponse.body.character.combatPower, 284300000);
+  assert.equal(unionFailureResponse.body.character.unionLevel, null);
+  assert.equal(unionFailureResponse.body.warnings[0].resource, 'union');
+} finally {
+  nexonCharacterInternals.clearCaches();
+  globalThis.fetch = originalFetch;
+}
 if (originalNexonKey === undefined) delete process.env.NEXON_OPEN_API_KEY;
 else process.env.NEXON_OPEN_API_KEY = originalNexonKey;
 assert.match(cloudSource, /auth\.resend\(\{/);
