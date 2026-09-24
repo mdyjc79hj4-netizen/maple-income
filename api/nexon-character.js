@@ -22,6 +22,15 @@ function publicError(status) {
   };
 }
 
+function validOcid(value) {
+  return /^[A-Za-z0-9_-]{16,80}$/.test(value);
+}
+
+function upstreamErrorCode(payload) {
+  const value = payload?.error?.name || payload?.code;
+  return typeof value === 'string' && value.length <= 80 ? value : '';
+}
+
 function safeImageUrl(value) {
   if (typeof value !== 'string' || !value.trim()) return '';
   try {
@@ -67,7 +76,9 @@ async function requestProfile(ocid, apiKey) {
   }
   if (!response.ok) {
     const status = [400, 403, 429, 500, 503].includes(response.status) ? response.status : 502;
-    throw Object.assign(new Error(publicError(status).message), {status});
+    let payload = null;
+    try { payload = await response.json(); } catch {}
+    throw Object.assign(new Error(publicError(status).message), {status, code: upstreamErrorCode(payload) || publicError(status).code});
   }
   try {
     return await response.json();
@@ -81,7 +92,7 @@ export default async function handler(req, res) {
   const apiKey = process.env.NEXON_OPEN_API_KEY;
   if (!apiKey) return send(res, 503, {ok: false, code: 'NOT_CONFIGURED', message: 'NEXON Open API 환경변수가 설정되지 않았습니다.'});
   const ocid = String(req.query.ocid || '').trim();
-  if (!/^[A-Za-z0-9_-]{16,80}$/.test(ocid)) return send(res, 400, {ok: false, ...publicError(400)});
+  if (!validOcid(ocid)) return send(res, 400, {ok: false, ...publicError(400)});
 
   const cached = cache.get(ocid);
   if (cached && Date.now() - cached.savedAt < PROFILE_CACHE_TTL_MS) return send(res, 200, {...cached.value, cached: true});
@@ -91,8 +102,12 @@ export default async function handler(req, res) {
     return send(res, 200, value);
   } catch (error) {
     const status = Number(error?.status) || 502;
-    return send(res, status, {ok: false, ...publicError(status), message: error?.message || publicError(status).message});
+    const fallback = publicError(status);
+    const code = typeof error?.code === 'string' ? error.code : fallback.code;
+    const message = error?.message || fallback.message;
+    console.error('NEXON character profile request failed', {status, code, message});
+    return send(res, status, {ok: false, ...fallback, code, message});
   }
 }
 
-export const nexonCharacterInternals = {PROFILE_CACHE_TTL_MS, publicError, safeImageUrl, sanitizeProfile};
+export const nexonCharacterInternals = {PROFILE_CACHE_TTL_MS, publicError, safeImageUrl, sanitizeProfile, upstreamErrorCode, validOcid};

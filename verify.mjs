@@ -78,6 +78,19 @@ assert.equal(run("safeNexonImageUrl('https://example.com/avatar.png')"), 'https:
 assert.equal(run("safeNexonImageUrl('javascript:alert(1)')"), '');
 assert.equal(run("nexonProfileAvatar({name:'본캐',nexonCharacter:{ocid:'abcdefghijklmnop'}})"), '');
 assert.match(run("nexonProfileAvatar({name:'본캐',nexonCharacter:{ocid:'abcdefghijklmnop',image:'https://example.com/avatar.png'}},'summary-avatar')"), /data-nexon-profile-image/);
+context.__profileUiCharacter = {name: '본캐', nexonCharacter: {ocid: 'abcdefghijklmnop', characterName: '넥슨본캐', world: '루나', className: '나이트로드', level: 285, image: 'https://example.com/avatar.png', profileCheckedAt: '2026-09-23T01:00:00.000Z'}};
+const profileUiMarkup = run("nexonProfileAvatar(__profileUiCharacter, 'summary-avatar') + nexonProfileCopy(__profileUiCharacter)");
+assert.match(profileUiMarkup, /data-nexon-profile-image/);
+assert.match(profileUiMarkup, /넥슨본캐/);
+assert.match(profileUiMarkup, /Lv\. 285/);
+assert.match(profileUiMarkup, /나이트로드/);
+assert.match(profileUiMarkup, /루나/);
+context.__profileUiCharacter.nexonCharacter.image = '';
+const profileUiWithoutImage = run('nexonProfileAvatar(__profileUiCharacter) + nexonProfileCopy(__profileUiCharacter)');
+assert.doesNotMatch(profileUiWithoutImage, /<img/);
+assert.match(profileUiWithoutImage, /Lv\. 285/);
+assert.match(profileUiWithoutImage, /나이트로드/);
+assert.match(profileUiWithoutImage, /루나/);
 
 const nexonNames = {
   '자쿰': 'zakum', '피에르': 'pierre', '반반': 'vonbon', '블러디 퀸': 'bloodyqueen', '벨룸': 'vellum',
@@ -147,7 +160,7 @@ assert.equal(context.__schedulerState.characters[0].bosses[1].completionSource, 
 assert.equal(JSON.stringify(context.__schedulerState).includes('completedItems'), false);
 context.__appliedDiagnostics = appliedScheduler;
 assert.equal(run('nexonDiagnosticMessage(__appliedDiagnostics)'), 'NEXON 조회 4개 · 완료 2개 · 메기 매칭 2개 · 완료 매칭 1개 · 자동 완료 1개 · 매칭 실패 1개');
-assert.deepEqual(json('Object.keys(nexonDiagnosticGroups(__appliedDiagnostics))'), ['unknownName', 'difficultyMismatch', 'ambiguous', 'localMissing', 'apiMissing', 'ignoredCycle', 'blockedByManualOverride', 'unsupportedActivity', 'activityBlockedByManualOverride']);
+assert.deepEqual(json('Object.keys(nexonDiagnosticGroups(__appliedDiagnostics))'), ['unknownName', 'difficultyMismatch', 'ambiguous', 'localMissing', 'apiMissing', 'ignoredCycle', 'blockedByManualOverride', 'unsupportedActivity', 'activityBlockedByManualOverride', 'profileFailures']);
 assert.equal(run('nexonDiagnosticGroups(__appliedDiagnostics).unknownName.length'), 1);
 assert.deepEqual(appliedScheduler.completedItems.map(item => item.result).sort(), ['matched-auto-completed', 'unknown-name'].sort());
 assert.equal(run('nexonUserStatusMessage(__appliedDiagnostics)'), '주간 보스 1개를 자동 확인했습니다.');
@@ -157,6 +170,20 @@ assert.equal(run("latestNexonCheckedAt([{nexonCharacter:{lastCheckedAt:'2026-09-
 assert.equal(run("nexonDefaultStatusMessage([{nexonCharacter:{ocid:'linked',lastCheckedAt:'2026-09-24T02:00:00.000Z'}}])"), '최신 상태');
 assert.equal(run('nexonDefaultStatusMessage([{id:"unlinked"}])'), '연동할 캐릭터를 선택해주세요.');
 assert.equal(JSON.stringify(context.__schedulerState).includes('diagnostics'), false);
+
+context.__recentMissingProfile = {name: '본캐', nexonCharacter: {ocid: 'abcdefghijklmnop', characterName: '넥슨본캐', world: '루나', lastCheckedAt: '2026-09-24T00:00:00.000Z'}};
+assert.equal(run('nexonProfileNeedsBackfill(__recentMissingProfile)'), true);
+assert.deepEqual(json("nexonSyncPlan(__recentMissingProfile, {now: Date.parse('2026-09-24T00:00:30.000Z')})"), {schedulerCooldown: true, fetchScheduler: false, fetchProfile: true});
+context.__recentCompleteProfile = structuredClone(context.__profileUiCharacter);
+context.__recentCompleteProfile.nexonCharacter.lastCheckedAt = '2026-09-24T00:00:00.000Z';
+context.__recentCompleteProfile.nexonCharacter.image = 'https://example.com/avatar.png';
+assert.equal(run('nexonProfileNeedsBackfill(__recentCompleteProfile)'), false);
+assert.deepEqual(json("nexonSyncPlan(__recentCompleteProfile, {now: Date.parse('2026-09-24T00:00:30.000Z')})"), {schedulerCooldown: true, fetchScheduler: false, fetchProfile: false});
+assert.deepEqual(json("nexonSyncPlan(__recentMissingProfile, {ignoreCooldown:true, now: Date.parse('2026-09-24T00:00:30.000Z')})"), {schedulerCooldown: false, fetchScheduler: true, fetchProfile: true});
+context.__profileFailure = run("nexonProfileFailure({name:'본캐',nexonCharacter:{characterName:'넥슨본캐'}}, Object.assign(new Error('권한 오류'), {status:403,code:'OPENAPI00003'}))");
+assert.deepEqual(json('__profileFailure'), {character: '본캐', nexonCharacter: '넥슨본캐', status: 403, code: 'OPENAPI00003', message: '권한 오류'});
+assert.equal(JSON.stringify(context.__profileFailure).includes('abcdefghijklmnop'), false);
+assert.equal(run("diagnosticEntryLabel('profileFailures', __profileFailure)"), '본캐 → 넥슨본캐 · HTTP 403 · OPENAPI00003 · 권한 오류');
 
 context.__profileResponse = {
   ok: true, fetchedAt: '2026-09-23T01:00:10.000Z',
@@ -718,6 +745,12 @@ assert.equal(nexonCharacterInternals.sanitizeProfile({character_name: '이미지
 assert.equal(nexonCharacterInternals.sanitizeProfile({character_image: 'javascript:alert(1)'}).character.image, '');
 assert.equal(nexonCharacterInternals.safeImageUrl('http://example.com/character.png'), 'http://example.com/character.png');
 assert.equal(nexonCharacterInternals.PROFILE_CACHE_TTL_MS, 30 * 60_000);
+for (const sample of ['abcdefghijklmnop', 'ABCDEF0123456789_-']) assert.equal(nexonCharacterInternals.validOcid(sample), nexonProxyInternals.validOcid(sample));
+for (const sample of ['', 'short', 'invalid ocid', '한글식별자abcdefghijklmnop']) assert.equal(nexonCharacterInternals.validOcid(sample), nexonProxyInternals.validOcid(sample));
+assert.equal(nexonCharacterInternals.upstreamErrorCode({error: {name: 'OPENAPI00003'}}), 'OPENAPI00003');
+context.fetch = async () => ({ok: false, status: 403, json: async () => ({ok: false, code: 'FORBIDDEN', message: 'NEXON Open API 권한을 확인해주세요.'})});
+await assert.rejects(run("fetchNexonProfile('abcdefghijklmnop')"), error => error.status === 403 && error.code === 'FORBIDDEN' && /권한/.test(error.message));
+delete context.fetch;
 assert.match(nexonCharacterApiSource, /process\.env\.NEXON_OPEN_API_KEY/);
 assert.doesNotMatch(nexonCharacterApiSource, /VITE_NEXON/);
 assert.match(nexonCharacterApiSource, /'x-nxopen-api-key': apiKey/);
@@ -725,7 +758,10 @@ assert.match(nexonCharacterApiSource, /\/maplestory\/v1\/character\/basic/);
 assert.doesNotMatch(JSON.stringify(sanitizedProfile), /ocid|api.?key/i);
 assert.match(source, /throw applyError \|\| new Error\('NEXON 확인 결과를 이 기기에 저장하지 못했습니다\.'\)/);
 assert.match(source, /try \{ profileResponse = await fetchNexonProfile\(profileOcid\); \}\s*catch/);
-assert.match(source, /catch \(error\) \{ profileError = error\.message \|\| '프로필 갱신 실패'; \}/);
+assert.match(source, /profileFailure = nexonProfileFailure\(character, error, nexonCharacter\)/);
+assert.match(source, /프로필 갱신 필요/);
+assert.match(source, /프로필 갱신 실패/);
+assert.match(source, /HTTP \$\{item\.status \|\| '-'\}/);
 assert.match(source, /console\.info\('NEXON scheduler sync diagnostics', result\)/);
 assert.match(html, /id="nexonDiagnostics"/);
 assert.match(html, /id="nexonDiagnosticsContent"/);
@@ -767,6 +803,14 @@ await nexonCharacterHandler(
 );
 assert.equal(missingProfileKeyStatus, 503);
 assert.equal(missingProfileKeyBody.code, 'NOT_CONFIGURED');
+process.env.NEXON_OPEN_API_KEY = 'test-only-key';
+let invalidProfileOcidStatus = 0, invalidProfileOcidBody = null;
+await nexonCharacterHandler(
+  {method: 'GET', query: {ocid: 'invalid ocid'}},
+  {status(code) { invalidProfileOcidStatus = code; return this; }, json(body) { invalidProfileOcidBody = body; return this; }, setHeader() {}}
+);
+assert.equal(invalidProfileOcidStatus, 400);
+assert.equal(invalidProfileOcidBody.code, 'BAD_REQUEST');
 if (originalNexonKey === undefined) delete process.env.NEXON_OPEN_API_KEY;
 else process.env.NEXON_OPEN_API_KEY = originalNexonKey;
 assert.match(cloudSource, /auth\.resend\(\{/);

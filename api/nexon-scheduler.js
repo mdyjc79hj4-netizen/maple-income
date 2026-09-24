@@ -26,6 +26,10 @@ function validDate(value) {
   return days >= 0 && days <= 14;
 }
 
+function validOcid(value) {
+  return /^[A-Za-z0-9_-]{16,80}$/.test(value);
+}
+
 function publicError(status) {
   return {
     code: status === 429 ? 'RATE_LIMITED' : status === 403 ? 'FORBIDDEN' : status === 400 ? 'BAD_REQUEST' : 'UPSTREAM_ERROR',
@@ -147,7 +151,7 @@ export default async function handler(req, res) {
   const characterName = String(req.query.characterName || '').trim();
   let ocid = String(req.query.ocid || '').trim();
   const date = String(req.query.date || '').trim();
-  if ((!characterName && !ocid) || characterName.length > 40 || (ocid && !/^[A-Za-z0-9_-]{16,80}$/.test(ocid)) || !validDate(date)) {
+  if ((!characterName && !ocid) || characterName.length > 40 || (ocid && !validOcid(ocid)) || !validDate(date)) {
     return send(res, 400, {ok: false, ...publicError(400)});
   }
   const cacheKey = (ocid || 'name:' + characterName) + ':' + (date || 'live');
@@ -169,4 +173,4 @@ export default async function handler(req, res) {
   }
 }
 
-export const nexonProxyInternals = {diagnosticRaw, diagnosticSample, parseFlag, publicError, sanitizeScheduler, sanitizeWeeklyContent, validDate};
+export const nexonProxyInternals = {diagnosticRaw, diagnosticSample, parseFlag, publicError, sanitizeScheduler, sanitizeWeeklyContent, validDate, validOcid};
