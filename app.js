@@ -628,7 +628,7 @@ function weeklyActivityApiBadge(activity) {
 function nexonProfileAvatar(character, size = '') {
   const image = safeNexonImageUrl(character?.nexonCharacter?.image);
   if (!image) return '';
-  return `<span class="nexon-avatar ${escapeHtml(size)}" aria-hidden="true"><img data-nexon-profile-image src="${escapeHtml(image)}" alt="" loading="lazy" referrerpolicy="no-referrer"></span>`;
+  return `<span class="nexon-profile-image ${escapeHtml(size)}" aria-hidden="true"><img data-nexon-profile-image src="${escapeHtml(image)}" alt="" loading="lazy" referrerpolicy="no-referrer"></span>`;
 }
 function nexonProfileLines(character) {
   const profile = character?.nexonCharacter;
@@ -654,7 +654,7 @@ function render() {
   $('#metrics').innerHTML = Object.entries(labels).map(([key, label]) => `<div class="metric"><small>${label}</small><b>${money(totals[key])}</b></div>`).join('');
   $('#characterList').innerHTML = (data.characters || []).map(c => {
     const s = characterStats(c), percent = s.count ? Math.round(s.done / s.count * 100) : 0;
-    return `<button type="button" class="character" data-character="${escapeHtml(c.id)}" aria-label="${escapeHtml(c.name)} 주간 보스 관리"><span class="character-main"><span class="character-identity">${nexonProfileAvatar(c, 'summary-avatar')}<span class="character-identity-copy"><b>${escapeHtml(c.name)}</b>${nexonProfileCopy(c)}<small>${s.done} / ${s.count} 완료 · 진행률 ${percent}%</small></span></span><strong class="character-income mint">${money(s.earned)}</strong></span><span class="character-detail"><progress value="${s.done}" max="${s.count || 1}" aria-label="${escapeHtml(c.name)} 보스 진행률"></progress><dl><div><dt>완료 수익</dt><dd>${money(s.earned)}</dd></div><div><dt>예상 수익</dt><dd>${money(s.expected)}</dd></div><div><dt>남은 수익</dt><dd>${money(s.remaining)}</dd></div></dl></span></button>`;
+    return `<button type="button" class="character" data-character="${escapeHtml(c.id)}" aria-label="${escapeHtml(c.name)} 주간 보스 관리"><span class="character-main"><span class="character-identity">${nexonProfileAvatar(c, 'summary-art')}<span class="character-identity-copy"><b>${escapeHtml(c.name)}</b>${nexonProfileCopy(c)}<small>${s.done} / ${s.count} 완료 · 진행률 ${percent}%</small></span></span><strong class="character-income mint">${money(s.earned)}</strong></span><span class="character-detail"><progress value="${s.done}" max="${s.count || 1}" aria-label="${escapeHtml(c.name)} 보스 진행률"></progress><dl><div><dt>완료 수익</dt><dd>${money(s.earned)}</dd></div><div><dt>예상 수익</dt><dd>${money(s.expected)}</dd></div><div><dt>남은 수익</dt><dd>${money(s.remaining)}</dd></div></dl></span></button>`;
   }).join('') || '<p class="empty">저장된 캐릭터가 없습니다.</p>';
   $('#addCharacter').disabled = !!isPast() || storageBlocked; $('#incomeFields').disabled = !!isPast() || storageBlocked;
   $('#incomeReadOnly').classList.toggle('hidden', !isPast()); $('#resetAll').disabled = !!isPast(); $('#resetWeek').disabled = !!isPast();
@@ -679,7 +679,7 @@ function renderBosses(data) {
   }
   const list = normalizeBosses(c.bosses), stats = characterStats(c);
   const shown = list.map((b, bi) => ({b, bi})).filter(({b}) => bossFilter === 'all' || (bossFilter === 'done' ? b.done : !b.done));
-  $('#bossEditor').innerHTML = `<section class="boss-char" data-ci="${ci}"><div class="panel-head boss-profile-head"><div class="boss-profile-identity">${nexonProfileAvatar(c, 'boss-avatar')}<div><h3>${escapeHtml(c.name)}</h3>${nexonProfileCopy(c)}<small class="muted">${stats.done} / ${stats.count} 완료 · ${koreanMeso(stats.earned)}</small></div></div></div>${shown.map(({b, bi}) => {
+  $('#bossEditor').innerHTML = `<section class="boss-char" data-ci="${ci}"><div class="panel-head boss-profile-head"><div class="boss-profile-identity">${nexonProfileAvatar(c, 'boss-art')}<div><h3>${escapeHtml(c.name)}</h3>${nexonProfileCopy(c)}<small class="muted">${stats.done} / ${stats.count} 완료 · ${koreanMeso(stats.earned)}</small></div></div></div>${shown.map(({b, bi}) => {
     const diffs = Object.keys(bossDB[b.name] || {[b.difficulty]: b.price});
     return `<div class="boss-line ${b.done ? 'completed' : ''}" data-bi="${bi}"><label class="boss-name"><input type="checkbox" data-field="done" aria-label="${escapeHtml(b.name)} 완료" ${b.done ? 'checked' : ''} ${disabled}><span>${escapeHtml(b.name)}${bossApiBadge(b)}</span></label><strong class="boss-earned mint">${money(b.done && b.completedIncome != null ? b.completedIncome : bossValue(b))}</strong><div class="boss-controls"><select data-field="difficulty" aria-label="${escapeHtml(b.name)} 난이도" ${disabled}>${diffs.map(d => option(d, d, d === b.difficulty)).join('')}</select><select data-field="party" aria-label="${escapeHtml(b.name)} 파티 인원" ${disabled}>${Array.from({length: Math.max(6, b.party)}, (_, i) => option(i + 1, i === 0 ? '솔로' : `${i + 1}인`, i + 1 === b.party)).join('')}</select><button class="icon danger" data-action="remove-boss" aria-label="${escapeHtml(b.name)} 삭제" ${disabled}>×</button></div><details class="boss-price-detail"><summary>결정석 ${won(b.price)} · 가격 수정</summary><label>결정석 전체 가격<input class="money-input" data-field="price" inputmode="numeric" value="${won(b.price)}" ${disabled}><small class="money-hint">${koreanMeso(b.price)} 메소</small></label></details></div>`;
   }).join('') || '<p class="empty">이 필터에 해당하는 보스가 없습니다.</p>'}<div class="boss-actions"><button class="ghost" data-action="add-boss" ${disabled}>+ 보스 등록</button></div></section>`;
@@ -1143,7 +1143,7 @@ function init() {
   document.addEventListener('error', event => {
     const image = event.target;
     if (image?.matches?.('[data-nexon-profile-image]')) {
-      const avatar = image.closest('.nexon-avatar');
+      const avatar = image.closest('.nexon-profile-image');
       image.hidden = true;
       if (avatar) avatar.hidden = true;
     }
