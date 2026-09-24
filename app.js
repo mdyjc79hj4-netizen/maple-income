@@ -628,8 +628,7 @@ function weeklyActivityApiBadge(activity) {
 function nexonProfileAvatar(character, size = '') {
   const image = safeNexonImageUrl(character?.nexonCharacter?.image);
   if (!image) return '';
-  const initial = String(character?.name || character?.nexonCharacter?.characterName || 'M').trim().slice(0, 1) || 'M';
-  return `<span class="nexon-avatar ${escapeHtml(size)}" aria-hidden="true"><span>${escapeHtml(initial)}</span><img data-nexon-profile-image src="${escapeHtml(image)}" alt="" loading="lazy" referrerpolicy="no-referrer"></span>`;
+  return `<span class="nexon-avatar ${escapeHtml(size)}" aria-hidden="true"><img data-nexon-profile-image src="${escapeHtml(image)}" alt="" loading="lazy" referrerpolicy="no-referrer"></span>`;
 }
 function nexonProfileLines(character) {
   const profile = character?.nexonCharacter;
@@ -1143,7 +1142,11 @@ function init() {
   validatePresetIntegrity();
   document.addEventListener('error', event => {
     const image = event.target;
-    if (image?.matches?.('[data-nexon-profile-image]')) { image.hidden = true; image.closest('.nexon-avatar')?.classList.add('image-failed'); }
+    if (image?.matches?.('[data-nexon-profile-image]')) {
+      const avatar = image.closest('.nexon-avatar');
+      image.hidden = true;
+      if (avatar) avatar.hidden = true;
+    }
   }, true);
   loadState(); renderIncomeForm(true); render(); if (!storageBlocked) message('이 기기에 자동 저장됩니다.');
   $('#weekSelect').addEventListener('change', e => { selectedWeek = e.target.value; render(); });

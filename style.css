@@ -72,11 +72,11 @@ input[type=checkbox]{accent-color:var(--mint);width:21px;min-height:21px;height:
 .nexon-profile-primary,.nexon-profile-world{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nexon-profile-primary{margin-top:2px;color:var(--blue);font-size:11px}
 .nexon-profile-world{color:var(--muted);font-size:10px}
-.nexon-avatar{position:relative;display:grid;place-items:center;flex:0 0 auto;width:52px;height:52px;overflow:hidden;border:1px solid #315064;border-radius:13px;background:linear-gradient(145deg,#203746,#10202a);color:var(--blue);font-size:16px;font-weight:800}
-.nexon-avatar img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;object-position:center}
-.nexon-avatar.image-failed{border-style:dashed}
-.nexon-avatar.summary-avatar{width:58px;height:58px}
-.nexon-avatar.settings-avatar{width:44px;height:44px;border-radius:11px}
+.nexon-avatar{position:relative;display:grid;place-items:center;flex:0 0 auto;width:72px;height:72px;overflow:hidden;border:1px solid #315064;border-radius:15px;background:linear-gradient(145deg,#203746,#10202a)}
+.nexon-avatar[hidden]{display:none}
+.nexon-avatar img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;object-position:center;transform:scale(1.5);transform-origin:center}
+.nexon-avatar.summary-avatar{width:72px;height:72px}
+.nexon-avatar.settings-avatar{width:60px;height:60px;border-radius:13px}
 .character b{font-size:15px;overflow-wrap:anywhere}
 .character small{display:block;font-size:11px;color:var(--muted);margin-top:3px}
 .character .character-income{font-size:14px;text-align:right;overflow-wrap:anywhere;max-width:48%}
@@ -292,7 +292,8 @@ dialog::backdrop{background:#0009;backdrop-filter:blur(3px)}
 .panel-head .green{padding:8px;font-size:11px}
 .form-pair{grid-template-columns:1fr}
 .boss-earned{max-width:105px}
-.nexon-avatar.summary-avatar{width:50px;height:50px}
+.nexon-avatar,.nexon-avatar.summary-avatar{width:64px;height:64px}
+.nexon-avatar.settings-avatar{width:56px;height:56px}
 }
 
 @media(max-width:430px){
