@@ -94,6 +94,19 @@ const restoreCharacterData = character => {
   if (Object.keys(nexonCharacter).length) value.nexonCharacter = nexonCharacter;
   return value;
 };
+const latestNexonStatSnapshot = (...characters) => {
+  let selected = null;
+  for (const character of characters) {
+    const nexonCharacter = asObject(character?.nexonCharacter);
+    if (!nexonCharacter.stats || typeof nexonCharacter.stats !== 'object' || Array.isArray(nexonCharacter.stats)) continue;
+    if (!selected || timestamp(nexonCharacter.statsCheckedAt) >= timestamp(selected.statsCheckedAt)) selected = nexonCharacter;
+  }
+  return selected ? {
+    combatPower: copy(selected.combatPower),
+    stats: copy(selected.stats),
+    statsCheckedAt: selected.statsCheckedAt
+  } : null;
+};
 const bossKey = (characterId, bossId) => characterId + '::' + bossId;
 const activityKey = (characterId, activityId) => characterId + '::' + activityId;
 const revisionFor = (sync, group, id, fallback = '') => sync.revisions[group]?.[id] || fallback;
@@ -324,7 +337,12 @@ function mergeStates(baseInput, localInput, remoteInput, now = new Date().toISOS
     });
     for (const [id, value] of Object.entries(activityResult.revisions)) sync.revisions.activities[activityKey(characterId, id)] = value;
     for (const [id, value] of Object.entries(activityResult.tombstones)) sync.tombstones.activities[activityKey(characterId, id)] = value;
-    characters.push({...restoreCharacterData(body), bosses: [...bossResult.result.values()], weeklyActivities: [...activityResult.result.values()]});
+    const restoredBody = restoreCharacterData(body);
+    const statSnapshot = latestNexonStatSnapshot(
+      baseCharacters.get(characterId), localCharacters.get(characterId), remoteCharacters.get(characterId)
+    );
+    if (statSnapshot && restoredBody.nexonCharacter) restoredBody.nexonCharacter = {...restoredBody.nexonCharacter, ...statSnapshot};
+    characters.push({...restoredBody, bosses: [...bossResult.result.values()], weeklyActivities: [...activityResult.result.values()]});
   }
   for (const source of [localSync, remoteSync]) {
     for (const group of ['bosses', 'activities']) for (const [key, value] of Object.entries(source.tombstones[group])) {

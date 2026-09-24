@@ -6,6 +6,15 @@ import {cloudSyncInternals} from './cloud-sync.js';
 import nexonSchedulerHandler, {nexonProxyInternals} from './api/nexon-scheduler.js';
 import nexonCharacterHandler, {nexonCharacterInternals} from './api/nexon-character.js';
 
+const statKeys = Object.keys(nexonCharacterInternals.statDefinitions);
+const emptyDetailStats = Object.fromEntries(statKeys.map(key => [key, null]));
+const detailStatsFixture = {
+  ...emptyDetailStats,
+  bossDamage: 412, ignoreDefense: 96.42, criticalRate: 100, criticalDamage: 92.5, damage: 85, finalDamage: 74.3,
+  str: 62340, dex: 8210, int: 5140, luk: 4980, hp: 125430, attackPower: 4820, magicPower: 1250,
+  starForce: 420, arcaneForce: 1320, authenticForce: 660, itemDropRate: 217, mesoAcquisitionRate: 100
+};
+
 const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
 const cloudSource = readFileSync(new URL('./cloud-sync.js', import.meta.url), 'utf8');
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
@@ -82,6 +91,14 @@ assert.deepEqual(json("normalizeNexonCharacter({ocid:'abcdefghijklmnop',combatPo
 assert.deepEqual(json("normalizeNexonCharacter({ocid:'abcdefghijklmnop',combatPower:'',unionLevel:'invalid'})"), {
   ocid: 'abcdefghijklmnop', combatPower: null, unionLevel: null, image: ''
 });
+context.__legacyStatsState = structuredClone(context.__legacyProfileState);
+context.__legacyStatsState.characters[0].nexonCharacter.stats = {bossDamage: '412', ignoreDefense: '96.42', str: '62340', hp: 'invalid'};
+const migratedStats = json("migrateState(__legacyStatsState, new Date('2026-09-23T12:00:00'))").characters[0].nexonCharacter.stats;
+assert.equal(migratedStats.bossDamage, 412);
+assert.equal(migratedStats.ignoreDefense, 96.42);
+assert.equal(migratedStats.str, 62340);
+assert.equal(migratedStats.hp, null);
+assert.equal(Object.keys(migratedStats).length, statKeys.length);
 assert.equal(run("safeNexonImageUrl('https://example.com/avatar.png')"), 'https://example.com/avatar.png');
 assert.equal(run("safeNexonImageUrl('javascript:alert(1)')"), '');
 assert.equal(run("nexonProfileAvatar({name:'본캐',nexonCharacter:{ocid:'abcdefghijklmnop'}})"), '');
@@ -90,7 +107,7 @@ assert.match(avatarMarkup, /data-nexon-profile-image/);
 assert.match(avatarMarkup, /nexon-profile-image summary-art/);
 assert.equal((avatarMarkup.match(/<span/g) || []).length, 1);
 assert.doesNotMatch(avatarMarkup, />본</);
-context.__profileUiCharacter = {name: '본캐', nexonCharacter: {ocid: 'abcdefghijklmnop', characterName: '넥슨본캐', world: '루나', className: '나이트로드', level: 285, image: 'https://example.com/avatar.png', profileCheckedAt: '2026-09-23T01:00:00.000Z', combatPower: 284300000, unionLevel: 9450, unionGrade: '그랜드 마스터 유니온', statsCheckedAt: '2026-09-23T01:00:00.000Z'}};
+context.__profileUiCharacter = {name: '본캐', id: 'c1', nexonCharacter: {ocid: 'abcdefghijklmnop', characterName: '넥슨본캐', world: '루나', className: '나이트로드', level: 285, image: 'https://example.com/avatar.png', profileCheckedAt: '2026-09-23T01:00:00.000Z', combatPower: 284300000, unionLevel: 9450, unionGrade: '그랜드 마스터 유니온', stats: detailStatsFixture, statsCheckedAt: '2026-09-23T01:00:00.000Z'}};
 const profileUiMarkup = run("nexonProfileAvatar(__profileUiCharacter, 'summary-art') + nexonProfileCopy(__profileUiCharacter)");
 assert.match(profileUiMarkup, /data-nexon-profile-image/);
 assert.match(profileUiMarkup, /넥슨본캐/);
@@ -110,6 +127,30 @@ assert.match(specSummaryMarkup, /2억 8,430만/);
 assert.match(specSummaryMarkup, /9,450/);
 assert.doesNotMatch(specSummaryMarkup, /메소/);
 assert.doesNotMatch(specSummaryMarkup, /스펙 요약/);
+assert.match(specSummaryMarkup, /스펙 상세 보기/);
+assert.match(specSummaryMarkup, /aria-expanded="false"/);
+assert.match(run('nexonSpecSummary(__profileUiCharacter, true)'), /스펙 상세 닫기/);
+assert.match(run('nexonSpecSummary(__profileUiCharacter, true)'), /aria-expanded="true"/);
+const statDetailsMarkup = run('nexonStatDetails(__profileUiCharacter)');
+assert.match(statDetailsMarkup, /상세 스펙/);
+assert.match(statDetailsMarkup, /보스 데미지/);
+assert.match(statDetailsMarkup, /412%/);
+assert.match(statDetailsMarkup, /96\.42%/);
+assert.match(statDetailsMarkup, /62,340/);
+assert.match(statDetailsMarkup, /1,320/);
+assert.match(statDetailsMarkup, /217%/);
+assert.equal((statDetailsMarkup.match(/data-stat-group=/g) || []).length, 4);
+context.__partialStatUiCharacter = {id: 'partial', nexonCharacter: {stats: {bossDamage: 300}}};
+const partialStatDetails = run('nexonStatDetails(__partialStatUiCharacter)');
+assert.match(partialStatDetails, /보스 데미지/);
+assert.doesNotMatch(partialStatDetails, /방어율 무시/);
+assert.equal((partialStatDetails.match(/data-stat-group=/g) || []).length, 1);
+context.__emptyStatUiCharacter = {id: 'empty', nexonCharacter: {stats: {}}};
+assert.match(run('nexonStatDetails(__emptyStatUiCharacter)'), /상세 스펙 정보가 없습니다/);
+assert.doesNotMatch(run('nexonStatDetails(__emptyStatUiCharacter)'), /data-stat-group=/);
+assert.equal(run("nexonStatValue(96.42, 'percent')"), '96.42%');
+assert.equal(run("nexonStatValue(62340, 'integer')"), '62,340');
+assert.equal(run("nexonStatValue(null, 'percent')"), '');
 const combatOnlySpec = run("nexonSpecSummary({nexonCharacter:{combatPower:284300000,unionLevel:null}})");
 assert.match(combatOnlySpec, /2억 8,430만/);
 assert.equal((combatOnlySpec.match(/정보 없음/g) || []).length, 1);
@@ -220,6 +261,10 @@ context.__recentCompleteProfile.nexonCharacter.lastCheckedAt = '2026-09-24T00:00
 context.__recentCompleteProfile.nexonCharacter.image = 'https://example.com/avatar.png';
 assert.equal(run('nexonProfileNeedsBackfill(__recentCompleteProfile)'), false);
 assert.deepEqual(json("nexonSyncPlan(__recentCompleteProfile, {now: Date.parse('2026-09-24T00:00:30.000Z')})"), {schedulerCooldown: true, fetchScheduler: false, fetchProfile: false});
+context.__legacyStatsProfile = structuredClone(context.__recentCompleteProfile);
+delete context.__legacyStatsProfile.nexonCharacter.stats;
+assert.equal(run('nexonProfileNeedsBackfill(__legacyStatsProfile)'), true);
+assert.deepEqual(json("nexonSyncPlan(__legacyStatsProfile, {now: Date.parse('2026-09-24T00:00:30.000Z')})"), {schedulerCooldown: true, fetchScheduler: false, fetchProfile: true});
 assert.deepEqual(json("nexonSyncPlan(__recentMissingProfile, {ignoreCooldown:true, now: Date.parse('2026-09-24T00:00:30.000Z')})"), {schedulerCooldown: false, fetchScheduler: true, fetchProfile: true});
 context.__profileFailure = run("nexonProfileFailure({name:'본캐',nexonCharacter:{characterName:'넥슨본캐'}}, Object.assign(new Error('권한 오류'), {status:403,code:'OPENAPI00003'}))");
 assert.deepEqual(json('__profileFailure'), {character: '본캐', nexonCharacter: '넥슨본캐', status: 403, code: 'OPENAPI00003', message: '권한 오류'});
@@ -228,7 +273,7 @@ assert.equal(run("diagnosticEntryLabel('profileFailures', __profileFailure)"), '
 
 context.__profileResponse = {
   ok: true, fetchedAt: '2026-09-23T01:00:10.000Z',
-  character: {name: '넥슨본캐', world: '루나', className: '나이트로드', level: 285, image: 'https://example.com/maple-character.png', combatPower: 284300000, unionLevel: 9450, unionGrade: '그랜드 마스터 유니온'},
+  character: {name: '넥슨본캐', world: '루나', className: '나이트로드', level: 285, image: 'https://example.com/maple-character.png', combatPower: 284300000, stats: detailStatsFixture, unionLevel: 9450, unionGrade: '그랜드 마스터 유니온'},
   resources: {basic: {ok: true}, stat: {ok: true}, union: {ok: true}}, warnings: []
 };
 assert.equal(run("applyNexonProfileState(__schedulerState, 'c1', __profileResponse, __profileResponse.fetchedAt)"), true);
@@ -236,7 +281,7 @@ assert.deepEqual(json('__schedulerState.characters[0].nexonCharacter'), {
   ocid: schedulerResponse.character.ocid, characterName: '넥슨본캐', world: '루나', linkedAt: '2026-09-23T01:00:00.000Z',
   lastCheckedAt: '2026-09-23T01:00:00.000Z', lastCheckedWeek: '2026-09-17~2026-09-23', status: 'ok',
   className: '나이트로드', level: 285, image: 'https://example.com/maple-character.png', profileCheckedAt: '2026-09-23T01:00:10.000Z',
-  combatPower: 284300000, unionLevel: 9450, unionGrade: '그랜드 마스터 유니온', statsCheckedAt: '2026-09-23T01:00:10.000Z'
+  combatPower: 284300000, stats: detailStatsFixture, unionLevel: 9450, unionGrade: '그랜드 마스터 유니온', statsCheckedAt: '2026-09-23T01:00:10.000Z'
 });
 context.__partialStatsProfile = {character: {name: '', world: '', className: '', level: null, image: '', combatPower: 300000000, unionLevel: null, unionGrade: ''}, resources: {basic: {ok: false}, stat: {ok: true}, union: {ok: false}}};
 run("applyNexonProfileState(__schedulerState, 'c1', __partialStatsProfile, '2026-09-23T01:30:00.000Z')");
@@ -244,6 +289,7 @@ assert.equal(context.__schedulerState.characters[0].nexonCharacter.characterName
 assert.equal(context.__schedulerState.characters[0].nexonCharacter.image, 'https://example.com/maple-character.png');
 assert.equal(context.__schedulerState.characters[0].nexonCharacter.combatPower, 300000000);
 assert.equal(context.__schedulerState.characters[0].nexonCharacter.unionLevel, 9450);
+assert.equal(context.__schedulerState.characters[0].nexonCharacter.stats.ignoreDefense, 96.42);
 context.__profileWithoutImage = {character: {name: '넥슨본캐', world: '루나', className: '나이트로드', level: 286, image: ''}};
 run("applyNexonProfileState(__schedulerState, 'c1', __profileWithoutImage, '2026-09-23T02:00:00.000Z')");
 assert.equal(context.__schedulerState.characters[0].nexonCharacter.image, '');
@@ -737,18 +783,22 @@ assert.equal(profileAndBossMerged.nexonCharacter.className, '나이트로드');
 const nexonFieldMergeBase = clone(syncBase);
 nexonFieldMergeBase.characters[0].nexonCharacter = {
   ocid: schedulerResponse.character.ocid, characterName: '넥슨본캐', level: 284,
-  combatPower: 280000000, unionLevel: 9400, profileCheckedAt: '2026-09-23T01:00:00.000Z', statsCheckedAt: '2026-09-23T01:00:00.000Z'
+  combatPower: 280000000, stats: {...emptyDetailStats, bossDamage: 300}, unionLevel: 9400,
+  profileCheckedAt: '2026-09-23T01:00:00.000Z', statsCheckedAt: '2026-09-23T01:00:00.000Z'
 };
 const nexonProfileDevice = clone(nexonFieldMergeBase);
-nexonProfileDevice.updatedAt = '2026-09-23T04:00:00.000Z';
+nexonProfileDevice.updatedAt = '2026-09-23T07:00:00.000Z';
 Object.assign(nexonProfileDevice.characters[0].nexonCharacter, {level: 285, className: '나이트로드', profileCheckedAt: '2026-09-23T04:00:00.000Z'});
 const nexonStatsDevice = clone(nexonFieldMergeBase);
 nexonStatsDevice.updatedAt = '2026-09-23T05:00:00.000Z';
-Object.assign(nexonStatsDevice.characters[0].nexonCharacter, {combatPower: 300000000, unionLevel: 9450, unionGrade: '그랜드 마스터 유니온', statsCheckedAt: '2026-09-23T05:00:00.000Z'});
-const nexonFieldMerged = cloudSyncInternals.mergeStates(nexonFieldMergeBase, nexonProfileDevice, nexonStatsDevice, '2026-09-23T06:00:00.000Z').state.characters[0].nexonCharacter;
+Object.assign(nexonStatsDevice.characters[0].nexonCharacter, {combatPower: 300000000, stats: {...detailStatsFixture, bossDamage: 412}, unionLevel: 9450, unionGrade: '그랜드 마스터 유니온', statsCheckedAt: '2026-09-23T06:00:00.000Z'});
+const nexonFieldMerged = cloudSyncInternals.mergeStates(nexonFieldMergeBase, nexonProfileDevice, nexonStatsDevice, '2026-09-23T08:00:00.000Z').state.characters[0].nexonCharacter;
 assert.equal(nexonFieldMerged.level, 285);
 assert.equal(nexonFieldMerged.className, '나이트로드');
 assert.equal(nexonFieldMerged.combatPower, 300000000);
+assert.equal(nexonFieldMerged.stats.bossDamage, 412);
+assert.equal(nexonFieldMerged.stats.ignoreDefense, 96.42);
+assert.equal(nexonFieldMerged.statsCheckedAt, '2026-09-23T06:00:00.000Z');
 assert.equal(nexonFieldMerged.unionLevel, 9450);
 assert.equal(nexonFieldMerged.unionGrade, '그랜드 마스터 유니온');
 
@@ -815,9 +865,32 @@ assert.equal(nexonCharacterInternals.safeImageUrl('http://example.com/character.
 assert.equal(nexonCharacterInternals.PROFILE_CACHE_TTL_MS, 30 * 60_000);
 assert.equal(nexonCharacterInternals.STAT_CACHE_TTL_MS, 15 * 60_000);
 assert.equal(nexonCharacterInternals.UNION_CACHE_TTL_MS, 60 * 60_000);
-assert.deepEqual(nexonCharacterInternals.sanitizeStat({final_stat: [{stat_name: '전투력', stat_value: '284300000'}]}), {combatPower: 284300000});
-assert.deepEqual(nexonCharacterInternals.sanitizeStat({final_stat: [{stat_name: '보스 몬스터 데미지', stat_value: '300'}]}), {combatPower: null});
-assert.deepEqual(nexonCharacterInternals.sanitizeStat({final_stat: [{stat_name: '전투력', stat_value: 'invalid'}]}), {combatPower: null});
+assert.deepEqual(Object.values(nexonCharacterInternals.statDefinitions).map(item => item.name), [
+  '보스 몬스터 데미지', '방어율 무시', '크리티컬 확률', '크리티컬 데미지', '데미지', '최종 데미지',
+  'STR', 'DEX', 'INT', 'LUK', 'HP', '공격력', '마력', '스타포스', '아케인포스', '어센틱포스', '아이템 드롭률', '메소 획득량'
+]);
+assert.deepEqual(nexonCharacterInternals.sanitizeStat({final_stat: [{stat_name: '전투력', stat_value: '284300000'}]}), {combatPower: 284300000, stats: emptyDetailStats});
+assert.deepEqual(nexonCharacterInternals.sanitizeStat({final_stat: [{stat_name: '보스 몬스터 데미지', stat_value: '300'}]}), {combatPower: null, stats: {...emptyDetailStats, bossDamage: 300}});
+assert.deepEqual(nexonCharacterInternals.sanitizeStat({final_stat: [{stat_name: '전투력', stat_value: 'invalid'}]}), {combatPower: null, stats: emptyDetailStats});
+const fullSanitizedStats = nexonCharacterInternals.sanitizeStat({final_stat: [
+  {stat_name: '전투력', stat_value: '284300000'}, {stat_name: '보스 몬스터 데미지', stat_value: '412'},
+  {stat_name: '방어율 무시', stat_value: '96.42'}, {stat_name: '크리티컬 확률', stat_value: '100'},
+  {stat_name: '크리티컬 데미지', stat_value: '92.5'}, {stat_name: '데미지', stat_value: '85'},
+  {stat_name: '최종 데미지', stat_value: '74.3'}, {stat_name: 'STR', stat_value: '62340'},
+  {stat_name: 'DEX', stat_value: '8210'}, {stat_name: 'INT', stat_value: '5140'}, {stat_name: 'LUK', stat_value: '4980'},
+  {stat_name: 'HP', stat_value: '125430'}, {stat_name: '공격력', stat_value: '4820'}, {stat_name: '마력', stat_value: '1250'},
+  {stat_name: '스타포스', stat_value: '420'}, {stat_name: '아케인포스', stat_value: '1320'}, {stat_name: '어센틱포스', stat_value: '660'},
+  {stat_name: '아이템 드롭률', stat_value: '217'}, {stat_name: '메소 획득량', stat_value: '100'}
+]});
+assert.deepEqual(fullSanitizedStats, {combatPower: 284300000, stats: detailStatsFixture});
+const malformedSanitizedStats = nexonCharacterInternals.sanitizeStat({final_stat: [
+  {stat_name: '방어율 무시', stat_value: 'not-a-number'}, {stat_name: 'STR', stat_value: '62.5'},
+  {stat_name: 'DEX', stat_value: true}, {stat_value: '999'}, {stat_name: '알 수 없는 스탯', stat_value: '999'}
+]});
+assert.equal(malformedSanitizedStats.stats.ignoreDefense, null);
+assert.equal(malformedSanitizedStats.stats.str, null);
+assert.equal(Object.values(malformedSanitizedStats.stats).every(value => value === null), true);
+assert.deepEqual(nexonCharacterInternals.sanitizeStat({final_stat: []}), {combatPower: null, stats: emptyDetailStats});
 assert.deepEqual(nexonCharacterInternals.sanitizeUnion({union_level: 9450, union_grade: '그랜드 마스터 유니온'}), {unionLevel: 9450, unionGrade: '그랜드 마스터 유니온'});
 assert.deepEqual(nexonCharacterInternals.sanitizeUnion({union_level: null}), {unionLevel: null, unionGrade: ''});
 assert.deepEqual(nexonCharacterInternals.sanitizeUnion({union_level: 'invalid'}), {unionLevel: null, unionGrade: ''});
@@ -865,12 +938,16 @@ assert.doesNotMatch(css, /\.character-spec-title|\.character-spec-grid/);
 assert.match(css, /\.character-progress-head\{/);
 assert.match(css, /\.character-weekly-income\{/);
 assert.match(css, /\.character-income-grid\{/);
+assert.match(css, /\.stat-detail-toggle\{/);
+assert.match(css, /\.character-stat-details\{/);
+assert.match(css, /\.character-stat-groups\{/);
 assert.match(css, /@media\(min-width:1000px\)\{/);
 assert.match(css, /\.app\{max-width:1180px\}/);
-assert.match(css, /grid-template-areas:"profile spec" "progress progress" "income income"/);
+assert.match(css, /grid-template-areas:"profile spec" "progress progress" "income income" "details details"/);
 assert.match(css, /\.character\{grid-template-columns:minmax\(0,1fr\) minmax\(220px,280px\);[^}]*padding:11px 18px 12px/);
 assert.match(css, /\.character-spec\{grid-area:spec;[^}]*padding:0;border:0/);
 assert.match(css, /\.character-income-grid div\{grid-template-columns:auto minmax\(0,1fr\);[^}]*padding:6px 10px/);
+assert.match(css, /\.character-stat-groups\{grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/);
 for (const viewport of [360, 390, 430]) {
   const artWidth = Math.min(100, Math.max(80, viewport * 0.2));
   const artHeight = Math.min(96, Math.max(82, viewport * 0.2));
@@ -881,6 +958,7 @@ for (const viewport of [360, 390, 430]) {
 }
 assert.match(css, /\.character-identity\{[^}]*min-width:0/);
 assert.match(css, /@media\(max-width:430px\)\{[\s\S]*\.character-income-grid\{grid-template-columns:1fr\}/);
+assert.match(css, /@media\(max-width:430px\)\{[\s\S]*\.character-stat-groups\{grid-template-columns:1fr/);
 assert.match(css, /\.character-spec\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
 assert.match(css, /\.character-spec b\{[^}]*overflow-wrap:anywhere/);
 assert.match(css, /\.boss-profile-identity\{[^}]*min-width:0/);
@@ -888,10 +966,21 @@ assert.match(source, /data-nexon-profile-image/);
 assert.doesNotMatch(source, /classList\.add\('image-failed'\)/);
 assert.match(source, /if \(avatar\) avatar\.hidden = true/);
 assert.match(source, /nexonProfileAvatar\(c, 'summary-art'\)/);
-assert.match(source, /nexonSpecSummary\(c\)/);
+assert.match(source, /nexonSpecSummary\(c, statsExpanded\)/);
+assert.match(source, /statsExpanded \? nexonStatDetails\(c\) : ''/);
+assert.match(source, /data-stat-toggle/);
+assert.match(source, /expandedStatCharacterIds\.has\(characterId\)/);
+assert.match(source, /expandedStatCharacterIds\.delete\(characterId\)/);
+assert.match(source, /expandedStatCharacterIds\.add\(characterId\)/);
+assert.doesNotMatch(source, /expandedStatCharacterIds[^\n]*localStorage|expandedStatCharacterIds[^\n]*Supabase/i);
 assert.match(source, /class="character-progress-head"/);
 assert.match(source, /이번 주 완료수익/);
 assert.match(source, /class="character-income-grid"/);
+assert.equal(run("expandedStatCharacterIds.has('c1')"), false);
+run("expandedStatCharacterIds.add('c1')");
+assert.equal(run("expandedStatCharacterIds.has('c1')"), true);
+assert.equal(run("expandedStatCharacterIds.has('c2')"), false);
+run("expandedStatCharacterIds.delete('c1')");
 assert.match(source, /nexonProfileAvatar\(c, 'boss-art'\)/);
 assert.match(source, /nexonProfileAvatar\(character, 'settings-avatar'\)/);
 assert.match(source, /delete next\.characters\.find\(item => item\.id === character\.id\)\.nexonCharacter/);
@@ -928,7 +1017,10 @@ assert.equal(invalidProfileOcidStatus, 400);
 assert.equal(invalidProfileOcidBody.code, 'BAD_REQUEST');
 const originalFetch = globalThis.fetch;
 const basicPayload = {date: '2026-09-24T00:00+09:00', character_name: '넥슨본캐', world_name: '루나', character_class: '나이트로드', character_level: 286, character_image: 'https://example.com/profile.png'};
-const statPayload = {final_stat: [{stat_name: '전투력', stat_value: '284300000'}]};
+const statPayload = {final_stat: [
+  {stat_name: '전투력', stat_value: '284300000'},
+  ...Object.entries(nexonCharacterInternals.statDefinitions).map(([key, definition]) => ({stat_name: definition.name, stat_value: String(detailStatsFixture[key])}))
+]};
 const unionPayload = {union_level: 9450, union_grade: '그랜드 마스터 유니온'};
 const apiResponse = (ok, status, payload) => ({ok, status, json: async () => payload});
 const mockCharacterFetch = ({failStat = false, failUnion = false} = {}) => async target => {
@@ -958,7 +1050,7 @@ try {
   assert.equal(fullCharacterResponse.body.ok, true);
   assert.deepEqual(fullCharacterResponse.body.character, {
     name: '넥슨본캐', world: '루나', className: '나이트로드', level: 286, image: 'https://example.com/profile.png',
-    combatPower: 284300000, unionLevel: 9450, unionGrade: '그랜드 마스터 유니온'
+    combatPower: 284300000, stats: detailStatsFixture, unionLevel: 9450, unionGrade: '그랜드 마스터 유니온'
   });
   assert.deepEqual(fullCharacterResponse.body.warnings, []);
 
@@ -968,6 +1060,7 @@ try {
   assert.equal(statFailureResponse.status, 200);
   assert.equal(statFailureResponse.body.character.name, '넥슨본캐');
   assert.equal(statFailureResponse.body.character.combatPower, null);
+  assert.equal(statFailureResponse.body.character.stats, null);
   assert.equal(statFailureResponse.body.character.unionLevel, 9450);
   assert.equal(statFailureResponse.body.warnings[0].resource, 'stat');
 

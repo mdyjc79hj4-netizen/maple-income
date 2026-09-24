@@ -111,9 +111,43 @@ function safeNexonImageUrl(value) {
   } catch { return ''; }
 }
 function safeOptionalInteger(value) {
-  if (value === null || value === undefined || value === '') return null;
-  const number = Number(value);
+  if (value === null || value === undefined || value === '' || !['string', 'number'].includes(typeof value)) return null;
+  const normalized = typeof value === 'string' ? value.trim() : value;
+  if (normalized === '') return null;
+  const number = Number(normalized);
   return Number.isInteger(number) && number >= 0 ? number : null;
+}
+function safeOptionalNumber(value) {
+  if (value === null || value === undefined || value === '' || !['string', 'number'].includes(typeof value)) return null;
+  const normalized = typeof value === 'string' ? value.trim() : value;
+  if (normalized === '') return null;
+  const number = Number(normalized);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+const NEXON_STAT_GROUPS = [
+  {id: 'combat', title: '전투', items: [
+    ['bossDamage', '보스 데미지', 'percent'], ['ignoreDefense', '방어율 무시', 'percent'],
+    ['criticalRate', '크리티컬 확률', 'percent'], ['criticalDamage', '크리티컬 데미지', 'percent'],
+    ['damage', '데미지', 'percent'], ['finalDamage', '최종 데미지', 'percent']
+  ]},
+  {id: 'ability', title: '능력치', items: [
+    ['str', 'STR', 'integer'], ['dex', 'DEX', 'integer'], ['int', 'INT', 'integer'], ['luk', 'LUK', 'integer'],
+    ['hp', 'HP', 'integer'], ['attackPower', '공격력', 'integer'], ['magicPower', '마력', 'integer']
+  ]},
+  {id: 'growth', title: '성장', items: [
+    ['starForce', '스타포스', 'integer'], ['arcaneForce', '아케인포스', 'integer'], ['authenticForce', '어센틱포스', 'integer']
+  ]},
+  {id: 'other', title: '기타', items: [
+    ['itemDropRate', '아이템 드롭률', 'percent'], ['mesoAcquisitionRate', '메소 획득량', 'percent']
+  ]}
+];
+const NEXON_PERCENT_STATS = new Set(NEXON_STAT_GROUPS.flatMap(group => group.items.filter(item => item[2] === 'percent').map(item => item[0])));
+const NEXON_INTEGER_STATS = new Set(NEXON_STAT_GROUPS.flatMap(group => group.items.filter(item => item[2] === 'integer').map(item => item[0])));
+function normalizeNexonStats(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return Object.fromEntries([...NEXON_PERCENT_STATS, ...NEXON_INTEGER_STATS].map(key => [key,
+    NEXON_PERCENT_STATS.has(key) ? safeOptionalNumber(value[key]) : safeOptionalInteger(value[key])
+  ]));
 }
 function normalizeNexonCharacter(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -124,6 +158,7 @@ function normalizeNexonCharacter(value) {
   for (const key of ['level', 'combatPower', 'unionLevel']) {
     if (result[key] != null) result[key] = safeOptionalInteger(result[key]);
   }
+  if (Object.hasOwn(result, 'stats')) result.stats = normalizeNexonStats(result.stats);
   result.image = safeNexonImageUrl(result.image);
   return result;
 }
@@ -461,12 +496,15 @@ function applyNexonProfileState(data, characterId, response, checkedAt = new Dat
       image: safeNexonImageUrl(profile.image),
       profileCheckedAt: checkedAt
     } : {}),
-    ...(statOk ? {combatPower: safeOptionalInteger(profile.combatPower)} : {}),
+    ...(statOk ? {
+      combatPower: safeOptionalInteger(profile.combatPower),
+      ...(Object.hasOwn(profile, 'stats') ? {stats: normalizeNexonStats(profile.stats)} : {})
+    } : {}),
     ...(unionOk ? {
       unionLevel: safeOptionalInteger(profile.unionLevel),
       unionGrade: typeof profile.unionGrade === 'string' ? profile.unionGrade : ''
     } : {}),
-    ...(statOk || unionOk ? {statsCheckedAt: checkedAt} : {})
+    ...(statOk ? {statsCheckedAt: checkedAt} : {})
   };
   character.nexonCharacter = normalizeNexonCharacter(nextProfile);
   return previous !== JSON.stringify(character.nexonCharacter);
@@ -561,6 +599,7 @@ function rollover(data, now = new Date()) {
 let state, savedRaw = null, storageBlocked = false;
 let selectedWeek = '', bossFilter = 'pending', historyFilter = 'all', selectedBossCharacterId = '', characterMode = 'preset', presetApplyMode = 'add';
 let editingIncomeId = '', editSaleState = 'acquired';
+const expandedStatCharacterIds = new Set();
 let nexonApiState = {status: 'idle', message: '연동할 캐릭터를 선택해주세요.', diagnostics: null};
 const NEXON_CHECK_COOLDOWN_MS = 60_000;
 const $ = selector => document.querySelector(selector);
@@ -669,11 +708,24 @@ function nexonProfileCopy(character, className = '') {
   const profile = nexonProfileLines(character);
   return `${profile.primary ? `<span class="nexon-profile-primary ${escapeHtml(className)}">${escapeHtml(profile.primary)}</span>` : ''}${profile.world ? `<span class="nexon-profile-world">${escapeHtml(profile.world)}</span>` : ''}`;
 }
-function nexonSpecSummary(character) {
+function nexonStatValue(value, type) {
+  if (!Number.isFinite(value)) return '';
+  const formatted = value.toLocaleString('ko-KR', {maximumFractionDigits: 20});
+  return type === 'percent' ? `${formatted}%` : formatted;
+}
+function nexonSpecSummary(character, expanded = false) {
   const profile = character?.nexonCharacter;
   const combatPower = Number.isInteger(profile?.combatPower) ? koreanNumber(profile.combatPower) : '정보 없음';
   const unionLevel = Number.isInteger(profile?.unionLevel) ? profile.unionLevel.toLocaleString('ko-KR') : '정보 없음';
-  return `<span class="character-spec"><span><small>전투력</small><b>${escapeHtml(combatPower)}</b></span><span><small>유니온</small><b>${escapeHtml(unionLevel)}</b></span></span>`;
+  const detailsId = `character-stats-${character?.id || ''}`;
+  return `<span class="character-spec"><span><small>전투력</small><b>${escapeHtml(combatPower)}</b></span><span><small>유니온</small><b>${escapeHtml(unionLevel)}</b></span><button type="button" class="stat-detail-toggle" data-stat-toggle aria-expanded="${expanded}" aria-controls="${escapeHtml(detailsId)}">${expanded ? '스펙 상세 닫기' : '스펙 상세 보기'}</button></span>`;
+}
+function nexonStatDetails(character) {
+  const stats = normalizeNexonStats(character?.nexonCharacter?.stats);
+  const groups = NEXON_STAT_GROUPS.map(group => ({...group, items: group.items.filter(([key]) => Number.isFinite(stats?.[key]))})).filter(group => group.items.length);
+  const detailsId = `character-stats-${character?.id || ''}`;
+  if (!groups.length) return `<section id="${escapeHtml(detailsId)}" class="character-stat-details"><b>상세 스펙</b><p class="muted">상세 스펙 정보가 없습니다.</p></section>`;
+  return `<section id="${escapeHtml(detailsId)}" class="character-stat-details"><b>상세 스펙</b><div class="character-stat-groups">${groups.map(group => `<section class="character-stat-group" data-stat-group="${escapeHtml(group.id)}"><h4>${escapeHtml(group.title)}</h4><dl>${group.items.map(([key, label, type]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(nexonStatValue(stats[key], type))}</dd></div>`).join('')}</dl></section>`).join('')}</div></section>`;
 }
 function render() {
   if (selectedWeek && !state.weeklyHistory[selectedWeek]) selectedWeek = '';
@@ -688,7 +740,8 @@ function render() {
   $('#metrics').innerHTML = Object.entries(labels).map(([key, label]) => `<div class="metric"><small>${label}</small><b>${money(totals[key])}</b></div>`).join('');
   $('#characterList').innerHTML = (data.characters || []).map(c => {
     const s = characterStats(c), percent = s.count ? Math.round(s.done / s.count * 100) : 0;
-    return `<button type="button" class="character" data-character="${escapeHtml(c.id)}" aria-label="${escapeHtml(c.name)} 주간 보스 관리"><span class="character-main"><span class="character-identity">${nexonProfileAvatar(c, 'summary-art')}<span class="character-identity-copy"><b>${escapeHtml(c.name)}</b>${nexonProfileCopy(c)}</span></span></span>${nexonSpecSummary(c)}<span class="character-progress"><span class="character-progress-head"><small>${s.done} / ${s.count} 완료 · 진행률 ${percent}%</small><span class="character-weekly-income"><small>이번 주 완료수익</small><strong class="mint">${money(s.earned)}</strong></span></span><progress value="${s.done}" max="${s.count || 1}" aria-label="${escapeHtml(c.name)} 보스 진행률"></progress></span><dl class="character-income-grid"><div><dt>완료 수익</dt><dd>${money(s.earned)}</dd></div><div><dt>예상 수익</dt><dd>${money(s.expected)}</dd></div><div><dt>남은 수익</dt><dd>${money(s.remaining)}</dd></div></dl></button>`;
+    const statsExpanded = expandedStatCharacterIds.has(c.id);
+    return `<article class="character" data-character="${escapeHtml(c.id)}"><span class="character-main"><span class="character-identity">${nexonProfileAvatar(c, 'summary-art')}<span class="character-identity-copy"><b>${escapeHtml(c.name)}</b>${nexonProfileCopy(c)}</span></span></span>${nexonSpecSummary(c, statsExpanded)}<span class="character-progress"><span class="character-progress-head"><small>${s.done} / ${s.count} 완료 · 진행률 ${percent}%</small><span class="character-weekly-income"><small>이번 주 완료수익</small><strong class="mint">${money(s.earned)}</strong></span></span><progress value="${s.done}" max="${s.count || 1}" aria-label="${escapeHtml(c.name)} 보스 진행률"></progress></span><dl class="character-income-grid"><div><dt>완료 수익</dt><dd>${money(s.earned)}</dd></div><div><dt>예상 수익</dt><dd>${money(s.expected)}</dd></div><div><dt>남은 수익</dt><dd>${money(s.remaining)}</dd></div></dl>${statsExpanded ? nexonStatDetails(c) : ''}</article>`;
   }).join('') || '<p class="empty">저장된 캐릭터가 없습니다.</p>';
   $('#addCharacter').disabled = !!isPast() || storageBlocked; $('#incomeFields').disabled = !!isPast() || storageBlocked;
   $('#incomeReadOnly').classList.toggle('hidden', !isPast()); $('#resetAll').disabled = !!isPast(); $('#resetWeek').disabled = !!isPast();
@@ -771,7 +824,8 @@ function nexonDefaultStatusMessage(characters = []) {
 function nexonProfileNeedsBackfill(character) {
   const profile = character?.nexonCharacter;
   if (!profile?.ocid) return false;
-  return !profile.profileCheckedAt || !profile.statsCheckedAt || !profile.className || !Number.isInteger(profile.level) || !safeNexonImageUrl(profile.image);
+  const missingStats = !profile.stats || typeof profile.stats !== 'object' || Array.isArray(profile.stats);
+  return !profile.profileCheckedAt || !profile.statsCheckedAt || missingStats || !profile.className || !Number.isInteger(profile.level) || !safeNexonImageUrl(profile.image);
 }
 function nexonSyncPlan(character, {characterName = '', ignoreCooldown = false, now = Date.now()} = {}) {
   const lastChecked = Date.parse(character?.nexonCharacter?.lastCheckedAt || '');
@@ -1191,6 +1245,13 @@ function init() {
   $('#returnCurrent').addEventListener('click', () => { selectedWeek = ''; render(); });
   $('#characterList').addEventListener('click', e => {
     const card = e.target.closest('[data-character]'); if (!card) return;
+    if (e.target.closest('[data-stat-toggle]')) {
+      const characterId = card.dataset.character;
+      if (expandedStatCharacterIds.has(characterId)) expandedStatCharacterIds.delete(characterId);
+      else expandedStatCharacterIds.add(characterId);
+      render(); return;
+    }
+    if (e.target.closest('.character-stat-details')) return;
     selectedBossCharacterId = card.dataset.character; $('[data-tab="boss"]').click(); renderBosses(viewData());
   });
   $$('[data-tab]').forEach(button => button.addEventListener('click', () => {

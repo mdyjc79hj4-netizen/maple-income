@@ -3,6 +3,26 @@ const PROFILE_CACHE_TTL_MS = 30 * 60_000;
 const STAT_CACHE_TTL_MS = 15 * 60_000;
 const UNION_CACHE_TTL_MS = 60 * 60_000;
 const resourceCaches = {basic: new Map(), stat: new Map(), union: new Map()};
+const statDefinitions = Object.freeze({
+  bossDamage: {name: '보스 몬스터 데미지', type: 'percent'},
+  ignoreDefense: {name: '방어율 무시', type: 'percent'},
+  criticalRate: {name: '크리티컬 확률', type: 'percent'},
+  criticalDamage: {name: '크리티컬 데미지', type: 'percent'},
+  damage: {name: '데미지', type: 'percent'},
+  finalDamage: {name: '최종 데미지', type: 'percent'},
+  str: {name: 'STR', type: 'integer'},
+  dex: {name: 'DEX', type: 'integer'},
+  int: {name: 'INT', type: 'integer'},
+  luk: {name: 'LUK', type: 'integer'},
+  hp: {name: 'HP', type: 'integer'},
+  attackPower: {name: '공격력', type: 'integer'},
+  magicPower: {name: '마력', type: 'integer'},
+  starForce: {name: '스타포스', type: 'integer'},
+  arcaneForce: {name: '아케인포스', type: 'integer'},
+  authenticForce: {name: '어센틱포스', type: 'integer'},
+  itemDropRate: {name: '아이템 드롭률', type: 'percent'},
+  mesoAcquisitionRate: {name: '메소 획득량', type: 'percent'}
+});
 
 const statusMessages = {
   400: '캐릭터 식별 정보를 확인해주세요.',
@@ -44,9 +64,19 @@ function safeImageUrl(value) {
 }
 
 function safeInteger(value) {
-  if (value === null || value === undefined || value === '') return null;
-  const number = Number(value);
+  if (value === null || value === undefined || value === '' || !['string', 'number'].includes(typeof value)) return null;
+  const normalized = typeof value === 'string' ? value.trim() : value;
+  if (normalized === '') return null;
+  const number = Number(normalized);
   return Number.isFinite(number) && Number.isInteger(number) && number >= 0 ? number : null;
+}
+
+function safeDecimal(value) {
+  if (value === null || value === undefined || value === '' || !['string', 'number'].includes(typeof value)) return null;
+  const normalized = typeof value === 'string' ? value.trim() : value;
+  if (normalized === '') return null;
+  const number = Number(normalized);
+  return Number.isFinite(number) && number >= 0 ? number : null;
 }
 
 function sanitizeBasic(payload) {
@@ -63,10 +93,14 @@ function sanitizeBasic(payload) {
 
 function sanitizeStat(payload) {
   if (!payload || typeof payload !== 'object') throw Object.assign(new Error('NEXON 캐릭터 능력치 응답 구조가 변경되었습니다.'), {status: 502});
-  const entry = Array.isArray(payload.final_stat)
-    ? payload.final_stat.find(item => item && item.stat_name === '전투력')
-    : null;
-  return {combatPower: safeInteger(entry?.stat_value)};
+  const entries = new Map((Array.isArray(payload.final_stat) ? payload.final_stat : [])
+    .filter(item => item && typeof item.stat_name === 'string')
+    .map(item => [item.stat_name, item.stat_value]));
+  const stats = Object.fromEntries(Object.entries(statDefinitions).map(([key, definition]) => {
+    const value = entries.get(definition.name);
+    return [key, definition.type === 'percent' ? safeDecimal(value) : safeInteger(value)];
+  }));
+  return {combatPower: safeInteger(entries.get('전투력')), stats};
 }
 
 function sanitizeUnion(payload) {
@@ -182,6 +216,7 @@ export default async function handler(req, res) {
       level: basic.level ?? null,
       image: basic.image || '',
       combatPower: stat.combatPower ?? null,
+      stats: stat.stats ?? null,
       unionLevel: union.unionLevel ?? null,
       unionGrade: union.unionGrade || ''
     },
@@ -192,6 +227,6 @@ export default async function handler(req, res) {
 
 export const nexonCharacterInternals = {
   PROFILE_CACHE_TTL_MS, STAT_CACHE_TTL_MS, UNION_CACHE_TTL_MS,
-  clearCaches, publicError, resourceWarning, safeImageUrl, safeInteger,
+  clearCaches, publicError, resourceWarning, safeDecimal, safeImageUrl, safeInteger, statDefinitions,
   sanitizeBasic, sanitizeProfile, sanitizeStat, sanitizeUnion, upstreamErrorCode, validOcid
 };

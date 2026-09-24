@@ -63,7 +63,7 @@ input[type=checkbox]{accent-color:var(--mint);width:21px;min-height:21px;height:
 .danger{background:#3c252c;border-color:#65404a;color:#ffc0c0}
 .danger-text{color:var(--red)!important}
 .full{width:100%;margin-top:12px}
-.character{width:100%;display:grid;grid-template-columns:minmax(0,1fr);gap:10px;text-align:left;background:#0e1b24;border:1px solid var(--line);border-radius:12px;margin-top:9px;padding:13px;color:var(--text)}
+.character{width:100%;display:grid;grid-template-columns:minmax(0,1fr);gap:10px;text-align:left;background:#0e1b24;border:1px solid var(--line);border-radius:12px;margin-top:9px;padding:13px;color:var(--text);cursor:pointer}
 .character:hover{border-color:#3a5362;background:#11212b}
 .character-main{display:flex;align-items:center;gap:12px;min-width:0;order:1}
 .character-identity{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
@@ -93,6 +93,18 @@ input[type=checkbox]{accent-color:var(--mint);width:21px;min-height:21px;height:
 .character-spec>span{display:flex;align-items:baseline;justify-content:space-between;gap:8px;min-width:0}
 .character-spec small{margin:0;color:var(--muted);white-space:nowrap}
 .character-spec b{font-size:14px;color:var(--text);font-variant-numeric:tabular-nums;text-align:right;overflow-wrap:anywhere}
+.stat-detail-toggle{grid-column:1/-1;justify-self:end;border:0;background:transparent;color:var(--blue);min-height:36px;padding:6px 2px;font-size:11px;font-weight:650}
+.stat-detail-toggle:hover{text-decoration:underline}
+.character-stat-details{grid-column:1/-1;display:grid;gap:10px;order:5;padding-top:11px;border-top:1px solid var(--line);cursor:default}
+.character-stat-details>b{font-size:13px}
+.character-stat-details>.muted{margin:0}
+.character-stat-groups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 18px}
+.character-stat-group{min-width:0;padding-left:10px;border-left:2px solid #294351}
+.character-stat-group h4{margin:0;color:var(--blue);font-size:12px}
+.character-stat-group dl{display:grid;gap:4px;margin:7px 0 0}
+.character-stat-group dl div{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;gap:8px}
+.character-stat-group dt{font-size:11px;overflow-wrap:anywhere}
+.character-stat-group dd{font-size:12px;font-weight:650;font-variant-numeric:tabular-nums;text-align:right;overflow-wrap:anywhere}
 .progress-label{font-size:11px;color:var(--muted)}
 progress{width:100%;height:5px;accent-color:var(--mint);border:0;border-radius:10px;overflow:hidden}
 progress::-webkit-progress-bar{background:#263945}
@@ -298,7 +310,7 @@ dialog::backdrop{background:#0009;backdrop-filter:blur(3px)}
 .tabs{width:min(1180px,100%)}
 main{padding:24px 30px}
 .top{padding-left:34px;padding-right:34px}
-.character{grid-template-columns:minmax(0,1fr) minmax(220px,280px);grid-template-areas:"profile spec" "progress progress" "income income";column-gap:24px;row-gap:8px;padding:11px 18px 12px}
+.character{grid-template-columns:minmax(0,1fr) minmax(220px,280px);grid-template-areas:"profile spec" "progress progress" "income income" "details details";column-gap:24px;row-gap:8px;padding:11px 18px 12px}
 .character-main{grid-area:profile}
 .character-spec{grid-area:spec;grid-template-columns:1fr;align-content:center;gap:5px;padding:0;border:0}
 .character-spec>span{display:grid;grid-template-columns:68px minmax(0,1fr);gap:10px}
@@ -307,6 +319,8 @@ main{padding:24px 30px}
 .character-income-grid{grid-area:income}
 .character-income-grid div{grid-template-columns:auto minmax(0,1fr);align-items:baseline;padding:6px 10px}
 .character-income-grid dd{text-align:right}
+.character-stat-details{grid-area:details}
+.character-stat-groups{grid-template-columns:repeat(4,minmax(0,1fr));gap:18px}
 }
 
 @media(max-width:360px){main{padding:12px}
@@ -327,6 +341,7 @@ main{padding:24px 30px}
 .direct-boss-row select{padding:6px 5px;font-size:11px}
 .character-income-grid{grid-template-columns:1fr}
 .character-spec{grid-template-columns:1fr 1fr}
+.character-stat-groups{grid-template-columns:1fr;gap:12px}
 .panel[data-page="income"],.panel[data-page="settings"]{padding-left:13px;padding-right:13px}
 .compact-record{grid-template-columns:minmax(0,1fr) 40px;padding:9px 6px 9px 11px}
 .compact-record>strong{grid-column:1;grid-row:2;text-align:left;max-width:none}
