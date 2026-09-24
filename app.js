@@ -673,7 +673,7 @@ function nexonSpecSummary(character) {
   const profile = character?.nexonCharacter;
   const combatPower = Number.isInteger(profile?.combatPower) ? koreanNumber(profile.combatPower) : '정보 없음';
   const unionLevel = Number.isInteger(profile?.unionLevel) ? profile.unionLevel.toLocaleString('ko-KR') : '정보 없음';
-  return `<span class="character-spec"><small class="character-spec-title">스펙 요약</small><span class="character-spec-grid"><span><small>전투력</small><b>${escapeHtml(combatPower)}</b></span><span><small>유니온</small><b>${escapeHtml(unionLevel)}</b></span></span></span>`;
+  return `<span class="character-spec"><span><small>전투력</small><b>${escapeHtml(combatPower)}</b></span><span><small>유니온</small><b>${escapeHtml(unionLevel)}</b></span></span>`;
 }
 function render() {
   if (selectedWeek && !state.weeklyHistory[selectedWeek]) selectedWeek = '';
@@ -688,7 +688,7 @@ function render() {
   $('#metrics').innerHTML = Object.entries(labels).map(([key, label]) => `<div class="metric"><small>${label}</small><b>${money(totals[key])}</b></div>`).join('');
   $('#characterList').innerHTML = (data.characters || []).map(c => {
     const s = characterStats(c), percent = s.count ? Math.round(s.done / s.count * 100) : 0;
-    return `<button type="button" class="character" data-character="${escapeHtml(c.id)}" aria-label="${escapeHtml(c.name)} 주간 보스 관리"><span class="character-main"><span class="character-identity">${nexonProfileAvatar(c, 'summary-art')}<span class="character-identity-copy"><b>${escapeHtml(c.name)}</b>${nexonProfileCopy(c)}<small>${s.done} / ${s.count} 완료 · 진행률 ${percent}%</small></span></span><strong class="character-income mint">${money(s.earned)}</strong></span><span class="character-detail"><span class="character-performance"><progress value="${s.done}" max="${s.count || 1}" aria-label="${escapeHtml(c.name)} 보스 진행률"></progress><dl><div><dt>완료 수익</dt><dd>${money(s.earned)}</dd></div><div><dt>예상 수익</dt><dd>${money(s.expected)}</dd></div><div><dt>남은 수익</dt><dd>${money(s.remaining)}</dd></div></dl></span>${nexonSpecSummary(c)}</span></button>`;
+    return `<button type="button" class="character" data-character="${escapeHtml(c.id)}" aria-label="${escapeHtml(c.name)} 주간 보스 관리"><span class="character-main"><span class="character-identity">${nexonProfileAvatar(c, 'summary-art')}<span class="character-identity-copy"><b>${escapeHtml(c.name)}</b>${nexonProfileCopy(c)}</span></span></span>${nexonSpecSummary(c)}<span class="character-progress"><span class="character-progress-head"><small>${s.done} / ${s.count} 완료 · 진행률 ${percent}%</small><span class="character-weekly-income"><small>이번 주 완료수익</small><strong class="mint">${money(s.earned)}</strong></span></span><progress value="${s.done}" max="${s.count || 1}" aria-label="${escapeHtml(c.name)} 보스 진행률"></progress></span><dl class="character-income-grid"><div><dt>완료 수익</dt><dd>${money(s.earned)}</dd></div><div><dt>예상 수익</dt><dd>${money(s.expected)}</dd></div><div><dt>남은 수익</dt><dd>${money(s.remaining)}</dd></div></dl></button>`;
   }).join('') || '<p class="empty">저장된 캐릭터가 없습니다.</p>';
   $('#addCharacter').disabled = !!isPast() || storageBlocked; $('#incomeFields').disabled = !!isPast() || storageBlocked;
   $('#incomeReadOnly').classList.toggle('hidden', !isPast()); $('#resetAll').disabled = !!isPast(); $('#resetWeek').disabled = !!isPast();

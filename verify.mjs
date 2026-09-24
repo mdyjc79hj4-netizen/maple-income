@@ -106,11 +106,32 @@ assert.match(profileUiWithoutImage, /루나/);
 assert.equal(run('koreanNumber(284300000)'), '2억 8,430만');
 assert.equal(run('koreanNumber(null)'), '0');
 const specSummaryMarkup = run('nexonSpecSummary(__profileUiCharacter)');
-assert.match(specSummaryMarkup, /스펙 요약/);
 assert.match(specSummaryMarkup, /2억 8,430만/);
 assert.match(specSummaryMarkup, /9,450/);
 assert.doesNotMatch(specSummaryMarkup, /메소/);
-assert.match(run("nexonSpecSummary({nexonCharacter:{combatPower:null,unionLevel:null}})"), /정보 없음/);
+assert.doesNotMatch(specSummaryMarkup, /스펙 요약/);
+const combatOnlySpec = run("nexonSpecSummary({nexonCharacter:{combatPower:284300000,unionLevel:null}})");
+assert.match(combatOnlySpec, /2억 8,430만/);
+assert.equal((combatOnlySpec.match(/정보 없음/g) || []).length, 1);
+const unionOnlySpec = run("nexonSpecSummary({nexonCharacter:{combatPower:null,unionLevel:9450}})");
+assert.match(unionOnlySpec, /9,450/);
+assert.equal((unionOnlySpec.match(/정보 없음/g) || []).length, 1);
+const emptySpec = run("nexonSpecSummary({nexonCharacter:{combatPower:null,unionLevel:null}})");
+assert.equal((emptySpec.match(/정보 없음/g) || []).length, 2);
+assert.match(run("nexonSpecSummary({nexonCharacter:{combatPower:9876543210123,unionLevel:12345}})"), /9조 8,765억 4,321만 123/);
+context.__emptyCharacterStats = {bosses: []};
+assert.deepEqual(json('characterStats(__emptyCharacterStats)'), {count: 0, done: 0, expected: 0, earned: 0, remaining: 0});
+context.__completedCharacterStats = {bosses: [
+  {bossId: 'lotus', difficulty: '하드', partySize: 1, done: true},
+  {bossId: 'damien', difficulty: '하드', partySize: 1, done: true},
+  {bossId: 'lucid', difficulty: '하드', partySize: 1, done: false}
+]};
+const completedCharacterStats = json('characterStats(__completedCharacterStats)');
+assert.equal(completedCharacterStats.count, 3);
+assert.equal(completedCharacterStats.done, 2);
+assert.ok(completedCharacterStats.earned > 0);
+context.__longProfileUiCharacter = {name: '아주긴메기캐릭터별칭테스트', nexonCharacter: {ocid: 'abcdefghijklmnop', characterName: '아주긴넥슨캐릭터이름테스트', world: '크로아', className: '아크메이지(불,독)', level: 300}};
+assert.match(run('nexonProfileCopy(__longProfileUiCharacter)'), /아주긴넥슨캐릭터이름테스트/);
 
 const nexonNames = {
   '자쿰': 'zakum', '피에르': 'pierre', '반반': 'vonbon', '블러디 퀸': 'bloodyqueen', '벨룸': 'vellum',
@@ -840,9 +861,16 @@ assert.match(css, /\.settings-avatar\{[^}]*width:clamp\(56px,14vw,60px\);height:
 assert.match(css, /\.settings-avatar img\{[^}]*transform:scale\(1\.8\)/);
 assert.match(css, /\.nexon-profile-image\[hidden\]\{display:none\}/);
 assert.match(css, /\.character-spec\{/);
-assert.match(css, /\.character-spec-grid\{/);
+assert.doesNotMatch(css, /\.character-spec-title|\.character-spec-grid/);
+assert.match(css, /\.character-progress-head\{/);
+assert.match(css, /\.character-weekly-income\{/);
+assert.match(css, /\.character-income-grid\{/);
 assert.match(css, /@media\(min-width:1000px\)\{/);
 assert.match(css, /\.app\{max-width:1180px\}/);
+assert.match(css, /grid-template-areas:"profile spec" "progress progress" "income income"/);
+assert.match(css, /\.character\{grid-template-columns:minmax\(0,1fr\) minmax\(220px,280px\);[^}]*padding:11px 18px 12px/);
+assert.match(css, /\.character-spec\{grid-area:spec;[^}]*padding:0;border:0/);
+assert.match(css, /\.character-income-grid div\{grid-template-columns:auto minmax\(0,1fr\);[^}]*padding:6px 10px/);
 for (const viewport of [360, 390, 430]) {
   const artWidth = Math.min(100, Math.max(80, viewport * 0.2));
   const artHeight = Math.min(96, Math.max(82, viewport * 0.2));
@@ -852,12 +880,18 @@ for (const viewport of [360, 390, 430]) {
   assert.ok(thumbnailSize >= 56 && thumbnailSize <= 60, `${viewport}px settings thumbnail`);
 }
 assert.match(css, /\.character-identity\{[^}]*min-width:0/);
+assert.match(css, /@media\(max-width:430px\)\{[\s\S]*\.character-income-grid\{grid-template-columns:1fr\}/);
+assert.match(css, /\.character-spec\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+assert.match(css, /\.character-spec b\{[^}]*overflow-wrap:anywhere/);
 assert.match(css, /\.boss-profile-identity\{[^}]*min-width:0/);
 assert.match(source, /data-nexon-profile-image/);
 assert.doesNotMatch(source, /classList\.add\('image-failed'\)/);
 assert.match(source, /if \(avatar\) avatar\.hidden = true/);
 assert.match(source, /nexonProfileAvatar\(c, 'summary-art'\)/);
 assert.match(source, /nexonSpecSummary\(c\)/);
+assert.match(source, /class="character-progress-head"/);
+assert.match(source, /이번 주 완료수익/);
+assert.match(source, /class="character-income-grid"/);
 assert.match(source, /nexonProfileAvatar\(c, 'boss-art'\)/);
 assert.match(source, /nexonProfileAvatar\(character, 'settings-avatar'\)/);
 assert.match(source, /delete next\.characters\.find\(item => item\.id === character\.id\)\.nexonCharacter/);
