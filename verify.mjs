@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import {webcrypto} from 'node:crypto';
 import {cloudSyncInternals} from './cloud-sync.js';
 import nexonSchedulerHandler, {nexonProxyInternals} from './api/nexon-scheduler.js';
+import nexonCharacterHandler, {nexonCharacterInternals} from './api/nexon-character.js';
 
 const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
 const cloudSource = readFileSync(new URL('./cloud-sync.js', import.meta.url), 'utf8');
@@ -11,8 +12,9 @@ const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
 const css = readFileSync(new URL('./style.css', import.meta.url), 'utf8');
 const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
 const nexonApiSource = readFileSync(new URL('./api/nexon-scheduler.js', import.meta.url), 'utf8');
+const nexonCharacterApiSource = readFileSync(new URL('./api/nexon-character.js', import.meta.url), 'utf8');
 const envExample = readFileSync(new URL('./.env.example', import.meta.url), 'utf8');
-const context = vm.createContext({console, crypto: webcrypto, document: undefined, structuredClone, setTimeout, clearTimeout});
+const context = vm.createContext({console, crypto: webcrypto, document: undefined, structuredClone, setTimeout, clearTimeout, URL, URLSearchParams});
 vm.runInContext(source, context);
 const run = expression => vm.runInContext(expression, context);
 const json = expression => JSON.parse(run(`JSON.stringify(${expression})`));
@@ -62,6 +64,20 @@ assert.equal(migrated.presets[0].bosses.length, 1);
 assert.deepEqual(migrated.presets[0].bosses[0], {bossId: 'seren', difficulty: '익스트림', partySize: 4});
 assert.equal(migrated.weeklyHistory['2026-09-10~2026-09-16'].totals.total, 10);
 assert.equal(migrated.incomes[0].amount, 82000000);
+
+context.__legacyProfileState = {
+  version: 6, currentWeek: '2026-09-17~2026-09-23', updatedAt: '2026-09-23T00:00:00.000Z',
+  characters: [{id: 'c1', name: '본캐', bosses: [], nexonCharacter: {ocid: 'abcdefghijklmnop', characterName: '넥슨본캐', world: '루나'}}],
+  incomes: [], weeklyHistory: {}, presets: [], settings: {}
+};
+const migratedProfileState = json("migrateState(__legacyProfileState, new Date('2026-09-23T12:00:00'))");
+assert.equal(migratedProfileState.characters[0].nexonCharacter.characterName, '넥슨본캐');
+assert.equal(migratedProfileState.characters[0].nexonCharacter.image, '');
+assert.equal('className' in migratedProfileState.characters[0].nexonCharacter, false);
+assert.equal(run("safeNexonImageUrl('https://example.com/avatar.png')"), 'https://example.com/avatar.png');
+assert.equal(run("safeNexonImageUrl('javascript:alert(1)')"), '');
+assert.equal(run("nexonProfileAvatar({name:'본캐',nexonCharacter:{ocid:'abcdefghijklmnop'}})"), '');
+assert.match(run("nexonProfileAvatar({name:'본캐',nexonCharacter:{ocid:'abcdefghijklmnop',image:'https://example.com/avatar.png'}},'summary-avatar')"), /data-nexon-profile-image/);
 
 const nexonNames = {
   '자쿰': 'zakum', '피에르': 'pierre', '반반': 'vonbon', '블러디 퀸': 'bloodyqueen', '벨룸': 'vellum',
@@ -141,6 +157,26 @@ assert.equal(run("latestNexonCheckedAt([{nexonCharacter:{lastCheckedAt:'2026-09-
 assert.equal(run("nexonDefaultStatusMessage([{nexonCharacter:{ocid:'linked',lastCheckedAt:'2026-09-24T02:00:00.000Z'}}])"), '최신 상태');
 assert.equal(run('nexonDefaultStatusMessage([{id:"unlinked"}])'), '연동할 캐릭터를 선택해주세요.');
 assert.equal(JSON.stringify(context.__schedulerState).includes('diagnostics'), false);
+
+context.__profileResponse = {
+  ok: true, fetchedAt: '2026-09-23T01:00:10.000Z',
+  character: {name: '넥슨본캐', world: '루나', className: '나이트로드', level: 285, image: 'https://example.com/maple-character.png'}
+};
+assert.equal(run("applyNexonProfileState(__schedulerState, 'c1', __profileResponse, __profileResponse.fetchedAt)"), true);
+assert.deepEqual(json('__schedulerState.characters[0].nexonCharacter'), {
+  ocid: schedulerResponse.character.ocid, characterName: '넥슨본캐', world: '루나', linkedAt: '2026-09-23T01:00:00.000Z',
+  lastCheckedAt: '2026-09-23T01:00:00.000Z', lastCheckedWeek: '2026-09-17~2026-09-23', status: 'ok',
+  className: '나이트로드', level: 285, image: 'https://example.com/maple-character.png', profileCheckedAt: '2026-09-23T01:00:10.000Z'
+});
+context.__profileWithoutImage = {character: {name: '넥슨본캐', world: '루나', className: '나이트로드', level: 286, image: ''}};
+run("applyNexonProfileState(__schedulerState, 'c1', __profileWithoutImage, '2026-09-23T02:00:00.000Z')");
+assert.equal(context.__schedulerState.characters[0].nexonCharacter.image, '');
+context.__unsafeProfile = {character: {image: 'javascript:alert(1)', level: 286}};
+run("applyNexonProfileState(__schedulerState, 'c1', __unsafeProfile, '2026-09-23T02:01:00.000Z')");
+assert.equal(context.__schedulerState.characters[0].nexonCharacter.image, '');
+const schedulerBossesBeforeProfileFailure = JSON.stringify(context.__schedulerState.characters[0].bosses);
+assert.throws(() => run("applyNexonProfileState(__schedulerState, 'c1', null)"), /기본정보 응답/);
+assert.equal(JSON.stringify(context.__schedulerState.characters[0].bosses), schedulerBossesBeforeProfileFailure);
 
 // Official weekly_contents fields are mapped into supported weekly activities without changing boss behavior.
 context.__activityState = structuredClone(schedulerState);
@@ -607,6 +643,20 @@ const nexonCloudMerge = cloudSyncInternals.mergeStates(syncBase, nexonLocal, nex
 assert.equal(nexonCloudMerge.characters[0].nexonCharacter.ocid, schedulerResponse.character.ocid);
 assert.ok(nexonCloudMerge.incomes.some(item => item.id === 'income-with-nexon'));
 
+// A profile refresh is a character-body change, while boss state keeps its own revision.
+const profileMergeBase = clone(syncBase);
+profileMergeBase.characters[0].nexonCharacter = {ocid: schedulerResponse.character.ocid, characterName: '넥슨본캐', level: 284};
+const profileMergeBossDevice = clone(profileMergeBase);
+profileMergeBossDevice.updatedAt = '2026-09-23T04:00:00.000Z';
+Object.assign(profileMergeBossDevice.characters[0].bosses[0], {done: true, completionSource: 'manual', manualOverride: true});
+const profileMergeProfileDevice = clone(profileMergeBase);
+profileMergeProfileDevice.updatedAt = '2026-09-23T05:00:00.000Z';
+Object.assign(profileMergeProfileDevice.characters[0].nexonCharacter, {level: 285, className: '나이트로드', image: 'https://example.com/profile.png', profileCheckedAt: '2026-09-23T05:00:00.000Z'});
+const profileAndBossMerged = cloudSyncInternals.mergeStates(profileMergeBase, profileMergeBossDevice, profileMergeProfileDevice, '2026-09-23T06:00:00.000Z').state.characters[0];
+assert.equal(profileAndBossMerged.bosses[0].done, true);
+assert.equal(profileAndBossMerged.nexonCharacter.level, 285);
+assert.equal(profileAndBossMerged.nexonCharacter.className, '나이트로드');
+
 const sanitizedScheduler = nexonProxyInternals.sanitizeScheduler({
   date: '2026-09-23', character_name: '넥슨본캐', world_name: '루나',
   boss_contents: [{content_name: '스우', difficulty: '하드', cycle: '주간', registration_flag: 'N', complete_flag: 'Y'}],
@@ -659,7 +709,23 @@ assert.doesNotMatch(nexonApiSource, /VITE_NEXON/);
 assert.match(nexonApiSource, /'x-nxopen-api-key': apiKey/);
 assert.match(nexonApiSource, /\/maplestory\/v1\/scheduler\/character-state/);
 assert.match(envExample, /^NEXON_OPEN_API_KEY=$/m);
+const sanitizedProfile = nexonCharacterInternals.sanitizeProfile({
+  date: '2026-09-23T00:00+09:00', character_name: '넥슨본캐', world_name: '루나',
+  character_class: '나이트로드', character_level: 285, character_image: 'https://example.com/character.png'
+});
+assert.deepEqual(sanitizedProfile.character, {name: '넥슨본캐', world: '루나', className: '나이트로드', level: 285, image: 'https://example.com/character.png'});
+assert.equal(nexonCharacterInternals.sanitizeProfile({character_name: '이미지없음'}).character.image, '');
+assert.equal(nexonCharacterInternals.sanitizeProfile({character_image: 'javascript:alert(1)'}).character.image, '');
+assert.equal(nexonCharacterInternals.safeImageUrl('http://example.com/character.png'), 'http://example.com/character.png');
+assert.equal(nexonCharacterInternals.PROFILE_CACHE_TTL_MS, 30 * 60_000);
+assert.match(nexonCharacterApiSource, /process\.env\.NEXON_OPEN_API_KEY/);
+assert.doesNotMatch(nexonCharacterApiSource, /VITE_NEXON/);
+assert.match(nexonCharacterApiSource, /'x-nxopen-api-key': apiKey/);
+assert.match(nexonCharacterApiSource, /\/maplestory\/v1\/character\/basic/);
+assert.doesNotMatch(JSON.stringify(sanitizedProfile), /ocid|api.?key/i);
 assert.match(source, /throw applyError \|\| new Error\('NEXON 확인 결과를 이 기기에 저장하지 못했습니다\.'\)/);
+assert.match(source, /try \{ profileResponse = await fetchNexonProfile\(profileOcid\); \}\s*catch/);
+assert.match(source, /catch \(error\) \{ profileError = error\.message \|\| '프로필 갱신 실패'; \}/);
 assert.match(source, /console\.info\('NEXON scheduler sync diagnostics', result\)/);
 assert.match(html, /id="nexonDiagnostics"/);
 assert.match(html, /id="nexonDiagnosticsContent"/);
@@ -671,6 +737,13 @@ assert.match(html, /주간 콘텐츠/);
 assert.match(css, /\.nexon-diagnostic-item/);
 assert.match(css, /\.weekly-activity-row/);
 assert.match(css, /\.nexon-sync-summary/);
+assert.match(css, /\.nexon-avatar/);
+assert.match(css, /object-fit:contain/);
+assert.match(source, /data-nexon-profile-image/);
+assert.match(source, /nexonProfileAvatar\(c, 'summary-avatar'\)/);
+assert.match(source, /nexonProfileAvatar\(c, 'boss-avatar'\)/);
+assert.match(source, /nexonProfileAvatar\(character, 'settings-avatar'\)/);
+assert.match(source, /delete next\.characters\.find\(item => item\.id === character\.id\)\.nexonCharacter/);
 assert.match(source, /<details class="nexon-diagnostic-group"><summary>/);
 assert.doesNotMatch(source, /<details class="nexon-diagnostic-group" open/);
 const diagnosticsRenderSource = source.slice(source.indexOf('function renderNexonDiagnostics'), source.indexOf('function renderNexonSettings'));
@@ -685,10 +758,17 @@ await nexonSchedulerHandler(
   {method: 'GET', query: {characterName: '넥슨본캐'}},
   {status(code) { missingKeyStatus = code; return this; }, json(body) { missingKeyBody = body; return this; }, setHeader() {}}
 );
-if (originalNexonKey === undefined) delete process.env.NEXON_OPEN_API_KEY;
-else process.env.NEXON_OPEN_API_KEY = originalNexonKey;
 assert.equal(missingKeyStatus, 503);
 assert.equal(missingKeyBody.code, 'NOT_CONFIGURED');
+let missingProfileKeyStatus = 0, missingProfileKeyBody = null;
+await nexonCharacterHandler(
+  {method: 'GET', query: {ocid: schedulerResponse.character.ocid}},
+  {status(code) { missingProfileKeyStatus = code; return this; }, json(body) { missingProfileKeyBody = body; return this; }, setHeader() {}}
+);
+assert.equal(missingProfileKeyStatus, 503);
+assert.equal(missingProfileKeyBody.code, 'NOT_CONFIGURED');
+if (originalNexonKey === undefined) delete process.env.NEXON_OPEN_API_KEY;
+else process.env.NEXON_OPEN_API_KEY = originalNexonKey;
 assert.match(cloudSource, /auth\.resend\(\{/);
 assert.match(cloudSource, /emailRedirectTo: window\.location\.origin/);
 assert.match(html, /id="resendConfirmation"/);

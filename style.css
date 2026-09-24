@@ -67,6 +67,16 @@ input[type=checkbox]{accent-color:var(--mint);width:21px;min-height:21px;height:
 .character:hover{border-color:#3a5362;background:#11212b}
 .character-main{display:flex;align-items:center;justify-content:space-between;gap:12px;grid-column:1/-1}
 .character-main>div{flex:1}
+.character-identity{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
+.character-identity-copy{display:block;min-width:0}
+.nexon-profile-primary,.nexon-profile-world{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nexon-profile-primary{margin-top:2px;color:var(--blue);font-size:11px}
+.nexon-profile-world{color:var(--muted);font-size:10px}
+.nexon-avatar{position:relative;display:grid;place-items:center;flex:0 0 auto;width:52px;height:52px;overflow:hidden;border:1px solid #315064;border-radius:13px;background:linear-gradient(145deg,#203746,#10202a);color:var(--blue);font-size:16px;font-weight:800}
+.nexon-avatar img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;object-position:center}
+.nexon-avatar.image-failed{border-style:dashed}
+.nexon-avatar.summary-avatar{width:58px;height:58px}
+.nexon-avatar.settings-avatar{width:44px;height:44px;border-radius:11px}
 .character b{font-size:15px;overflow-wrap:anywhere}
 .character small{display:block;font-size:11px;color:var(--muted);margin-top:3px}
 .character .character-income{font-size:14px;text-align:right;overflow-wrap:anywhere;max-width:48%}
@@ -99,6 +109,9 @@ dd{margin:0;font-size:12px}
 .more-menu-popover .danger-text{color:var(--red)}
 .boss-char{margin-top:20px}
 .boss-char+.boss-char{border-top:1px solid var(--line);padding-top:18px}
+.boss-profile-identity{display:flex;align-items:center;gap:10px;min-width:0}
+.boss-profile-identity>div{min-width:0}
+.boss-profile-identity .muted{display:block;margin-top:3px}
 .boss-line{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 10px;padding:12px 0;border-bottom:1px solid var(--line)}
 .boss-name{display:flex;align-items:center;gap:9px;min-height:30px;font-size:14px;font-weight:600;overflow-wrap:anywhere}
 .boss-name>span{display:flex;align-items:center;flex-wrap:wrap;gap:5px}
@@ -186,11 +199,13 @@ dd{margin:0;font-size:12px}
 .nexon-character-list{display:grid;margin-top:7px}
 .nexon-character-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 0;border-top:1px solid var(--line)}
 .nexon-character-row:first-child{border-top:0}
+.nexon-character-info{display:flex;align-items:center;gap:8px;min-width:0;flex:1}
 .nexon-character-copy{min-width:0}
 .nexon-character-heading{display:flex;align-items:center;gap:6px;min-width:0}
 .nexon-character-row b,.nexon-character-row p,.nexon-character-row small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nexon-character-row p{margin-top:1px;font-size:11px;color:var(--blue)}
 .nexon-character-row small{margin-top:1px;color:var(--muted);font-size:9px}
+.nexon-character-row .nexon-character-profile{color:var(--text);font-size:10px}
 .nexon-link-badge{flex:none;padding:2px 5px;border-radius:999px;background:#26343e;color:var(--muted);font-size:9px;font-weight:700;line-height:1.25}
 .nexon-link-badge.linked{background:#173a32;color:var(--mint)}
 .nexon-link-badge.error{background:#48272e;color:#ff9eaa}
@@ -277,6 +292,7 @@ dialog::backdrop{background:#0009;backdrop-filter:blur(3px)}
 .panel-head .green{padding:8px;font-size:11px}
 .form-pair{grid-template-columns:1fr}
 .boss-earned{max-width:105px}
+.nexon-avatar.summary-avatar{width:50px;height:50px}
 }
 
 @media(max-width:430px){

@@ -21,8 +21,10 @@ npm run dev
 ## NEXON 스케줄러 연동
 
 - 서버 endpoint: `GET /api/nexon-scheduler`
+- 캐릭터 기본정보 endpoint: `GET /api/nexon-character?ocid=...` (`/maplestory/v1/character/basic` 프록시, 30분 서버 캐시)
 - Vercel 환경변수 `NEXON_OPEN_API_KEY`는 서버 함수에서만 사용하며 `VITE_` 접두사를 붙이지 않습니다.
 - 설정의 `NEXON Open API` 영역에서 메기 캐릭터와 API Key 소유 계정의 메이플스토리 캐릭터를 연결합니다.
+- 연동·주간 기록 확인 시 캐릭터명, 월드, 레벨, 직업, 이미지를 갱신합니다. 프로필 조회가 실패해도 Scheduler 결과는 계속 저장됩니다.
 - NEXON 스케줄러 결과는 기존 localStorage 저장과 Supabase 동기화 흐름을 그대로 사용합니다.
 - API Key 없이도 로컬 저장, 빌드 및 테스트는 정상 동작하며 NEXON 조회만 비활성화됩니다.
 
