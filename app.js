@@ -921,9 +921,18 @@ function nexonProfileFailure(character, error, nexonCharacter = '') {
     message: error?.message || '프로필 갱신 실패'
   };
 }
+function isSchedulerAccountRestriction(error) {
+  return Number(error?.status) === 400
+    && error?.code === 'OPENAPI00004'
+    && error?.category === 'invalid_parameter'
+    && error?.source === 'nexon_upstream';
+}
 function nexonSchedulerWarning(character, error) {
   const status = Number(error?.status) || 0;
-  const message = status === 400 && error?.category && error.category !== 'unknown_upstream_error'
+  const accountRestricted = isSchedulerAccountRestriction(error);
+  const message = accountRestricted
+    ? '캐릭터 연동은 정상적으로 완료되었습니다. 주간 자동 확인은 현재 이 캐릭터에서 사용할 수 없습니다. NEXON Scheduler API는 서버 API Key와 연결된 NEXON 계정의 캐릭터만 조회할 수 있습니다.'
+    : status === 400 && error?.category && error.category !== 'unknown_upstream_error'
     ? `NEXON 캐릭터 연동 완료 · ${error.message}`
     : status === 403
     ? 'NEXON 캐릭터 연동 완료 · 주간 기록 조회 권한을 확인해주세요.'
@@ -938,6 +947,7 @@ function nexonSchedulerWarning(character, error) {
     status,
     code: typeof error?.code === 'string' ? error.code : 'SCHEDULER_ERROR',
     category: typeof error?.category === 'string' ? error.category : '',
+    applicationCategory: accountRestricted ? 'scheduler_account_restriction' : '',
     source: typeof error?.source === 'string' ? error.source : '',
     upstreamMessage: typeof error?.upstreamMessage === 'string' ? error.upstreamMessage : '',
     message
@@ -945,12 +955,14 @@ function nexonSchedulerWarning(character, error) {
 }
 function nexonLinkUiState(result, characterId) {
   const schedulerWarningIds = result?.schedulerWarning ? [characterId] : [];
+  const schedulerRestrictedIds = result?.schedulerWarning?.applicationCategory === 'scheduler_account_restriction' ? [characterId] : [];
   return {
     status: result?.schedulerWarning ? 'warning' : 'ok',
     message: result?.schedulerWarning?.message || nexonUserStatusMessage(result),
     diagnostics: result,
     profileFailureIds: result?.profileError ? [characterId] : [],
-    schedulerWarningIds
+    schedulerWarningIds,
+    schedulerRestrictedIds
   };
 }
 function nexonDiagnosticGroups(result) {
@@ -1063,10 +1075,11 @@ function renderNexonSettings() {
     const profileFailed = (nexonApiState.profileFailureIds || []).includes(character.id);
     const profileMissing = linked && nexonProfileNeedsBackfill(character);
     const schedulerWarning = (nexonApiState.schedulerWarningIds || []).includes(character.id);
+    const schedulerRestricted = (nexonApiState.schedulerRestrictedIds || []).includes(character.id);
     const hasError = nexonApiState.errorCharacterId === character.id || profileFailed;
     const badge = linked ? '<span class="nexon-link-badge linked">연동됨</span>' : hasError ? '<span class="nexon-link-badge error">오류</span>' : '<span class="nexon-link-badge">미연동</span>';
     const levelClass = [Number.isInteger(link?.level) ? `Lv. ${link.level}` : '', link?.className || ''].filter(Boolean).join(' ');
-    const profileStatus = profileFailed ? '프로필 갱신 실패' : profileMissing ? '프로필 갱신 필요' : schedulerWarning ? '주간 기록 조회 실패' : '';
+    const profileStatus = profileFailed ? '프로필 갱신 실패' : profileMissing ? '프로필 갱신 필요' : schedulerRestricted ? '주간 자동 확인 제한' : schedulerWarning ? '주간 기록 조회 실패' : '';
     const detail = linked ? `<p>${escapeHtml(link.characterName || '')}</p>${levelClass || link.world ? `<small class="nexon-character-profile">${escapeHtml([levelClass, link.world || ''].filter(Boolean).join(' · '))}</small>` : ''}<small>마지막 확인 ${escapeHtml(nexonCheckedTimeLabel(link.lastCheckedAt))}${profileStatus ? ` · ${profileStatus}` : ''}</small>` : '<p class="muted">NEXON 캐릭터 미연동</p>';
     return `<div class="nexon-character-row" data-nexon-character="${escapeHtml(character.id)}"><div class="nexon-character-info">${nexonProfileAvatar(character, 'settings-avatar')}<div class="nexon-character-copy"><div class="nexon-character-heading"><b>${escapeHtml(character.name)}</b>${badge}</div>${detail}</div></div><div class="nexon-character-actions"><button type="button" class="ghost" data-nexon-action="link" ${disabled}>${linked ? '변경' : '연동'}</button>${linked ? `<button type="button" class="text-button" data-nexon-action="unlink" ${disabled}>해제</button>` : ''}</div></div>`;
   }).join('') || '<p class="empty">먼저 캐릭터를 추가해주세요.</p>';
@@ -1237,7 +1250,11 @@ async function syncAllNexonCharacters() {
     nexonApiState = {status: 'ok', message: nexonUserStatusMessage(total, !checked), diagnostics: checked || total.profileFailures.length ? total : null, profileFailureIds};
   } catch (error) {
     const warning = nexonSchedulerWarning(state.characters.find(item => item.id === checkingCharacterId), error);
-    nexonApiState = {status: 'warning', message: warning.message, diagnostics: {schedulerWarning: warning}, schedulerWarningIds: [checkingCharacterId]};
+    nexonApiState = {
+      status: 'warning', message: warning.message, diagnostics: {schedulerWarning: warning},
+      schedulerWarningIds: [checkingCharacterId],
+      schedulerRestrictedIds: warning.applicationCategory === 'scheduler_account_restriction' ? [checkingCharacterId] : []
+    };
   }
   renderNexonSettings();
 }

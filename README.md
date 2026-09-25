@@ -23,9 +23,11 @@ npm run dev
 - 서버 endpoint: `GET /api/nexon-scheduler`
 - 캐릭터 기본정보 endpoint: `GET /api/nexon-character?ocid=...` (`/maplestory/v1/character/basic` 프록시, 30분 서버 캐시)
 - Vercel 환경변수 `NEXON_OPEN_API_KEY`는 서버 함수에서만 사용하며 `VITE_` 접두사를 붙이지 않습니다.
-- 설정의 `NEXON Open API` 영역에서 메기 캐릭터와 API Key 소유 계정의 메이플스토리 캐릭터를 연결합니다.
+- 설정의 `NEXON Open API` 영역에서 메기 캐릭터와 조회할 메이플스토리 캐릭터를 연결합니다.
 - 연동·주간 기록 확인 시 캐릭터명, 월드, 레벨, 직업, 이미지를 갱신합니다. 프로필 조회가 실패해도 Scheduler 결과는 계속 저장됩니다.
 - NEXON 스케줄러 결과는 기존 localStorage 저장과 Supabase 동기화 흐름을 그대로 사용합니다.
+- NEXON Scheduler API는 서버 API Key와 연결된 계정 범위 제한이 있으므로 공개 다중 사용자 환경에서는 일부 사용자의 주간 자동 확인이 제공되지 않을 수 있습니다. 이 경우에도 프로필 조회와 수동 보스 체크는 정상적으로 사용할 수 있습니다.
+- 사용자 개인 API Key는 입력받거나 저장하지 않습니다. 공식 사용자 인증 방식이 제공되는 경우 다중 사용자 Scheduler 지원을 재검토합니다.
 - API Key 없이도 로컬 저장, 빌드 및 테스트는 정상 동작하며 NEXON 조회만 비활성화됩니다.
 
 Vercel 자동 배포 연결 테스트

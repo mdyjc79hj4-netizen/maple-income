@@ -1112,6 +1112,29 @@ for (const [status, expected] of [[400, '아직 조회'], [403, '권한'], [429,
   assert.equal(Object.hasOwn(context.__linkUiState, 'errorCharacterId'), false);
   assert.equal(run("__linkState.characters[0].nexonCharacter.ocid"), '0123456789abcdef0123456789abcdef');
 }
+context.__schedulerRestrictionError = Object.assign(new Error('Please input valid parameter'), {
+  status: 400,
+  code: 'OPENAPI00004',
+  category: 'invalid_parameter',
+  source: 'nexon_upstream',
+  upstreamMessage: 'Please input valid parameter'
+});
+assert.equal(run('isSchedulerAccountRestriction(__schedulerRestrictionError)'), true);
+const schedulerRestrictionWarning = json('nexonSchedulerWarning(__linkState.characters[0], __schedulerRestrictionError)');
+assert.equal(schedulerRestrictionWarning.applicationCategory, 'scheduler_account_restriction');
+assert.equal(schedulerRestrictionWarning.code, 'OPENAPI00004');
+assert.equal(schedulerRestrictionWarning.category, 'invalid_parameter');
+assert.equal(schedulerRestrictionWarning.source, 'nexon_upstream');
+assert.equal(schedulerRestrictionWarning.upstreamMessage, 'Please input valid parameter');
+assert.match(schedulerRestrictionWarning.message, /캐릭터 연동은 정상적으로 완료/);
+assert.match(schedulerRestrictionWarning.message, /주간 자동 확인은 현재 이 캐릭터에서 사용할 수 없습니다/);
+assert.match(schedulerRestrictionWarning.message, /서버 API Key와 연결된 NEXON 계정/);
+context.__restrictedLinkUiState = run("nexonLinkUiState({schedulerWarning:nexonSchedulerWarning(__linkState.characters[0], __schedulerRestrictionError)}, 'c1')");
+assert.equal(context.__restrictedLinkUiState.status, 'warning');
+assert.deepEqual([...context.__restrictedLinkUiState.schedulerWarningIds], ['c1']);
+assert.deepEqual([...context.__restrictedLinkUiState.schedulerRestrictedIds], ['c1']);
+assert.equal(Object.hasOwn(context.__restrictedLinkUiState, 'errorCharacterId'), false);
+assert.equal(run("__linkState.characters[0].nexonCharacter.ocid"), '0123456789abcdef0123456789abcdef');
 context.__invalidLinkState = {characters: [{id: 'c1', name: '본캐', bosses: [], weeklyActivities: []}]};
 context.__invalidLinkProfile = {ocid: '0123456789abcdef0123456789abcdef', resources: {basic: {ok: false}}, character: {name: ''}};
 assert.throws(() => run("applyNexonLinkProfileState(__invalidLinkState, 'c1', __invalidLinkProfile)"), /기본정보/);
@@ -1120,7 +1143,8 @@ const nexonSyncSource = source.slice(source.indexOf('async function syncNexonCha
 assert.ok(nexonSyncSource.indexOf("fetchNexonProfile('', characterName)") < nexonSyncSource.indexOf("fetchNexonScheduler(linkedCharacter, '', requestDate)"));
 assert.match(nexonSyncSource, /schedulerWarning: warning/);
 assert.match(source, /nexonApiState = nexonLinkUiState\(result, character\.id\)/);
-assert.match(source, /schedulerWarning \? '주간 기록 조회 실패'/);
+assert.match(source, /schedulerRestricted \? '주간 자동 확인 제한' : schedulerWarning \? '주간 기록 조회 실패'/);
+assert.match(source, /const badge = linked \? '<span class="nexon-link-badge linked">연동됨<\/span>'/);
 const localMemory = new Map();
 context.localStorage = {
   getItem(key) { return localMemory.has(key) ? localMemory.get(key) : null; },
@@ -1158,6 +1182,27 @@ for (const status of [400, 403, 429, 500]) {
   assert.equal(run("state.characters[0].nexonCharacter.ocid"), '0123456789abcdef0123456789abcdef');
   assert.equal(run("state.characters[0].nexonCharacter.characterName"), '넥슨본캐');
 }
+prepareNexonLinkState();
+context.fetch = async target => {
+  const url = String(target);
+  if (url.startsWith('/api/nexon-character?')) return {ok: true, status: 200, json: async () => structuredClone(context.__linkProfileResponse)};
+  if (url.startsWith('/api/nexon-scheduler?')) return {ok: false, status: 400, json: async () => ({
+    ok: false,
+    code: 'OPENAPI00004',
+    message: 'NEXON scheduler 요청 파라미터가 유효하지 않습니다.',
+    category: 'invalid_parameter',
+    source: 'nexon_upstream',
+    upstreamMessage: 'Please input valid parameter'
+  })};
+  throw new Error('unexpected client path: ' + url);
+};
+const restrictedLinkResult = await run("syncNexonCharacter('c1',{characterName:'넥슨본캐'})");
+assert.equal(run("state.characters[0].nexonCharacter.ocid"), '0123456789abcdef0123456789abcdef');
+assert.equal(restrictedLinkResult.schedulerWarning.applicationCategory, 'scheduler_account_restriction');
+assert.equal(restrictedLinkResult.schedulerWarning.code, 'OPENAPI00004');
+assert.equal(restrictedLinkResult.schedulerWarning.category, 'invalid_parameter');
+assert.equal(restrictedLinkResult.schedulerWarning.source, 'nexon_upstream');
+assert.equal(restrictedLinkResult.schedulerWarning.upstreamMessage, 'Please input valid parameter');
 for (const failedProfile of [
   {ok: false, status: 404, body: {ok: false, code: 'CHARACTER_NOT_FOUND', message: '캐릭터를 찾지 못했습니다.'}},
   {ok: false, status: 502, body: {ok: false, code: 'PROFILE_REQUEST_FAILED', message: '캐릭터 정보를 확인하지 못했습니다.'}}
@@ -1291,6 +1336,12 @@ assert.ok(diagnosticsRenderSource.indexOf('${completedHtml}') < diagnosticsRende
 assert.ok(diagnosticsRenderSource.indexOf('${samplesHtml}') > diagnosticsRenderSource.indexOf('${groupHtml'));
 assert.match(source, /data-nexon-action="link"/);
 assert.match(source, /data-nexon-action="unlink"/);
+const nexonSettingsStart = html.indexOf('<section class="settings-section nexon-section">');
+const nexonSettingsHtml = html.slice(nexonSettingsStart, html.indexOf('</section>', nexonSettingsStart) + '</section>'.length);
+assert.match(nexonSettingsHtml, /Scheduler API 제한으로 일부 계정에서 사용할 수 없습니다/);
+assert.match(nexonSettingsHtml, /자동 확인을 사용할 수 없어도 주간 보스는 직접 체크할 수 있습니다/);
+assert.doesNotMatch(nexonSettingsHtml, /type="password"|nexonApiKey|nexon-key/i);
+assert.doesNotMatch(source, /nexonApiKey|nexon-key/i);
 const originalNexonKey = process.env.NEXON_OPEN_API_KEY;
 delete process.env.NEXON_OPEN_API_KEY;
 let missingKeyStatus = 0, missingKeyBody = null;

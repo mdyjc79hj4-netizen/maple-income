@@ -238,6 +238,13 @@ dd{margin:0;font-size:12px}
 .cloud-choice.caution{border-color:#65404a;color:#ffc0c0}
 .cloud-choice-card .warning{margin:14px 0 2px;border-color:#65404a;background:#2a1d22;color:#ffc0c0}
 .nexon-help{margin-top:7px;font-size:11px}
+.nexon-availability{margin-top:7px;border:1px solid var(--line);border-radius:9px;background:#0c1821;font-size:11px}
+.nexon-availability>summary{display:flex;align-items:center;min-height:44px;padding:7px 10px;color:var(--blue);font-weight:700;cursor:pointer;list-style-position:inside}
+.nexon-availability>div{display:grid;gap:7px;padding:0 10px 10px}
+.nexon-availability p{display:grid;grid-template-columns:90px minmax(0,1fr);gap:7px;margin:0;color:var(--muted);line-height:1.45}
+.nexon-availability b{color:var(--text)}
+.nexon-availability span,.nexon-availability small{overflow-wrap:anywhere}
+.nexon-availability small{color:var(--mint)}
 .nexon-character-list{display:grid;margin-top:7px}
 .nexon-character-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 0;border-top:1px solid var(--line)}
 .nexon-character-row:first-child{border-top:0}
@@ -384,6 +391,7 @@ main{padding:24px 30px}
 #nexonApiStatus{text-align:left}
 .nexon-diagnostic-item,.nexon-completed-items{padding-left:8px;padding-right:8px}
 .nexon-diagnostic-group>summary,.nexon-diagnostic-sample-section>summary{padding-left:8px;padding-right:8px}
+.nexon-availability p{grid-template-columns:1fr;gap:2px}
 .danger-action{align-items:flex-start;flex-direction:column}
 .danger-action button{width:100%;min-height:44px}
 }
