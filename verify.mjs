@@ -61,7 +61,8 @@ const legacy = {
 };
 context.__legacy = legacy;
 const migrated = json("migrateState(__legacy, new Date('2026-09-20T12:00:00'))");
-assert.equal(migrated.version, 6);
+assert.equal(migrated.version, 7);
+assert.equal(migrated.settings.defaultSaleFeeRate, 0.05);
 assert.deepEqual(migrated.characters[0].weeklyActivities, []);
 assert.ok(!Number.isNaN(Date.parse(migrated.updatedAt)));
 assert.deepEqual(migrated.characters[0].bosses.map(b => [b.bossId, b.name, b.difficulty, b.partySize]), [
@@ -73,6 +74,18 @@ assert.equal(migrated.presets[0].bosses.length, 1);
 assert.deepEqual(migrated.presets[0].bosses[0], {bossId: 'seren', difficulty: '익스트림', partySize: 4});
 assert.equal(migrated.weeklyHistory['2026-09-10~2026-09-16'].totals.total, 10);
 assert.equal(migrated.incomes[0].amount, 82000000);
+
+context.__legacySaleState = {
+  version: 6, currentWeek: '2026-09-17~2026-09-23', updatedAt: '2026-09-23T00:00:00.000Z',
+  characters: [{id:'c1',name:'본캐',bosses:[]}], presets: [], weeklyHistory: {}, settings: {},
+  incomes: [{id:'legacy-sale',item:'조각',category:'hunt',recordType:'sold',saleState:'sold',qty:30,price:6500000,materialCost:5000000,grossIncome:195000000,netIncome:190000000}]
+};
+const migratedLegacySale = json("migrateState(__legacySaleState, new Date('2026-09-23T12:00:00'))");
+assert.equal(migratedLegacySale.settings.defaultSaleFeeRate, 0.05);
+assert.equal(migratedLegacySale.incomes[0].netIncome, 190000000);
+assert.equal(migratedLegacySale.incomes[0].materialCost, 5000000);
+assert.equal('feeRate' in migratedLegacySale.incomes[0], false);
+assert.equal(run('incomeValue(__legacySaleState.incomes[0])'), 190000000);
 
 context.__legacyProfileState = {
   version: 6, currentWeek: '2026-09-17~2026-09-23', updatedAt: '2026-09-23T00:00:00.000Z',
@@ -561,9 +574,20 @@ assert.equal(migratedV1.characters[0].bosses.find(b => b.bossId === 'seren').pri
 assert.equal(migratedV1.characters[0].bosses.find(b => b.bossId === 'kalos').price, 1230000000);
 
 context.__backup = JSON.stringify(legacy);
-assert.equal(run("prepareImportedState(__backup, new Date('2026-09-20T12:00:00')).version"), 6);
+assert.equal(run("prepareImportedState(__backup, new Date('2026-09-20T12:00:00')).version"), 7);
+assert.equal(run("prepareImportedState(__backup, new Date('2026-09-20T12:00:00')).settings.defaultSaleFeeRate"), 0.05);
 assert.throws(() => run("prepareImportedState('{broken')"), /JSON/);
 assert.throws(() => run("prepareImportedState('{}')"), /저장 데이터 형식/);
+
+context.__feeBackup = JSON.stringify({...legacy, version: 7, incomes: [{
+  id: 'sale-fee', item: '조각', category: 'hunt', recordType: 'sold', saleState: 'sold', type: 'sale',
+  qty: 1, quantity: 1, salePrice: 7000000, price: 7000000, unitPrice: 7000000,
+  feeRate: 0.03, grossSale: 7000000, feeAmount: 210000, netSale: 6790000,
+  grossIncome: 7000000, netIncome: 6790000
+}], settings: {itemPrices: {}, defaultSaleFeeRate: 0.03}});
+const restoredFeeSale = json("prepareImportedState(__feeBackup, new Date('2026-09-20T12:00:00'))");
+assert.equal(restoredFeeSale.settings.defaultSaleFeeRate, 0.03);
+assert.deepEqual(restoredFeeSale.incomes[0], JSON.parse(context.__feeBackup).incomes[0]);
 
 context.__reset = JSON.parse(JSON.stringify(migrated));
 run('resetCurrentWeek(__reset)');
@@ -610,7 +634,33 @@ assert.equal(context.__activityReset.characters[0].weeklyActivities.every(activi
 assert.equal(context.__activityReset.characters[0].weeklyActivities.every(activity => !('manualOverride' in activity)), true);
 
 assert.equal(run('incomeValue({item:"메소",category:"hunt",amount:82000000})'), 82000000);
+assert.deepEqual(json('saleAmounts(1, 7000000, 0.05)'), {feeRate: 0.05, grossSale: 7000000, feeAmount: 350000, netSale: 6650000});
+assert.deepEqual(json('saleAmounts(1, 7000000, 0.03)'), {feeRate: 0.03, grossSale: 7000000, feeAmount: 210000, netSale: 6790000});
+assert.deepEqual(json('saleAmounts(2, 7000000, 0.03)'), {feeRate: 0.03, grossSale: 14000000, feeAmount: 420000, netSale: 13580000});
+assert.deepEqual(json('saleAmounts(17, 123456789, 0.05)'), {feeRate: 0.05, grossSale: 2098765413, feeAmount: 104938270, netSale: 1993827143});
+assert.deepEqual(json('saleAmounts(1, 101, 0.03)'), {feeRate: 0.03, grossSale: 101, feeAmount: 3, netSale: 98});
+assert.equal(run('saleAmounts(2, Number.MAX_SAFE_INTEGER, 0.05)'), null);
+assert.equal(run('saleFeePercent(0.05)'), 5);
+assert.equal(run('saleFeePercent(0.03)'), 3);
+assert.equal(run('incomeValue({item:"메소",category:"hunt",amount:82000000,feeRate:0.05,netSale:1})'), 82000000);
+assert.equal(run('incomeValue({item:"조각",category:"hunt",recordType:"acquired",qty:30,feeRate:0.05,netSale:999})'), 0);
+assert.equal(run('incomeValue({item:"조각",category:"hunt",recordType:"sold",qty:1,salePrice:7000000,feeRate:0.03,grossSale:7000000,feeAmount:210000,netSale:6790000})'), 6790000);
+// Legacy sales keep their stored value and never receive a retroactive fee.
+assert.equal(run('incomeValue({item:"조각",category:"hunt",recordType:"sold",qty:30,price:6500000,materialCost:5000000,netIncome:190000000})'), 190000000);
 assert.equal(run('incomeValue({item:"조각",category:"hunt",recordType:"sold",qty:30,price:6500000,materialCost:5000000})'), 190000000);
+context.__feeTotals = {characters: [], incomes: [
+  {id:'fee-sale',item:'조각',category:'hunt',recordType:'sold',netSale:6790000,grossSale:7000000,feeAmount:210000,feeRate:0.03},
+  {id:'meso',item:'메소',category:'hunt',amount:82000000}
+]};
+assert.equal(run('totalsFor(__feeTotals).hunt'), 88790000);
+assert.equal(run('totalsFor(__feeTotals).total'), 88790000);
+context.__feeRoll = {
+  version: 7, currentWeek: '2026-09-17~2026-09-23', characters: [], presets: [], settings: {defaultSaleFeeRate: 0.05}, weeklyHistory: {},
+  incomes: [{id:'fee-roll',item:'조각',category:'hunt',recordType:'sold',saleState:'sold',qty:1,salePrice:7000000,feeRate:0.03,grossSale:7000000,feeAmount:210000,netSale:6790000,weekId:'2026-09-17~2026-09-23'}]
+};
+run("rollover(__feeRoll, new Date('2026-09-24T00:00:00'))");
+assert.equal(context.__feeRoll.weeklyHistory['2026-09-17~2026-09-23'].totals.hunt, 6790000);
+assert.equal(context.__feeRoll.weeklyHistory['2026-09-17~2026-09-23'].totals.total, 6790000);
 assert.equal(run("historyFilter='unsold'; historyMatches({item:'조각',category:'hunt',recordType:'acquired'})"), true);
 assert.equal(run("historyMatches({item:'조각',category:'hunt',recordType:'sold'})"), false);
 assert.equal(run("historyFilter='gather'; historyMatches({item:'씨앗',category:'gather',recordType:'acquired'})"), true);
@@ -701,6 +751,22 @@ incomeRemote.incomes.push({id: 'income-other-device', category: 'drop', item: '�
 const crossType = cloudSyncInternals.mergeStates(syncBase, characterLocal, incomeRemote, '2026-09-23T03:00:00.000Z').state;
 assert.equal(crossType.characters[0].name, '부캐');
 assert.ok(crossType.incomes.some(item => item.id === 'income-other-device'));
+
+// Fee fields are ordinary income fields and survive PC/mobile cloud synchronization.
+const feeCloudLocal = clone(syncBase);
+feeCloudLocal.updatedAt = '2026-09-23T02:30:00.000Z';
+feeCloudLocal.incomes.push({
+  id: 'income-fee', category: 'hunt', item: '조각', recordType: 'sold', saleState: 'sold', type: 'sale',
+  qty: 1, quantity: 1, salePrice: 7000000, price: 7000000, unitPrice: 7000000,
+  feeRate: 0.03, grossSale: 7000000, feeAmount: 210000, netSale: 6790000,
+  grossIncome: 7000000, netIncome: 6790000, createdAt: 6
+});
+const feeCloudRemote = clone(syncBase);
+feeCloudRemote.updatedAt = '2026-09-23T03:00:00.000Z';
+feeCloudRemote.settings.defaultSaleFeeRate = 0.03;
+const feeCloudMerged = cloudSyncInternals.mergeStates(syncBase, feeCloudLocal, feeCloudRemote, '2026-09-23T04:00:00.000Z').state;
+assert.deepEqual(feeCloudMerged.incomes.find(item => item.id === 'income-fee'), feeCloudLocal.incomes.find(item => item.id === 'income-fee'));
+assert.equal(feeCloudMerged.settings.defaultSaleFeeRate, 0.03);
 
 // Bosses are merged by bossId inside each character.
 const bossLocal = clone(syncBase);
@@ -941,6 +1007,17 @@ assert.match(css, /\.character-income-grid\{/);
 assert.match(css, /\.stat-detail-toggle\{/);
 assert.match(css, /\.character-stat-details\{/);
 assert.match(css, /\.character-stat-groups\{/);
+assert.match(html, /id="incomeFeeRate"/);
+assert.match(html, /id="defaultSaleFeeRate"/);
+assert.match(html, /id="saleGrossValue"/);
+assert.match(html, /id="saleFeeValue"/);
+assert.match(html, /id="saleNetValue"/);
+assert.match(html, /id="editFeeRate"/);
+assert.match(html, /id="editSaleResult"/);
+assert.doesNotMatch(html, /materialCost|editCost|costWrap|소재비|제작 원가/);
+assert.match(css, /\.sale-entry-grid\{/);
+assert.match(css, /\.sale-result-grid\{/);
+assert.match(css, /@media\(min-width:600px\)\{[\s\S]*\.sale-entry-grid\{grid-template-columns:minmax\(180px,1\.2fr\) minmax\(100px,\.65fr\) minmax\(190px,1fr\)/);
 assert.match(css, /@media\(min-width:1000px\)\{/);
 assert.match(css, /\.app\{max-width:1180px\}/);
 assert.match(css, /grid-template-areas:"profile spec" "progress progress" "income income" "details details"/);
@@ -959,6 +1036,7 @@ for (const viewport of [360, 390, 430]) {
 assert.match(css, /\.character-identity\{[^}]*min-width:0/);
 assert.match(css, /@media\(max-width:430px\)\{[\s\S]*\.character-income-grid\{grid-template-columns:1fr\}/);
 assert.match(css, /@media\(max-width:430px\)\{[\s\S]*\.character-stat-groups\{grid-template-columns:1fr/);
+assert.match(css, /@media\(max-width:430px\)\{[\s\S]*\.sale-entry-grid,\.sale-result-grid\{grid-template-columns:1fr\}/);
 assert.match(css, /\.character-spec\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
 assert.match(css, /\.character-spec b\{[^}]*overflow-wrap:anywhere/);
 assert.match(css, /\.boss-profile-identity\{[^}]*min-width:0/);
@@ -976,6 +1054,14 @@ assert.doesNotMatch(source, /expandedStatCharacterIds[^\n]*localStorage|expanded
 assert.match(source, /class="character-progress-head"/);
 assert.match(source, /이번 주 완료수익/);
 assert.match(source, /class="character-income-grid"/);
+assert.match(source, /function saleAmounts\(quantity, unitPrice, feeRate\)/);
+assert.match(source, /feeAmount = Math\.floor\(grossSale \/ 100\) \* percent \+ Math\.floor\(\(grossSale % 100\) \* percent \/ 100\)/);
+assert.match(source, /type: 'sale'/);
+assert.match(source, /grossIncome: sale\.grossSale, netIncome: sale\.netSale/);
+assert.match(source, /if \(r\.netSale != null\) return n\(r\.netSale\)/);
+const incomeEditSource = source.slice(source.indexOf('function saveIncomeEdit'), source.indexOf('function init'));
+assert.match(incomeEditSource, /saleAmounts\(qty, price, feeRate\)/);
+assert.match(incomeEditSource, /\.\.\.sale, grossIncome: sale\.grossSale, netIncome: sale\.netSale/);
 assert.equal(run("expandedStatCharacterIds.has('c1')"), false);
 run("expandedStatCharacterIds.add('c1')");
 assert.equal(run("expandedStatCharacterIds.has('c1')"), true);
