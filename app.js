@@ -2,6 +2,7 @@
 
 const KEY = 'maple-income-vercel-v1';
 const BACKUP_KEY = `${KEY}-before-v2`;
+const MIGRATION_SYNC_KEY = `${KEY}-migration-sync-pending`;
 const STATE_VERSION = 7;
 const LOCAL_CHANGE_EVENT = 'maple-income:local-change';
 const items = {hunt: ['메소', '솔 에르다 조각', '코어 젬스톤'], gather: ['쥬니퍼베리 씨앗', '쥬니퍼베리 씨앗 오일', '소형 재물 획득의 비약'], drop: ['보스 드랍 아이템', '칠흑 아이템', '기타 드랍 아이템']};
@@ -539,6 +540,25 @@ function snapshotTotals(s) {
 function emptyState(now = new Date()) {
   return {version: STATE_VERSION, updatedAt: now.toISOString(), currentWeek: currentWeekKey(now), characters: [{id: uid(), name: '본캐', bosses: presetGroups.middle.bosses.map(makeBoss), weeklyActivities: []}], incomes: [], weeklyHistory: {}, presets: [], settings: {defaultSaleFeeRate: 0.05}, saleState: 'acquired'};
 }
+function stateHasMeaningfulUserData(data) {
+  if (!data || typeof data !== 'object') return false;
+  if ((data.incomes || []).length || Object.keys(data.weeklyHistory || {}).length || (data.presets || []).length) return true;
+  if ((data.unassignedIncomes || []).length || (data.recoveredWeeks || []).length) return true;
+  const settings = data.settings && typeof data.settings === 'object' ? data.settings : {};
+  if (Object.keys(settings).some(key => key !== 'defaultSaleFeeRate')) return true;
+  if (settings.defaultSaleFeeRate != null && normalizeSaleFeeRate(settings.defaultSaleFeeRate) !== 0.05) return true;
+  const characters = Array.isArray(data.characters) ? data.characters : [];
+  if (characters.length !== 1) return characters.length > 0;
+  const character = characters[0];
+  if (!character || character.name !== '본캐' || character.nexonCharacter) return true;
+  if ((character.weeklyActivities || []).length) return true;
+  const bossShape = bosses => normalizeBosses(bosses).map(boss => ({
+    bossId: boss.bossId, difficulty: boss.difficulty, partySize: boss.partySize, price: boss.price,
+    done: boss.done, completedIncome: boss.completedIncome, manualOverride: boss.manualOverride,
+    apiCompleted: boss.apiCompleted, completionSource: boss.completionSource
+  }));
+  return JSON.stringify(bossShape(character.bosses)) !== JSON.stringify(bossShape(presetGroups.middle.bosses.map(makeBoss)));
+}
 function recordWeek(r, fallback) {
   if (validWeek(r.weekId)) return r.weekId;
   if (r.createdAt != null) { const d = new Date(r.createdAt); if (!Number.isNaN(d.getTime())) return currentWeekKey(d); }
@@ -550,6 +570,23 @@ function normalizeCharacterState(character, legacy = false) {
   if (nexonCharacter) result.nexonCharacter = nexonCharacter;
   else delete result.nexonCharacter;
   return result;
+}
+function migrationCollectionManifest(data) {
+  const characters = Array.isArray(data?.characters) ? data.characters : [];
+  return {
+    incomes: (Array.isArray(data?.incomes) ? data.incomes : []).map(item => String(item?.id || '')).filter(Boolean),
+    characters: characters.map(character => String(character?.id || '')).filter(Boolean),
+    bosses: characters.flatMap(character => (Array.isArray(character?.bosses) ? character.bosses : [])
+      .map(boss => character?.id && boss?.bossId ? `${character.id}::${boss.bossId}` : '')).filter(Boolean),
+    activities: characters.flatMap(character => (Array.isArray(character?.weeklyActivities) ? character.weeklyActivities : [])
+      .map(activity => character?.id && activity?.id ? `${character.id}::${activity.id}` : '')).filter(Boolean),
+    presets: (Array.isArray(data?.presets) ? data.presets : []).map(preset => String(preset?.id || '')).filter(Boolean),
+    weeklyHistory: Object.entries(data?.weeklyHistory && typeof data.weeklyHistory === 'object' ? data.weeklyHistory : {})
+      .map(([key, value]) => String(value?.weekId || key)).filter(Boolean)
+  };
+}
+function createMigrationSyncInfo(fromVersion, data, at = new Date()) {
+  return {fromVersion: Number(fromVersion) || 0, toVersion: STATE_VERSION, migratedAt: at.toISOString(), baseline: migrationCollectionManifest(data)};
 }
 function migrateState(raw, now = new Date()) {
   if (!raw) return emptyState(now);
@@ -608,7 +645,7 @@ function rollover(data, now = new Date()) {
   return true;
 }
 
-let state, savedRaw = null, storageBlocked = false;
+let state, savedRaw = null, storageBlocked = false, migrationSyncInfo = null;
 let selectedWeek = '', bossFilter = 'pending', historyFilter = 'all', selectedBossCharacterId = '', characterMode = 'preset', presetApplyMode = 'add';
 let editingIncomeId = '', editSaleState = 'acquired', incomeFeeRateDraft = null;
 const expandedStatCharacterIds = new Set();
@@ -633,7 +670,17 @@ function loadState() {
     const next = migrateState(parsed);
     const migrated = !!parsed && parsed.version !== STATE_VERSION;
     if (migrated && !localStorage.getItem(BACKUP_KEY)) localStorage.setItem(BACKUP_KEY, savedRaw);
-    const rolled = rollover(next); persist(next, {touch: migrated || rolled || !parsed, notify: false}); storageBlocked = false;
+    if (migrated) {
+      migrationSyncInfo = createMigrationSyncInfo(parsed.version, next);
+      localStorage.setItem(MIGRATION_SYNC_KEY, JSON.stringify(migrationSyncInfo));
+    } else {
+      try {
+        const pending = JSON.parse(localStorage.getItem(MIGRATION_SYNC_KEY) || 'null');
+        migrationSyncInfo = pending?.toVersion === STATE_VERSION && pending?.baseline ? pending : null;
+        if (!migrationSyncInfo) localStorage.removeItem(MIGRATION_SYNC_KEY);
+      } catch { migrationSyncInfo = null; localStorage.removeItem(MIGRATION_SYNC_KEY); }
+    }
+    const rolled = rollover(next); persist(next, {touch: rolled || !parsed, notify: false}); storageBlocked = false;
   } catch (error) { storageBlocked = true; state ||= emptyState(); message(`저장 중단: ${error.message} 원본을 덮어쓰지 않았습니다.`, true); }
 }
 function isPast() { return selectedWeek && selectedWeek !== state.currentWeek; }
@@ -1468,6 +1515,9 @@ if (typeof window !== 'undefined') window.mapleIncomeApp = {
   storageKey: KEY,
   changeEvent: LOCAL_CHANGE_EVENT,
   getState: () => copy(state),
+  hasMeaningfulData: raw => stateHasMeaningfulUserData(raw),
+  getMigrationInfo: () => copy(migrationSyncInfo),
+  completeMigrationSync: () => { migrationSyncInfo = null; localStorage.removeItem(MIGRATION_SYNC_KEY); },
   normalizeCloudState: raw => migrateState(raw),
   applyCloudState
 };

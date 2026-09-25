@@ -229,6 +229,14 @@ dd{margin:0;font-size:12px}
 .cloud-account{display:grid;gap:12px;margin-top:12px}
 .cloud-account b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cloud-account p,#authMessage{margin-top:4px}
+.cloud-choice-card h2{font-size:18px;line-height:1.35}
+.cloud-choice-card>div>p{margin-top:7px;line-height:1.55}
+.cloud-choice-list{display:grid;gap:9px;margin-top:16px}
+.cloud-choice{display:grid!important;justify-items:start;gap:4px;width:100%;height:auto;min-height:66px;padding:12px 14px;text-align:left}
+.cloud-choice strong{font-size:14px}
+.cloud-choice small{color:inherit;opacity:.75;font-size:11px;font-weight:500;line-height:1.4;white-space:normal}
+.cloud-choice.caution{border-color:#65404a;color:#ffc0c0}
+.cloud-choice-card .warning{margin:14px 0 2px;border-color:#65404a;background:#2a1d22;color:#ffc0c0}
 .nexon-help{margin-top:7px;font-size:11px}
 .nexon-character-list{display:grid;margin-top:7px}
 .nexon-character-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 0;border-top:1px solid var(--line)}

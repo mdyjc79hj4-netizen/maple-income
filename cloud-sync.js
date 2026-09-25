@@ -22,6 +22,16 @@ const timestamp = value => {
 const isoMax = (...values) => new Date(Math.max(0, ...values.map(timestamp))).toISOString();
 const same = (left, right) => JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
 
+const migrationGroups = ['incomes', 'characters', 'bosses', 'activities', 'presets', 'weeklyHistory'];
+function normalizeMigrationGuard(value) {
+  const baseline = asObject(value?.baseline || value);
+  return Object.fromEntries(migrationGroups.map(group => [
+    group,
+    new Set(Array.isArray(baseline[group]) ? baseline[group].map(String) : [])
+  ]));
+}
+const shouldRecordDeletion = (guard, group, id) => !guard || guard[group]?.has(String(id));
+
 async function contentHash(value) {
   const bytes = new TextEncoder().encode(JSON.stringify(value));
   const digest = await crypto.subtle.digest('SHA-256', bytes);
@@ -55,23 +65,32 @@ function normalizeSync(value) {
 function meaningfulLocalData(state) {
   if (!state) return false;
   if (state.incomes?.length || Object.keys(state.weeklyHistory || {}).length || state.presets?.length) return true;
-  if (Object.keys(state.settings || {}).length || state.characters?.length !== 1) return true;
+  const settings = asObject(state.settings);
+  if (Object.keys(settings).some(key => key !== 'defaultSaleFeeRate')) return true;
+  if (settings.defaultSaleFeeRate != null && Number(settings.defaultSaleFeeRate) !== 0.05) return true;
+  if (state.characters?.length !== 1) return !!state.characters?.length;
   const character = state.characters?.[0];
-  return !!character && !!(character.name !== '본캐' || character.bosses?.some(boss => boss.done) || character.weeklyActivities?.some(activity => activity.done));
+  return !!character && !!(
+    character.name !== '본캐' || character.nexonCharacter ||
+    character.bosses?.some(boss => boss.done || boss.manualOverride != null || boss.apiCompleted) ||
+    character.weeklyActivities?.length
+  );
 }
 
-function chooseSyncAction({remoteExists, sameContent, knownDevice, initial, hasLocalData}) {
-  if (!remoteExists) return 'upload';
+function chooseSyncAction({remoteExists, sameContent, knownDevice, hasLocalData, hasRemoteData}) {
+  if (!remoteExists) return 'create';
   if (sameContent) return 'noop';
-  if (!knownDevice && initial && hasLocalData) return 'choose';
-  return 'merge';
+  if (knownDevice) return 'merge';
+  if (!hasLocalData) return 'download';
+  if (!hasRemoteData) return 'upload';
+  return 'choose';
 }
 
 const mapBy = (items, key = 'id') => new Map((Array.isArray(items) ? items : []).filter(item => item?.[key]).map(item => [String(item[key]), item]));
 const historyMap = history => new Map(Object.entries(asObject(history)).map(([key, value]) => [String(value?.weekId || key), value]));
 const rootData = state => {
   const value = {...asObject(state)};
-  for (const key of ['incomes', 'characters', 'presets', 'weeklyHistory', 'settings', 'sync', 'updatedAt']) delete value[key];
+  for (const key of ['incomes', 'characters', 'presets', 'weeklyHistory', 'settings', 'sync', 'updatedAt', 'version', 'migrationNote']) delete value[key];
   return value;
 };
 const characterData = character => {
@@ -112,17 +131,19 @@ const activityKey = (characterId, activityId) => characterId + '::' + activityId
 const revisionFor = (sync, group, id, fallback = '') => sync.revisions[group]?.[id] || fallback;
 const tombstoneFor = (sync, group, id) => sync.tombstones[group]?.[id] || '';
 
-function markCollectionChanges(currentMap, baseMap, sync, group, changedAt) {
+function markCollectionChanges(currentMap, baseMap, sync, group, changedAt, migrationGuard = null) {
   for (const [id, value] of currentMap) {
     if (!same(value, baseMap.get(id))) sync.revisions[group][id] = isoMax(sync.revisions[group][id], changedAt);
     if (timestamp(tombstoneFor(sync, group, id)) < timestamp(revisionFor(sync, group, id))) delete sync.tombstones[group][id];
   }
   for (const id of baseMap.keys()) {
-    if (!currentMap.has(id)) sync.tombstones[group][id] = isoMax(sync.tombstones[group][id], changedAt);
+    if (!currentMap.has(id) && shouldRecordDeletion(migrationGuard, group, id)) {
+      sync.tombstones[group][id] = isoMax(sync.tombstones[group][id], changedAt);
+    }
   }
 }
 
-function prepareStateForMerge(input, baseInput = null, now = new Date().toISOString()) {
+function prepareStateForMerge(input, baseInput = null, now = new Date().toISOString(), options = {}) {
   const state = copy(asObject(input));
   const base = copy(asObject(baseInput));
   state.incomes = Array.isArray(state.incomes) ? state.incomes : [];
@@ -132,21 +153,22 @@ function prepareStateForMerge(input, baseInput = null, now = new Date().toISOStr
   state.settings = asObject(state.settings);
   const sync = normalizeSync(state.sync);
   const baseSync = normalizeSync(base.sync);
+  const migrationGuard = options.migrationGuard ? normalizeMigrationGuard(options.migrationGuard) : null;
   const changedAt = timestamp(state.updatedAt) ? new Date(timestamp(state.updatedAt)).toISOString() : now;
 
   for (const group of Object.keys(sync.tombstones)) sync.tombstones[group] = {...baseSync.tombstones[group], ...sync.tombstones[group]};
 
   if (!same(rootData(state), rootData(base))) sync.revisions.root = isoMax(sync.revisions.root, changedAt);
   if (!same(state.settings, base.settings || {})) sync.revisions.settings = isoMax(sync.revisions.settings, changedAt);
-  for (const group of ['incomes', 'presets']) markCollectionChanges(mapBy(state[group]), mapBy(base[group]), sync, group, changedAt);
-  markCollectionChanges(historyMap(state.weeklyHistory), historyMap(base.weeklyHistory), sync, 'weeklyHistory', changedAt);
+  for (const group of ['incomes', 'presets']) markCollectionChanges(mapBy(state[group]), mapBy(base[group]), sync, group, changedAt, migrationGuard);
+  markCollectionChanges(historyMap(state.weeklyHistory), historyMap(base.weeklyHistory), sync, 'weeklyHistory', changedAt, migrationGuard);
 
   const characters = mapBy(state.characters);
   const baseCharacters = mapBy(base.characters);
   markCollectionChanges(
     new Map([...characters].map(([id, value]) => [id, characterData(value)])),
     new Map([...baseCharacters].map(([id, value]) => [id, characterData(value)])),
-    sync, 'characters', changedAt
+    sync, 'characters', changedAt, migrationGuard
   );
   for (const [characterId, character] of characters) {
     const bosses = mapBy(character.bosses, 'bossId');
@@ -159,7 +181,9 @@ function prepareStateForMerge(input, baseInput = null, now = new Date().toISOStr
     for (const id of baseBosses.keys()) {
       if (!bosses.has(id)) {
         const key = bossKey(characterId, id);
-        sync.tombstones.bosses[key] = isoMax(sync.tombstones.bosses[key], changedAt);
+        if (shouldRecordDeletion(migrationGuard, 'bosses', key)) {
+          sync.tombstones.bosses[key] = isoMax(sync.tombstones.bosses[key], changedAt);
+        }
       }
     }
     const activities = mapBy(character.weeklyActivities);
@@ -172,7 +196,9 @@ function prepareStateForMerge(input, baseInput = null, now = new Date().toISOStr
     for (const id of baseActivities.keys()) {
       if (!activities.has(id)) {
         const key = activityKey(characterId, id);
-        sync.tombstones.activities[key] = isoMax(sync.tombstones.activities[key], changedAt);
+        if (shouldRecordDeletion(migrationGuard, 'activities', key)) {
+          sync.tombstones.activities[key] = isoMax(sync.tombstones.activities[key], changedAt);
+        }
       }
     }
   }
@@ -181,13 +207,17 @@ function prepareStateForMerge(input, baseInput = null, now = new Date().toISOStr
     for (const boss of Array.isArray(character.bosses) ? character.bosses : []) {
       if (boss?.bossId) {
         const key = bossKey(characterId, boss.bossId);
-        sync.tombstones.bosses[key] = isoMax(sync.tombstones.bosses[key], changedAt);
+        if (shouldRecordDeletion(migrationGuard, 'bosses', key)) {
+          sync.tombstones.bosses[key] = isoMax(sync.tombstones.bosses[key], changedAt);
+        }
       }
     }
     for (const activity of Array.isArray(character.weeklyActivities) ? character.weeklyActivities : []) {
       if (activity?.id) {
         const key = activityKey(characterId, activity.id);
-        sync.tombstones.activities[key] = isoMax(sync.tombstones.activities[key], changedAt);
+        if (shouldRecordDeletion(migrationGuard, 'activities', key)) {
+          sync.tombstones.activities[key] = isoMax(sync.tombstones.activities[key], changedAt);
+        }
       }
     }
   }
@@ -271,12 +301,14 @@ function semanticState(state) {
   const value = copy(asObject(state));
   delete value.sync;
   delete value.updatedAt;
+  delete value.version;
+  delete value.migrationNote;
   return value;
 }
 
-function mergeStates(baseInput, localInput, remoteInput, now = new Date().toISOString()) {
+function mergeStates(baseInput, localInput, remoteInput, now = new Date().toISOString(), options = {}) {
   const base = copy(asObject(baseInput));
-  const local = prepareStateForMerge(localInput, base, now);
+  const local = prepareStateForMerge(localInput, base, now, {migrationGuard: options.localMigrationGuard});
   const remote = prepareStateForMerge(remoteInput, base, now);
   const localSync = normalizeSync(local.sync);
   const remoteSync = normalizeSync(remote.sync);
@@ -381,6 +413,38 @@ function authErrorMessage(error, action = '요청') {
   return action + '에 실패했습니다' + (message ? ': ' + message : '.');
 }
 
+function syncError(kind, error) {
+  const wrapped = new Error(String(error?.message || error || '알 수 없는 오류'));
+  wrapped.name = 'CloudSyncError';
+  wrapped.syncKind = kind;
+  wrapped.code = error?.code || error?.status || '';
+  return wrapped;
+}
+
+function syncErrorMessage(error) {
+  const message = String(error?.message || '');
+  if (/network|fetch|failed to fetch|load failed/i.test(message)) return '네트워크 연결을 확인한 뒤 다시 시도해주세요.';
+  if (/rate limit|too many requests/i.test(message) || error?.code === '429') return '요청이 너무 잦습니다. 잠시 후 다시 시도해주세요.';
+  if (error?.code === '42501' || /row.level.security|permission denied|rls/i.test(message)) return '클라우드 저장 권한을 확인하지 못했습니다. Supabase RLS 설정을 확인해주세요.';
+  const labels = {
+    'remote-read': '클라우드 데이터를 불러오지 못했습니다.',
+    'initial-insert': '최초 클라우드 저장 공간을 만들지 못했습니다.',
+    'remote-update': '클라우드 데이터를 저장하지 못했습니다.',
+    'session-recovery': '로그인 세션을 복구하지 못했습니다.',
+    'selection-stale': '다른 기기에서 데이터가 변경되었습니다. 다시 동기화해주세요.'
+  };
+  return labels[error?.syncKind] || authErrorMessage(error, '동기화');
+}
+
+function signupResult(data) {
+  if (Array.isArray(data?.user?.identities) && data.user.identities.length === 0) {
+    return {kind: 'existing', message: '이미 가입된 이메일입니다.\n로그인하거나 인증 메일을 다시 보내주세요.', error: true};
+  }
+  if (data?.session) return {kind: 'session', message: '계정 생성이 완료되었습니다.\n클라우드 저장을 준비하고 있습니다.', error: false};
+  if (data?.user) return {kind: 'confirmation', message: '인증 메일을 보냈습니다.\n이메일 인증을 완료한 뒤 로그인해주세요.', error: false};
+  return {kind: 'invalid', message: '회원가입 응답을 확인하지 못했습니다. 잠시 후 다시 시도해주세요.', error: true};
+}
+
 export function startCloudSync(app) {
   const elements = {
     badge: document.querySelector('#syncBadge'), unavailable: document.querySelector('#cloudUnavailable'),
@@ -388,7 +452,9 @@ export function startCloudSync(app) {
     signUp: document.querySelector('#signUp'), resend: document.querySelector('#resendConfirmation'),
     account: document.querySelector('#cloudAccount'), cloudEmail: document.querySelector('#cloudEmail'),
     status: document.querySelector('#cloudStatus'), authMessage: document.querySelector('#authMessage'),
-    syncNow: document.querySelector('#syncNow'), signOut: document.querySelector('#signOut')
+    syncNow: document.querySelector('#syncNow'), signOut: document.querySelector('#signOut'),
+    choiceDialog: document.querySelector('#cloudChoiceDialog'), choiceStep: document.querySelector('#cloudChoiceStep'),
+    overwriteStep: document.querySelector('#cloudOverwriteStep')
   };
   const loginButton = elements.form?.querySelector('button[type="submit"]');
   if (!app || !elements.form) return;
@@ -433,6 +499,7 @@ export function startCloudSync(app) {
   let syncQueue = Promise.resolve();
   let pushTimer = 0;
   let resendTimer = 0;
+  let choiceResolver = null;
   let meta = normalizeMeta(localStorage.getItem(META_KEY));
   if (!meta.clientId) meta.clientId = crypto.randomUUID();
   const saveMeta = changes => {
@@ -453,8 +520,38 @@ export function startCloudSync(app) {
   const saveRecovery = payload => {
     if (user) localStorage.setItem(RECOVERY_KEY_PREFIX + user.id, JSON.stringify({savedAt: new Date().toISOString(), payload}));
   };
+  const normalizePayload = payload => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+    return typeof app.normalizeCloudState === 'function' ? app.normalizeCloudState(payload) : copy(payload);
+  };
+  const finishMigrationSync = () => {
+    if (typeof app.completeMigrationSync === 'function') app.completeMigrationSync();
+  };
+  const meaningfulPayload = payload => {
+    const normalized = normalizePayload(payload) || payload;
+    return typeof app.hasMeaningfulData === 'function' ? app.hasMeaningfulData(normalized) : meaningfulLocalData(normalized);
+  };
+  const resetChoiceDialog = () => {
+    elements.choiceStep?.classList.remove('hidden');
+    elements.overwriteStep?.classList.add('hidden');
+  };
+  const finishChoice = choice => {
+    const resolve = choiceResolver;
+    choiceResolver = null;
+    if (elements.choiceDialog?.open) elements.choiceDialog.close();
+    resetChoiceDialog();
+    resolve?.(choice);
+  };
+  const requestDataChoice = () => new Promise(resolve => {
+    if (!elements.choiceDialog) { resolve('remote'); return; }
+    if (choiceResolver) { resolve(null); return; }
+    choiceResolver = resolve;
+    resetChoiceDialog();
+    elements.choiceDialog.showModal();
+  });
   const showSession = session => {
     user = session?.user || null;
+    if (!user && choiceResolver) finishChoice(null);
     elements.form.classList.toggle('hidden', !!user);
     elements.account.classList.toggle('hidden', !user);
     elements.cloudEmail.textContent = user?.email || '';
@@ -465,7 +562,7 @@ export function startCloudSync(app) {
   };
   const readRemote = async () => {
     const {data, error} = await supabase.from(TABLE).select('payload,version,updated_at,state_updated_at,content_hash').eq('user_id', user.id).maybeSingle();
-    if (error) throw error;
+    if (error) throw syncError('remote-read', error);
     return data;
   };
   const rememberRemote = async row => {
@@ -486,48 +583,85 @@ export function startCloudSync(app) {
       client_id: meta.clientId, content_hash: hash
     };
     if (!expectedVersion) {
-      return supabase.from(TABLE).insert({user_id: user.id, ...values}).select('payload,version,updated_at,state_updated_at,content_hash').single();
+      const result = await supabase.from(TABLE).insert({user_id: user.id, ...values}).select('payload,version,updated_at,state_updated_at,content_hash').single();
+      return result.error ? {...result, error: syncError('initial-insert', result.error)} : result;
     }
-    return supabase.from(TABLE).update(values).eq('user_id', user.id).eq('version', expectedVersion)
+    const result = await supabase.from(TABLE).update(values).eq('user_id', user.id).eq('version', expectedVersion)
       .select('payload,version,updated_at,state_updated_at,content_hash').maybeSingle();
+    return result.error ? {...result, error: syncError('remote-update', result.error)} : result;
   };
 
   const writeRemote = async (localState, remoteRow = null, attempt = 0) => {
     setStatus('syncing');
     const latest = remoteRow || await readRemote();
-    const base = loadBase();
-    let candidate = prepareStateForMerge(localState, base);
+    const migrationInfo = typeof app.getMigrationInfo === 'function' ? app.getMigrationInfo() : null;
+    const base = normalizePayload(loadBase());
+    const normalizedLocal = normalizePayload(localState) || localState;
+    const normalizedRemote = normalizePayload(latest?.payload);
+    let candidate = prepareStateForMerge(normalizedLocal, base, new Date().toISOString(), {
+      migrationGuard: migrationInfo?.baseline
+    });
     let mergeResult = null;
     if (latest) {
-      mergeResult = mergeStates(base, candidate, latest.payload);
+      mergeResult = mergeStates(base, candidate, normalizedRemote || latest.payload, new Date().toISOString(), {
+        localMigrationGuard: migrationInfo?.baseline
+      });
       candidate = mergeResult.state;
     }
     if (typeof app.normalizeCloudState === 'function') candidate = app.normalizeCloudState(candidate);
     const hash = await contentHash(candidate);
     if (latest && hash === (latest.content_hash || await contentHash(latest.payload))) {
       await applyRemote(latest, mergeResult?.merged ? 'merged' : 'synced');
+      finishMigrationSync();
       return latest;
     }
     const result = await persistRemote(candidate, Number(latest?.version) || 0);
     if (!result.error && result.data) {
       if (mergeResult?.differsFromLocal || !same(candidate, app.getState())) app.applyCloudState(candidate);
       await rememberRemote(result.data);
+      finishMigrationSync();
       setStatus(mergeResult?.merged ? 'merged' : 'synced',
         mergeResult?.merged ? '다른 기기의 변경사항을 병합했습니다.' : '');
       return result.data;
+    }
+    if (result.error) {
+      if (result.error.code === '23505' && attempt < 2) {
+        const server = await readRemote();
+        if (server) return writeRemote(localState, server, attempt + 1);
+      }
+      saveRecovery(localState);
+      throw result.error;
     }
     if (attempt >= 2) {
       saveRecovery(localState);
       const server = await readRemote();
       if (server) await applyRemote(server, 'failed');
-      throw result.error || new Error('동시에 변경되어 자동 병합을 완료하지 못했습니다. 서버 상태를 적용하고 이 기기의 변경은 복구용으로 보관했습니다.');
+      throw syncError('selection-stale', new Error('동시에 변경되어 서버 상태를 적용하고 이 기기의 변경은 복구용으로 보관했습니다.'));
     }
     const server = await readRemote();
     if (!server) {
-      if (result.error) throw result.error;
       return writeRemote(localState, null, attempt + 1);
     }
     return writeRemote(localState, server, attempt + 1);
+  };
+
+  const replaceRemoteWithLocal = async (localState, remoteRow) => {
+    setStatus('syncing');
+    const candidate = prepareStateForMerge(normalizePayload(localState) || localState, null);
+    const result = await persistRemote(candidate, Number(remoteRow?.version) || 0);
+    if (result.error) {
+      saveRecovery(localState);
+      throw result.error;
+    }
+    if (!result.data) {
+      saveRecovery(localState);
+      throw syncError('selection-stale', new Error('선택 중 다른 기기에서 데이터가 변경되었습니다.'));
+    }
+    app.applyCloudState(candidate);
+    await rememberRemote(result.data);
+    finishMigrationSync();
+    setStatus('synced');
+    return result.data;
   };
 
   const reconcile = async ({initial = false} = {}) => {
@@ -537,34 +671,55 @@ export function startCloudSync(app) {
     const remote = await readRemote();
     const remoteHash = remote?.content_hash || (remote ? await contentHash(remote.payload) : '');
     const knownDevice = meta.userId === user.id && Number(meta.cloudVersion) > 0;
-    const action = chooseSyncAction({
-      remoteExists: !!remote, sameContent: remoteHash === localHash, knownDevice, initial,
-      hasLocalData: meaningfulLocalData(local)
+    const migrationInfo = typeof app.getMigrationInfo === 'function' ? app.getMigrationInfo() : null;
+    const normalizedLocal = normalizePayload(local) || local;
+    const normalizedRemote = normalizePayload(remote?.payload);
+    const semanticSame = !!remote && same(semanticState(normalizedLocal), semanticState(normalizedRemote));
+    const hasLocalData = meaningfulPayload(normalizedLocal);
+    const hasRemoteData = meaningfulPayload(normalizedRemote);
+    let action = chooseSyncAction({
+      remoteExists: !!remote, sameContent: migrationInfo ? remoteHash === localHash : semanticSame,
+      knownDevice, initial, hasLocalData, hasRemoteData
     });
-    if (action === 'upload') {
+    if (migrationInfo && remote && action !== 'noop') action = knownDevice || hasLocalData ? 'merge' : 'download';
+    if (action === 'create') {
       await writeRemote(local, remote);
-      if (!remote) setMessage('이 기기의 기존 데이터를 클라우드로 이전했습니다.');
+      setMessage(meaningfulPayload(local)
+        ? '이 기기의 기존 데이터를 클라우드에 안전하게 저장했습니다.'
+        : '클라우드 저장을 준비했습니다.');
       return;
     }
     if (action === 'noop') {
       await rememberRemote(remote);
+      finishMigrationSync();
       setStatus('synced');
       return;
     }
+    if (action === 'download') {
+      await applyRemote(remote);
+      finishMigrationSync();
+      setMessage('클라우드 데이터를 이 기기에 불러왔습니다.');
+      return;
+    }
+    if (action === 'upload') {
+      await replaceRemoteWithLocal(local, remote);
+      setMessage('이 기기의 기록을 클라우드에 저장했습니다.');
+      return;
+    }
     if (action === 'choose') {
-      const useLocal = confirm('이 기기와 클라우드에 서로 다른 데이터가 있습니다.\n\n확인: 이 기기의 데이터를 클라우드에 저장\n취소: 클라우드 데이터를 이 기기에 적용');
-      if (useLocal) {
-        const prepared = prepareStateForMerge(local, null);
-        const result = await persistRemote(prepared, Number(remote.version) || 0);
-        if (!result.error && result.data) {
-          app.applyCloudState(prepared);
-          await rememberRemote(result.data);
-          setStatus('synced');
-          setMessage('이 기기의 데이터를 클라우드로 이전했습니다.');
-        } else {
-          await writeRemote(local, await readRemote());
-        }
-      } else await applyRemote(remote);
+      setStatus('waiting', '데이터 선택이 필요합니다.');
+      const choice = await requestDataChoice();
+      if (choice === 'remote') {
+        await applyRemote(remote);
+        finishMigrationSync();
+        setMessage('클라우드 데이터를 이 기기에 불러왔습니다.');
+      } else if (choice === 'local') {
+        await replaceRemoteWithLocal(local, remote);
+        setMessage('이 기기의 기록을 클라우드에 저장했습니다.');
+      } else {
+        setStatus('waiting', '데이터 선택이 필요합니다.');
+        setMessage('동기화할 데이터를 선택하지 않아 어느 쪽도 변경하지 않았습니다.');
+      }
       return;
     }
     await writeRemote(local, remote);
@@ -572,10 +727,10 @@ export function startCloudSync(app) {
 
   const enqueue = task => {
     syncQueue = syncQueue.then(task, task).catch(error => {
-      console.error('Cloud sync failed', error);
+      console.error('Cloud sync failed', {name: error?.name, code: error?.code, kind: error?.syncKind, message: error?.message});
       const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
       setStatus(offline ? 'offline' : 'failed');
-      setMessage(authErrorMessage(error, '동기화'), true);
+      setMessage(offline ? '인터넷 연결이 없어 이 기기에 저장 중입니다.' : syncErrorMessage(error), true);
     });
     return syncQueue;
   };
@@ -590,6 +745,19 @@ export function startCloudSync(app) {
     showSession(session);
     if (session && changedUser) enqueue(() => reconcile({initial: true}));
   };
+
+  elements.choiceDialog?.addEventListener('click', event => {
+    const choice = event.target.closest('[data-cloud-choice]')?.dataset.cloudChoice;
+    if (choice === 'remote') finishChoice('remote');
+    if (choice === 'local') {
+      elements.choiceStep?.classList.add('hidden');
+      elements.overwriteStep?.classList.remove('hidden');
+    }
+    const overwrite = event.target.closest('[data-cloud-overwrite]')?.dataset.cloudOverwrite;
+    if (overwrite === 'cancel') resetChoiceDialog();
+    if (overwrite === 'confirm') finishChoice('local');
+  });
+  elements.choiceDialog?.addEventListener('cancel', event => { event.preventDefault(); finishChoice(null); });
 
   elements.form.addEventListener('submit', async event => {
     event.preventDefault();
@@ -621,15 +789,11 @@ export function startCloudSync(app) {
         options: {emailRedirectTo: window.location.origin}
       });
       if (error) setMessage(authErrorMessage(error, '회원가입'), true);
-      else if (Array.isArray(data.user?.identities) && data.user.identities.length === 0) {
-        setMessage('이미 가입된 이메일입니다. 로그인하거나 인증 메일을 다시 보내주세요.', true);
-      } else if (data.session) {
+      else {
+        const outcome = signupResult(data);
         elements.password.value = '';
-        setMessage('회원가입과 로그인이 완료되었습니다.');
-      } else if (data.user) {
-        elements.password.value = '';
-        setMessage('인증 메일을 보냈습니다. 이메일 인증 후 로그인해주세요.');
-      } else setMessage('회원가입 응답을 확인하지 못했습니다. 잠시 후 다시 시도해주세요.', true);
+        setMessage(outcome.message, outcome.error);
+      }
     } catch (error) {
       console.error('Supabase sign-up failed', error);
       setMessage(authErrorMessage(error, '회원가입'), true);
@@ -685,12 +849,12 @@ export function startCloudSync(app) {
   document.addEventListener('visibilitychange', () => { if (!document.hidden && user) enqueue(() => reconcile()); });
   supabase.auth.onAuthStateChange((_event, session) => window.setTimeout(() => activate(session), 0));
   supabase.auth.getSession().then(({data, error}) => {
-    if (error) setMessage(authErrorMessage(error, '로그인 상태 확인'), true);
+    if (error) setMessage(syncErrorMessage(syncError('session-recovery', error)), true);
     else activate(data.session);
-  }).catch(error => setMessage(authErrorMessage(error, '로그인 상태 확인'), true));
+  }).catch(error => setMessage(syncErrorMessage(syncError('session-recovery', error)), true));
 }
 
 export const cloudSyncInternals = {
   authErrorMessage, chooseSyncAction, contentHash, meaningfulLocalData, mergeStates,
-  normalizeMeta, prepareStateForMerge, timestamp
+  normalizeMeta, prepareStateForMerge, signupResult, syncError, syncErrorMessage, timestamp
 };

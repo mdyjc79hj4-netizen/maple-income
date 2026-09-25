@@ -665,18 +665,37 @@ assert.equal(run("historyFilter='unsold'; historyMatches({item:'조각',category
 assert.equal(run("historyMatches({item:'조각',category:'hunt',recordType:'sold'})"), false);
 assert.equal(run("historyFilter='gather'; historyMatches({item:'씨앗',category:'gather',recordType:'acquired'})"), true);
 assert.equal(cloudSyncInternals.meaningfulLocalData({characters: [{name: '본캐', bosses: []}], incomes: [], weeklyHistory: {}, presets: [], settings: {}}), false);
+assert.equal(cloudSyncInternals.meaningfulLocalData({version: 7, migrationNote: 'schema', characters: [{name: '본캐', bosses: []}], incomes: [], weeklyHistory: {}, presets: [], settings: {defaultSaleFeeRate: 0.05}}), false);
 assert.equal(cloudSyncInternals.meaningfulLocalData({characters: [{name: '본캐', bosses: []}], incomes: [{id: 'i1'}], weeklyHistory: {}, presets: [], settings: {}}), true);
+assert.equal(run("stateHasMeaningfulUserData(emptyState(new Date('2026-09-24T12:00:00')))"), false);
+assert.equal(run("stateHasMeaningfulUserData({...emptyState(new Date('2026-09-24T12:00:00')),settings:{defaultSaleFeeRate:0.03}})"), true);
+assert.equal(run("stateHasMeaningfulUserData({...emptyState(new Date('2026-09-24T12:00:00')),incomes:[{id:'user-income'}]})"), true);
 assert.equal(await cloudSyncInternals.contentHash({version: 5, value: 1}), await cloudSyncInternals.contentHash({version: 5, value: 1}));
 assert.notEqual(await cloudSyncInternals.contentHash({version: 5, value: 1}), await cloudSyncInternals.contentHash({version: 5, value: 2}));
 assert.ok(cloudSyncInternals.timestamp('2026-09-23T00:00:00.000Z') > cloudSyncInternals.timestamp('2026-09-22T00:00:00.000Z'));
-assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: false}), 'upload');
+assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: false}), 'create');
 assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: true, sameContent: true}), 'noop');
-assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: true, sameContent: false, knownDevice: false, initial: true, hasLocalData: true}), 'choose');
-assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: true, sameContent: false, knownDevice: true}), 'merge');
-assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: true, sameContent: false, knownDevice: true, localChangedSinceSync: false}), 'merge');
+assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: true, sameContent: false, knownDevice: false, hasLocalData: false, hasRemoteData: true}), 'download');
+assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: true, sameContent: false, knownDevice: false, hasLocalData: true, hasRemoteData: false}), 'upload');
+assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: true, sameContent: false, knownDevice: false, hasLocalData: true, hasRemoteData: true}), 'choose');
+assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: true, sameContent: false, knownDevice: true, hasLocalData: true, hasRemoteData: true}), 'merge');
+assert.equal(cloudSyncInternals.chooseSyncAction({remoteExists: true, sameContent: false, knownDevice: true, hasLocalData: false, hasRemoteData: true}), 'merge');
 assert.deepEqual(cloudSyncInternals.normalizeMeta(null), {});
 assert.deepEqual(cloudSyncInternals.normalizeMeta('{broken'), {});
 assert.equal(cloudSyncInternals.authErrorMessage({message: 'Email not confirmed'}, '로그인'), '이메일 인증이 아직 완료되지 않았습니다. 인증 메일을 확인해주세요.');
+assert.equal(cloudSyncInternals.authErrorMessage({message: 'User already registered'}, '회원가입'), '이미 가입된 이메일입니다. 로그인하거나 인증 메일을 다시 보내주세요.');
+assert.match(cloudSyncInternals.authErrorMessage({message: 'Too many requests'}, '회원가입'), /요청이 너무 잦습니다/);
+assert.match(cloudSyncInternals.authErrorMessage({message: 'Failed to fetch'}, '회원가입'), /네트워크 연결/);
+assert.equal(cloudSyncInternals.signupResult({user: {identities: []}}).kind, 'existing');
+assert.equal(cloudSyncInternals.signupResult({user: {identities: [{}]}}).kind, 'confirmation');
+assert.equal(cloudSyncInternals.signupResult({user: {identities: [{}]}, session: {access_token: 'hidden'}}).kind, 'session');
+assert.match(cloudSyncInternals.signupResult({user: {identities: [{}]}}).message, /이메일 인증을 완료한 뒤 로그인/);
+assert.match(cloudSyncInternals.signupResult({user: {identities: [{}]}, session: {}}).message, /클라우드 저장을 준비/);
+assert.match(cloudSyncInternals.syncErrorMessage(cloudSyncInternals.syncError('initial-insert', {code: '42501', message: 'row-level security policy'})), /RLS/);
+assert.match(cloudSyncInternals.syncErrorMessage(cloudSyncInternals.syncError('initial-insert', {message: 'insert failed'})), /최초 클라우드 저장 공간/);
+assert.match(cloudSyncInternals.syncErrorMessage(cloudSyncInternals.syncError('remote-read', {message: 'read failed'})), /불러오지 못했습니다/);
+assert.match(cloudSyncInternals.syncErrorMessage(cloudSyncInternals.syncError('remote-update', {message: 'update failed'})), /저장하지 못했습니다/);
+assert.match(cloudSyncInternals.syncErrorMessage(cloudSyncInternals.syncError('session-recovery', {message: 'session failed'})), /세션을 복구하지 못했습니다/);
 
 const cloudSelectionState = {
   characters: [
@@ -715,6 +734,91 @@ const syncBase = {
   weeklyHistory: {'week-old': {weekId: 'week-old', incomes: [], characters: []}}
 };
 const clone = value => structuredClone(value);
+
+// A schema upgrade must not look like user deletion to the cloud merge.
+const migrationRaw = {
+  version: 6, currentWeek: '2026-09-17~2026-09-23', updatedAt: '2026-09-23T00:00:00.000Z', settings: {},
+  incomes: Array.from({length: 50}, (_, index) => ({id: `migration-income-${index}`, category: 'hunt', item: '메소', amount: index + 1, createdAt: index + 1})),
+  characters: Array.from({length: 10}, (_, index) => ({
+    id: `migration-character-${index}`, name: `캐릭터 ${index + 1}`,
+    bosses: [{bossId: 'lotus', difficulty: '하드', partySize: 1, done: false}],
+    weeklyActivities: [{id: 'mu-lung-dojo', type: 'mu-lung-dojo', name: '무릉도장', done: false}]
+  })),
+  presets: Array.from({length: 3}, (_, index) => ({id: `migration-preset-${index}`, name: `프리셋 ${index + 1}`, bosses: [{bossId: 'lotus', difficulty: '하드', partySize: 1}]})),
+  weeklyHistory: Object.fromEntries(['2026-08-20~2026-08-26', '2026-08-27~2026-09-02', '2026-09-03~2026-09-09', '2026-09-10~2026-09-16']
+    .map(weekId => [weekId, {weekId, characters: [], incomes: []}]))
+};
+context.__migrationRaw = migrationRaw;
+const migrationLocal = json("migrateState(__migrationRaw, new Date('2026-09-23T12:00:00.000Z'))");
+const migrationGuard = json("createMigrationSyncInfo(6, migrateState(__migrationRaw, new Date('2026-09-23T12:00:00.000Z')), new Date('2026-09-23T12:00:00.000Z'))");
+assert.equal(migrationLocal.updatedAt, migrationRaw.updatedAt);
+assert.equal(migrationGuard.fromVersion, 6);
+assert.equal(migrationGuard.toVersion, 7);
+assert.equal(migrationGuard.baseline.characters.length, 10);
+assert.equal(migrationGuard.baseline.incomes.length, 50);
+const migrationBase = clone(migrationLocal);
+const migrationRemote = clone(migrationLocal);
+const migrationSafe = cloudSyncInternals.mergeStates(
+  migrationBase, migrationLocal, migrationRemote, '2026-09-23T13:00:00.000Z', {localMigrationGuard: migrationGuard.baseline}
+).state;
+assert.equal(migrationSafe.characters.length, 10);
+assert.equal(migrationSafe.incomes.length, 50);
+assert.equal(migrationSafe.presets.length, 3);
+assert.equal(Object.keys(migrationSafe.weeklyHistory).length, 4);
+for (const tombstones of Object.values(migrationSafe.sync.tombstones)) assert.equal(Object.keys(tombstones).length, 0);
+assert.equal(migrationSafe.settings.defaultSaleFeeRate, 0.05);
+assert.equal(migrationSafe.updatedAt >= migrationLocal.updatedAt, true);
+
+// A remote item absent from the migrated local snapshot is preserved, not converted to a tombstone.
+const migrationRemoteBase = clone(migrationBase);
+migrationRemoteBase.incomes.push({id: 'remote-preserved-income', category: 'drop', item: '원격 기록', qty: 1, createdAt: 100});
+migrationRemoteBase.characters.push({
+  id: 'remote-preserved-character', name: '원격 캐릭터',
+  bosses: [{bossId: 'damien', difficulty: '하드', partySize: 1, done: false}],
+  weeklyActivities: [{id: 'epic-dungeon:aurum-regis', type: 'epic-dungeon', name: '아우룸 레기스', done: false}]
+});
+migrationRemoteBase.presets.push({id: 'remote-preserved-preset', name: '원격 프리셋', bosses: []});
+migrationRemoteBase.weeklyHistory['2026-08-13~2026-08-19'] = {weekId: '2026-08-13~2026-08-19', characters: [], incomes: []};
+const migrationRemoteLatest = clone(migrationRemoteBase);
+migrationRemoteLatest.updatedAt = '2026-09-23T14:00:00.000Z';
+const preservedAfterMigration = cloudSyncInternals.mergeStates(
+  migrationRemoteBase, migrationLocal, migrationRemoteLatest, '2026-09-23T15:00:00.000Z', {localMigrationGuard: migrationGuard.baseline}
+).state;
+assert.ok(preservedAfterMigration.incomes.some(item => item.id === 'remote-preserved-income'));
+assert.ok(preservedAfterMigration.characters.some(character => character.id === 'remote-preserved-character'));
+assert.ok(preservedAfterMigration.presets.some(preset => preset.id === 'remote-preserved-preset'));
+assert.ok(preservedAfterMigration.weeklyHistory['2026-08-13~2026-08-19']);
+assert.equal(preservedAfterMigration.sync.tombstones.incomes['remote-preserved-income'], undefined);
+assert.equal(preservedAfterMigration.sync.tombstones.characters['remote-preserved-character'], undefined);
+assert.equal(preservedAfterMigration.sync.tombstones.bosses['remote-preserved-character::damien'], undefined);
+assert.equal(preservedAfterMigration.sync.tombstones.activities['remote-preserved-character::epic-dungeon:aurum-regis'], undefined);
+
+// An item present at migration time but deleted afterwards is still a real user deletion.
+const postMigrationDelete = clone(migrationLocal);
+postMigrationDelete.updatedAt = '2026-09-23T16:00:00.000Z';
+postMigrationDelete.incomes = postMigrationDelete.incomes.filter(item => item.id !== 'migration-income-0');
+const postMigrationDeleted = cloudSyncInternals.mergeStates(
+  migrationBase, postMigrationDelete, migrationRemote, '2026-09-23T17:00:00.000Z', {localMigrationGuard: migrationGuard.baseline}
+).state;
+assert.equal(postMigrationDeleted.incomes.some(item => item.id === 'migration-income-0'), false);
+assert.ok(postMigrationDeleted.sync.tombstones.incomes['migration-income-0']);
+
+// Version and migration-note-only differences do not touch collection revisions.
+const schemaOnlyLocal = clone(migrationLocal);
+schemaOnlyLocal.version = 7;
+schemaOnlyLocal.migrationNote = 'schema-only';
+const schemaOnlyBase = clone(migrationLocal);
+delete schemaOnlyBase.migrationNote;
+schemaOnlyBase.version = 6;
+const schemaOnlyPrepared = cloudSyncInternals.prepareStateForMerge(schemaOnlyLocal, schemaOnlyBase, '2026-09-23T18:00:00.000Z', {migrationGuard: migrationGuard.baseline});
+assert.equal(schemaOnlyPrepared.sync.revisions.root, '');
+for (const group of ['incomes', 'characters', 'bosses', 'activities', 'presets', 'weeklyHistory']) {
+  assert.equal(Object.keys(schemaOnlyPrepared.sync.revisions[group]).length, 0);
+  assert.equal(Object.keys(schemaOnlyPrepared.sync.tombstones[group]).length, 0);
+}
+assert.match(cloudSource, /const base = normalizePayload\(loadBase\(\)\)/);
+assert.match(cloudSource, /normalizedRemote \|\| latest\.payload/);
+assert.match(source, /persist\(next, \{touch: rolled \|\| !parsed, notify: false\}\)/);
 
 // Two devices add different records from the same remote version.
 const addLocal = clone(syncBase);
@@ -1165,7 +1269,17 @@ if (originalNexonKey === undefined) delete process.env.NEXON_OPEN_API_KEY;
 else process.env.NEXON_OPEN_API_KEY = originalNexonKey;
 assert.match(cloudSource, /auth\.resend\(\{/);
 assert.match(cloudSource, /emailRedirectTo: window\.location\.origin/);
+assert.match(cloudSource, /detectSessionInUrl: true/);
+assert.match(cloudSource, /if \(action === 'download'\) \{\s*await applyRemote\(remote\)/);
+assert.match(cloudSource, /if \(action === 'create'\) \{\s*await writeRemote\(local, remote\)/);
+assert.doesNotMatch(cloudSource, /confirm\('이 기기와 클라우드/);
 assert.match(html, /id="resendConfirmation"/);
+assert.match(html, /id="cloudChoiceDialog"/);
+assert.match(html, /data-cloud-choice="remote"/);
+assert.match(html, /data-cloud-choice="local"/);
+assert.match(html, /id="cloudOverwriteStep" class="hidden"/);
+assert.match(html, /data-cloud-overwrite="confirm"/);
+assert.ok(html.indexOf('클라우드 데이터 불러오기') < html.indexOf('이 기기 데이터 사용'));
 const referencedIds = [...source.matchAll(/\$\('#([A-Za-z][A-Za-z0-9_-]*)'\)/g)].map(match => match[1]);
 const htmlIds = new Set([...html.matchAll(/id="([^"]+)"/g)].map(match => match[1]));
 assert.deepEqual([...new Set(referencedIds)].filter(id => !htmlIds.has(id)), []);
@@ -1175,6 +1289,7 @@ assert.match(css, /\.chip-scroll\{[^}]*overflow-x:auto/);
 assert.match(css, /@media\(max-width:430px\)/);
 assert.match(css, /\.danger-action button\{width:100%;min-height:44px\}/);
 assert.match(css, /\.cloud-actions button\{[^}]*min-height:44px/);
+assert.match(css, /\.cloud-choice\{[^}]*min-height:66px/);
 assert.match(schema, /alter table public\.maple_income_sync enable row level security/i);
 assert.equal((schema.match(/create policy/gi) || []).length, 3);
 assert.match(schema, /auth\.uid\(\)\) = user_id/);
