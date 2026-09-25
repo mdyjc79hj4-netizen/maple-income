@@ -1070,6 +1070,86 @@ assert.equal(nexonCharacterInternals.upstreamErrorCode({error: {name: 'OPENAPI00
 context.fetch = async () => ({ok: false, status: 403, json: async () => ({ok: false, code: 'FORBIDDEN', message: 'NEXON Open API 권한을 확인해주세요.'})});
 await assert.rejects(run("fetchNexonProfile('abcdefghijklmnop')"), error => error.status === 403 && error.code === 'FORBIDDEN' && /권한/.test(error.message));
 delete context.fetch;
+context.__linkProfileResponse = {
+  ok: true, fetchedAt: '2026-09-25T00:00:00.000Z', ocid: '0123456789abcdef0123456789abcdef',
+  resources: {basic: {ok: true}, stat: {ok: true}, union: {ok: true}}, warnings: [],
+  character: {name: '넥슨본캐', world: '루나', className: '나이트로드', level: 286, image: 'https://example.com/profile.png', combatPower: 284300000, stats: detailStatsFixture, unionLevel: 9450, unionGrade: '그랜드 마스터 유니온'}
+};
+context.__linkState = {characters: [{id: 'c1', name: '본캐', bosses: [], weeklyActivities: []}]};
+assert.equal(run("applyNexonLinkProfileState(__linkState, 'c1', __linkProfileResponse, '2026-09-25T00:00:00.000Z')"), true);
+assert.equal(run("__linkState.characters[0].nexonCharacter.ocid"), '0123456789abcdef0123456789abcdef');
+assert.equal(run("__linkState.characters[0].nexonCharacter.characterName"), '넥슨본캐');
+assert.equal(run("__linkState.characters[0].nexonCharacter.level"), 286);
+assert.equal(run("__linkState.characters[0].nexonCharacter.combatPower"), 284300000);
+assert.equal(run("__linkState.characters[0].nexonCharacter.unionLevel"), 9450);
+assert.equal(run("__linkState.characters[0].nexonCharacter.profileCheckedAt"), '2026-09-25T00:00:00.000Z');
+for (const [status, expected] of [[400, '아직 조회'], [403, '권한'], [429, '잠시 후'], [500, '장애']]) {
+  context.__schedulerError = Object.assign(new Error('scheduler failed'), {status, code: `HTTP_${status}`});
+  const warning = json("nexonSchedulerWarning(__linkState.characters[0], __schedulerError)");
+  assert.equal(warning.status, status);
+  assert.match(warning.message, new RegExp(expected));
+  context.__linkUiState = run("nexonLinkUiState({schedulerWarning:nexonSchedulerWarning(__linkState.characters[0], __schedulerError)}, 'c1')");
+  assert.equal(context.__linkUiState.status, 'warning');
+  assert.deepEqual([...context.__linkUiState.schedulerWarningIds], ['c1']);
+  assert.equal(Object.hasOwn(context.__linkUiState, 'errorCharacterId'), false);
+  assert.equal(run("__linkState.characters[0].nexonCharacter.ocid"), '0123456789abcdef0123456789abcdef');
+}
+context.__invalidLinkState = {characters: [{id: 'c1', name: '본캐', bosses: [], weeklyActivities: []}]};
+context.__invalidLinkProfile = {ocid: '0123456789abcdef0123456789abcdef', resources: {basic: {ok: false}}, character: {name: ''}};
+assert.throws(() => run("applyNexonLinkProfileState(__invalidLinkState, 'c1', __invalidLinkProfile)"), /기본정보/);
+assert.equal(run("!!__invalidLinkState.characters[0].nexonCharacter"), false);
+const nexonSyncSource = source.slice(source.indexOf('async function syncNexonCharacter'), source.indexOf('async function syncAllNexonCharacters'));
+assert.ok(nexonSyncSource.indexOf("fetchNexonProfile('', characterName)") < nexonSyncSource.indexOf("fetchNexonScheduler(linkedCharacter, '', requestDate)"));
+assert.match(nexonSyncSource, /schedulerWarning: warning/);
+assert.match(source, /nexonApiState = nexonLinkUiState\(result, character\.id\)/);
+assert.match(source, /schedulerWarning \? '주간 기록 조회 실패'/);
+const localMemory = new Map();
+context.localStorage = {
+  getItem(key) { return localMemory.has(key) ? localMemory.get(key) : null; },
+  setItem(key, value) { localMemory.set(key, String(value)); },
+  removeItem(key) { localMemory.delete(key); }
+};
+run('render = () => {}; message = () => {}');
+const prepareNexonLinkState = () => {
+  localMemory.clear();
+  run("state = emptyState(new Date('2026-09-25T12:00:00')); state.characters = [{id:'c1',name:'본캐',bosses:[],weeklyActivities:[]}]; selectedWeek=''; storageBlocked=false; savedRaw=JSON.stringify(state)");
+  localMemory.set('maple-income-vercel-v1', run('savedRaw'));
+};
+for (const status of [400, 403, 429, 500]) {
+  prepareNexonLinkState();
+  context.fetch = async target => {
+    const url = String(target);
+    if (url.startsWith('/api/nexon-character?')) return {ok: true, status: 200, json: async () => structuredClone(context.__linkProfileResponse)};
+    if (url.startsWith('/api/nexon-scheduler?')) return {ok: false, status, json: async () => ({ok: false, code: `SCHEDULER_${status}`, message: 'scheduler failed'})};
+    throw new Error('unexpected client path: ' + url);
+  };
+  const result = await run("syncNexonCharacter('c1',{characterName:'넥슨본캐'})");
+  assert.equal(result.schedulerWarning.status, status);
+  assert.equal(run("state.characters[0].nexonCharacter.ocid"), '0123456789abcdef0123456789abcdef');
+  assert.equal(run("state.characters[0].nexonCharacter.characterName"), '넥슨본캐');
+}
+for (const failedProfile of [
+  {ok: false, status: 404, body: {ok: false, code: 'CHARACTER_NOT_FOUND', message: '캐릭터를 찾지 못했습니다.'}},
+  {ok: false, status: 502, body: {ok: false, code: 'PROFILE_REQUEST_FAILED', message: '캐릭터 정보를 확인하지 못했습니다.'}}
+]) {
+  prepareNexonLinkState();
+  context.fetch = async () => ({ok: failedProfile.ok, status: failedProfile.status, json: async () => failedProfile.body});
+  await assert.rejects(run("syncNexonCharacter('c1',{characterName:'없는캐릭터'})"));
+  assert.equal(run("!!state.characters[0].nexonCharacter"), false);
+}
+prepareNexonLinkState();
+run("state.characters[0].nexonCharacter = normalizeNexonCharacter({...__linkProfileResponse.character,characterName:__linkProfileResponse.character.name,ocid:__linkProfileResponse.ocid,profileCheckedAt:'2026-09-25T00:00:00.000Z',statsCheckedAt:'2026-09-25T00:00:00.000Z',lastCheckedAt:'2026-09-24T00:00:00.000Z'}); savedRaw=JSON.stringify(state)");
+localMemory.set('maple-income-vercel-v1', run('savedRaw'));
+context.fetch = async target => {
+  const url = String(target);
+  if (url.startsWith('/api/nexon-scheduler?')) return {ok: true, status: 200, json: async () => ({ok: true, mode: 'live', fetchedAt: '2026-09-25T01:00:00.000Z', character: {ocid: '0123456789abcdef0123456789abcdef', name: '넥슨본캐', world: '루나'}, bosses: [], activities: [], diagnostics: {samples: [], activitySamples: []}})};
+  if (url.startsWith('/api/nexon-character?')) return {ok: true, status: 200, json: async () => structuredClone(context.__linkProfileResponse)};
+  throw new Error('unexpected client path: ' + url);
+};
+const existingLinkedResult = await run("syncNexonCharacter('c1',{ignoreCooldown:true})");
+assert.equal(existingLinkedResult.schedulerWarning, undefined);
+assert.equal(run("state.characters[0].nexonCharacter.ocid"), '0123456789abcdef0123456789abcdef');
+delete context.fetch;
 assert.match(nexonCharacterApiSource, /process\.env\.NEXON_OPEN_API_KEY/);
 assert.doesNotMatch(nexonCharacterApiSource, /VITE_NEXON/);
 assert.match(nexonCharacterApiSource, /'x-nxopen-api-key': apiKey/);
@@ -1215,6 +1295,7 @@ const unionPayload = {union_level: 9450, union_grade: '그랜드 마스터 유�
 const apiResponse = (ok, status, payload) => ({ok, status, json: async () => payload});
 const mockCharacterFetch = ({failStat = false, failUnion = false} = {}) => async target => {
   const path = new URL(String(target)).pathname;
+  if (path.endsWith('/maplestory/v1/id')) return apiResponse(true, 200, {ocid: schedulerResponse.character.ocid});
   if (path.endsWith('/character/basic')) return apiResponse(true, 200, basicPayload);
   if (path.endsWith('/character/stat')) return failStat
     ? apiResponse(false, 500, {error: {name: 'OPENAPI00001'}})
@@ -1224,10 +1305,10 @@ const mockCharacterFetch = ({failStat = false, failUnion = false} = {}) => async
     : apiResponse(true, 200, unionPayload);
   throw new Error('unexpected NEXON path: ' + path);
 };
-async function invokeNexonCharacter() {
+async function invokeNexonCharacter(query = {ocid: schedulerResponse.character.ocid}) {
   let status = 0, body = null;
   await nexonCharacterHandler(
-    {method: 'GET', query: {ocid: schedulerResponse.character.ocid}},
+    {method: 'GET', query},
     {status(code) { status = code; return this; }, json(value) { body = value; return this; }, setHeader() {}}
   );
   return {status, body};
@@ -1238,11 +1319,18 @@ try {
   const fullCharacterResponse = await invokeNexonCharacter();
   assert.equal(fullCharacterResponse.status, 200);
   assert.equal(fullCharacterResponse.body.ok, true);
+  assert.equal(fullCharacterResponse.body.ocid, schedulerResponse.character.ocid);
   assert.deepEqual(fullCharacterResponse.body.character, {
     name: '넥슨본캐', world: '루나', className: '나이트로드', level: 286, image: 'https://example.com/profile.png',
     combatPower: 284300000, stats: detailStatsFixture, unionLevel: 9450, unionGrade: '그랜드 마스터 유니온'
   });
   assert.deepEqual(fullCharacterResponse.body.warnings, []);
+
+  nexonCharacterInternals.clearCaches();
+  const characterNameResponse = await invokeNexonCharacter({characterName: '넥슨본캐'});
+  assert.equal(characterNameResponse.status, 200);
+  assert.equal(characterNameResponse.body.ocid, schedulerResponse.character.ocid);
+  assert.equal(characterNameResponse.body.character.name, '넥슨본캐');
 
   nexonCharacterInternals.clearCaches();
   globalThis.fetch = mockCharacterFetch({failStat: true});

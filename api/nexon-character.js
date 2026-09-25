@@ -48,6 +48,10 @@ function validOcid(value) {
   return /^[A-Za-z0-9_-]{16,80}$/.test(value);
 }
 
+function validCharacterName(value) {
+  return typeof value === 'string' && value.trim().length > 0 && value.trim().length <= 40;
+}
+
 function upstreamErrorCode(payload) {
   const value = payload?.error?.name || payload?.code;
   return typeof value === 'string' && value.length <= 80 ? value : '';
@@ -118,9 +122,11 @@ function sanitizeProfile(payload) {
   }};
 }
 
-async function requestNexon(path, ocid, apiKey) {
+async function requestNexon(path, query, apiKey) {
   const target = new URL(path, NEXON_BASE_URL);
-  target.searchParams.set('ocid', ocid);
+  for (const [key, value] of Object.entries(query || {})) {
+    if (value !== undefined && value !== null && String(value) !== '') target.searchParams.set(key, String(value));
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8_000);
   let response;
@@ -150,7 +156,7 @@ async function loadResource(resource, path, ttl, sanitizer, ocid, apiKey) {
   const cache = resourceCaches[resource];
   const cached = cache.get(ocid);
   if (cached && Date.now() - cached.savedAt < ttl) return {...cached, cached: true};
-  const payload = await requestNexon(path, ocid, apiKey);
+  const payload = await requestNexon(path, {ocid}, apiKey);
   // Validate before caching so a transient malformed upstream response does not
   // remain successful for the full resource TTL.
   const value = {savedAt: Date.now(), data: sanitizer(payload)};
@@ -177,8 +183,23 @@ export default async function handler(req, res) {
   if (req.method !== 'GET') return send(res, 405, {ok: false, code: 'METHOD_NOT_ALLOWED', message: 'GET 요청만 사용할 수 있습니다.'});
   const apiKey = process.env.NEXON_OPEN_API_KEY;
   if (!apiKey) return send(res, 503, {ok: false, code: 'NOT_CONFIGURED', message: 'NEXON Open API 환경변수가 설정되지 않았습니다.'});
-  const ocid = String(req.query.ocid || '').trim();
-  if (!validOcid(ocid)) return send(res, 400, {ok: false, ...publicError(400)});
+  let ocid = String(req.query.ocid || '').trim();
+  const characterName = String(req.query.characterName || '').trim();
+  if ((!ocid && !validCharacterName(characterName)) || (ocid && !validOcid(ocid))) {
+    return send(res, 400, {ok: false, ...publicError(400)});
+  }
+
+  if (!ocid) {
+    try {
+      const identity = await requestNexon('/maplestory/v1/id', {character_name: characterName}, apiKey);
+      if (!validOcid(identity?.ocid)) throw Object.assign(new Error('캐릭터 식별자를 확인하지 못했습니다.'), {status: 502, code: 'INVALID_OCID'});
+      ocid = identity.ocid;
+    } catch (error) {
+      const status = Number(error?.status) || 502;
+      const fallback = publicError(status);
+      return send(res, status, {ok: false, code: error?.code || fallback.code, message: error?.message || fallback.message});
+    }
+  }
 
   const requests = [
     ['basic', '/maplestory/v1/character/basic', PROFILE_CACHE_TTL_MS, sanitizeBasic],
@@ -208,6 +229,7 @@ export default async function handler(req, res) {
   return send(res, 200, {
     ok: true,
     fetchedAt: new Date().toISOString(),
+    ocid,
     date: basic.date || '',
     character: {
       name: basic.name || '',
@@ -228,5 +250,5 @@ export default async function handler(req, res) {
 export const nexonCharacterInternals = {
   PROFILE_CACHE_TTL_MS, STAT_CACHE_TTL_MS, UNION_CACHE_TTL_MS,
   clearCaches, publicError, resourceWarning, safeDecimal, safeImageUrl, safeInteger, statDefinitions,
-  sanitizeBasic, sanitizeProfile, sanitizeStat, sanitizeUnion, upstreamErrorCode, validOcid
+  sanitizeBasic, sanitizeProfile, sanitizeStat, sanitizeUnion, upstreamErrorCode, validCharacterName, validOcid
 };
