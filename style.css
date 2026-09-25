@@ -54,6 +54,10 @@ input[type=checkbox]{accent-color:var(--mint);width:21px;min-height:21px;height:
 .metric{background:#0d1c2399;border:1px solid #35504780;padding:11px 12px;border-radius:12px}
 .metric small{color:var(--muted);font-size:11px}
 .metric b{display:block;font-size:16px;margin-top:4px;overflow-wrap:anywhere}
+.hunt-resource-summary{display:grid;gap:4px;margin:9px 0 0;padding-top:8px;border-top:1px solid #35504780}
+.hunt-resource-summary div{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:6px;align-items:baseline}
+.hunt-resource-summary dt{color:var(--muted);font-size:10px}
+.hunt-resource-summary dd{margin:0;text-align:right;font-size:11px;font-weight:650;line-height:1.35;overflow-wrap:anywhere}
 .panel-head{margin-bottom:14px}
 .panel-head p{margin-top:4px}
 .primary,.green,.ghost,.danger{border:1px solid transparent;border-radius:10px;padding:10px 13px;min-height:44px;font-size:13px;font-weight:600}
@@ -357,6 +361,9 @@ main{padding:24px 30px}
 .panel,.summary-main{padding:14px}
 .header-stats strong{font-size:18px}
 .metric b{font-size:14px}
+.metric{padding-left:9px;padding-right:9px}
+.hunt-resource-summary div{grid-template-columns:1fr}
+.hunt-resource-summary dd{text-align:left}
 .panel-head .green{padding:8px;font-size:11px}
 .form-pair{grid-template-columns:1fr}
 .boss-earned{max-width:105px}

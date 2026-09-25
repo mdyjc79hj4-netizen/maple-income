@@ -257,6 +257,20 @@ function incomeValue(r) {
   if (r.netIncome != null) return n(r.netIncome);
   return n(r.qty ?? r.quantity) * n(r.salePrice ?? r.price ?? r.unitPrice) - n(r.materialCost);
 }
+function summarizeHuntRecords(records, weekId = '') {
+  const summary = {mesoAcquired: 0, solErdaPieces: 0};
+  for (const row of records || []) {
+    if (row?.category !== 'hunt') continue;
+    if (weekId && validWeek(row.weekId) && row.weekId !== weekId) continue;
+    const kind = recordKind(row);
+    if (row.item === '메소' && kind === 'income' && row.recordType !== 'sold' && row.saleState !== 'sold' && row.type !== 'sale') {
+      summary.mesoAcquired += n(row.amount ?? row.netIncome);
+    } else if (row.item === '솔 에르다 조각' && kind === 'acquired') {
+      summary.solErdaPieces += Math.max(0, n(row.qty ?? row.quantity));
+    }
+  }
+  return summary;
+}
 function bossValue(b) { return Math.floor(n(b.price) / Math.max(1, n(b.party ?? b.partySize) || 1)); }
 function resetBossWeeklyState(boss) {
   boss.done = false;
@@ -803,6 +817,7 @@ function nexonStatDetails(character) {
 function render() {
   if (selectedWeek && !state.weeklyHistory[selectedWeek]) selectedWeek = '';
   const data = viewData(), totals = isPast() ? snapshotTotals(data) : totalsFor(state), current = totalsFor(state);
+  const huntSummary = summarizeHuntRecords(data.incomes, data.weekId || data.currentWeek || '');
   $('#headerTotal').textContent = koreanMeso(current.total + Object.values(state.weeklyHistory).reduce((sum, s) => sum + snapshotTotals(s).total, 0));
   $('#headerWeek').textContent = koreanMeso(current.total); $('#weekLabel').textContent = shortWeek(state.currentWeek);
   $('#weekSelect').innerHTML = option('', `이번 주 · ${shortWeek(state.currentWeek)}`, !isPast()) + Object.keys(state.weeklyHistory).sort().reverse().map(key => option(key, `${key.slice(0, 4)} · ${validWeek(key) ? shortWeek(key) : key}`, key === selectedWeek)).join('');
@@ -810,7 +825,7 @@ function render() {
   $('#returnCurrent').classList.toggle('hidden', !isPast());
   $('#summaryTitle').textContent = isPast() ? '조회 주차 수익' : '이번 주 수익';
   $('#totalIncome').textContent = koreanMeso(totals.total); $('#totalIncomeText').textContent = `${won(totals.total)} 메소`;
-  $('#metrics').innerHTML = Object.entries(labels).map(([key, label]) => `<div class="metric"><small>${label}</small><b>${money(totals[key])}</b></div>`).join('');
+  $('#metrics').innerHTML = Object.entries(labels).map(([key, label]) => `<div class="metric${key === 'hunt' ? ' metric-hunt' : ''}"><small>${label}</small><b>${money(totals[key])}</b>${key === 'hunt' ? `<dl class="hunt-resource-summary"><div><dt>메소 획득</dt><dd title="${won(huntSummary.mesoAcquired)} 메소">${koreanMeso(huntSummary.mesoAcquired)} 메소</dd></div><div><dt>솔 에르다 조각</dt><dd>${won(huntSummary.solErdaPieces)}개 획득</dd></div></dl>` : ''}</div>`).join('');
   $('#characterList').innerHTML = (data.characters || []).map(c => {
     const s = characterStats(c), percent = s.count ? Math.round(s.done / s.count * 100) : 0;
     const statsExpanded = expandedStatCharacterIds.has(c.id);

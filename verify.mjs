@@ -634,6 +634,25 @@ assert.equal(context.__activityReset.characters[0].weeklyActivities.every(activi
 assert.equal(context.__activityReset.characters[0].weeklyActivities.every(activity => !('manualOverride' in activity)), true);
 
 assert.equal(run('incomeValue({item:"메소",category:"hunt",amount:82000000})'), 82000000);
+context.__huntSummaryRecords = [
+  {id:'meso-direct',category:'hunt',item:'메소',recordType:'income',saleState:'direct',amount:67100000,netIncome:67100000,weekId:'2026-09-17~2026-09-23'},
+  {id:'sol-9',category:'hunt',item:'솔 에르다 조각',recordType:'acquired',saleState:'acquired',qty:9,weekId:'2026-09-17~2026-09-23'},
+  {id:'sol-11',category:'hunt',item:'솔 에르다 조각',recordType:'acquired',saleState:'acquired',quantity:11,weekId:'2026-09-17~2026-09-23'},
+  {id:'sol-10',category:'hunt',item:'솔 에르다 조각',recordType:'acquired',saleState:'acquired',qty:10,weekId:'2026-09-17~2026-09-23'},
+  {id:'sol-sale',category:'hunt',item:'솔 에르다 조각',recordType:'sold',saleState:'sold',qty:20,netSale:95000000,weekId:'2026-09-17~2026-09-23'},
+  {id:'gem-sale',category:'hunt',item:'코어 젬스톤',recordType:'sold',saleState:'sold',qty:2,netSale:1900000,weekId:'2026-09-17~2026-09-23'},
+  {id:'other-meso',category:'drop',item:'메소',recordType:'income',saleState:'direct',amount:5000000,weekId:'2026-09-17~2026-09-23'},
+  {id:'other-week-meso',category:'hunt',item:'메소',recordType:'income',saleState:'direct',amount:3000000,weekId:'2026-09-10~2026-09-16'},
+  {id:'other-week-sol',category:'hunt',item:'솔 에르다 조각',recordType:'acquired',saleState:'acquired',qty:7,weekId:'2026-09-10~2026-09-16'}
+];
+assert.deepEqual(json("summarizeHuntRecords(__huntSummaryRecords, '2026-09-17~2026-09-23')"), {mesoAcquired: 67100000, solErdaPieces: 30});
+assert.deepEqual(json("summarizeHuntRecords(__huntSummaryRecords, '2026-09-10~2026-09-16')"), {mesoAcquired: 3000000, solErdaPieces: 7});
+assert.equal(run("totalsFor({characters:[],incomes:__huntSummaryRecords.filter(row => row.weekId === '2026-09-17~2026-09-23')}).hunt"), 164000000);
+assert.equal(run("summarizeHuntRecords([{category:'hunt',item:'메소',recordType:'sold',saleState:'sold',type:'sale',amount:7000000}], '').mesoAcquired"), 0);
+assert.deepEqual(json("summarizeHuntRecords([], '2026-09-17~2026-09-23')"), {mesoAcquired: 0, solErdaPieces: 0});
+assert.match(source, /summarizeHuntRecords\(data\.incomes, data\.weekId \|\| data\.currentWeek \|\| ''\)/);
+assert.match(source, /class="hunt-resource-summary"/);
+assert.match(css, /\.hunt-resource-summary\{/);
 assert.deepEqual(json('saleAmounts(1, 7000000, 0.05)'), {feeRate: 0.05, grossSale: 7000000, feeAmount: 350000, netSale: 6650000});
 assert.deepEqual(json('saleAmounts(1, 7000000, 0.03)'), {feeRate: 0.03, grossSale: 7000000, feeAmount: 210000, netSale: 6790000});
 assert.deepEqual(json('saleAmounts(2, 7000000, 0.03)'), {feeRate: 0.03, grossSale: 14000000, feeAmount: 420000, netSale: 13580000});
