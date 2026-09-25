@@ -1019,6 +1019,24 @@ assert.equal(nexonProxyInternals.publicError(403).code, 'FORBIDDEN');
 assert.equal(nexonProxyInternals.publicError(429).code, 'RATE_LIMITED');
 assert.equal(nexonProxyInternals.publicError(500).code, 'UPSTREAM_ERROR');
 assert.equal(nexonProxyInternals.publicError(503).code, 'UPSTREAM_ERROR');
+const liveSchedulerUrl = nexonProxyInternals.buildNexonUrl('/maplestory/v1/scheduler/character-state', {ocid: schedulerResponse.character.ocid, date: ''});
+assert.equal(liveSchedulerUrl.pathname, '/maplestory/v1/scheduler/character-state');
+assert.equal(liveSchedulerUrl.searchParams.get('ocid'), schedulerResponse.character.ocid);
+assert.equal(liveSchedulerUrl.searchParams.has('date'), false);
+const historicalSchedulerUrl = nexonProxyInternals.buildNexonUrl('/maplestory/v1/scheduler/character-state', {ocid: schedulerResponse.character.ocid, date: '2026-09-20'});
+assert.equal(historicalSchedulerUrl.searchParams.get('date'), '2026-09-20');
+const parsedUpstream400 = nexonProxyInternals.upstreamErrorDetails({
+  error: {name: 'OPENAPI00003', message: 'invalid ocid 0123456789abcdef0123456789abcdef\n x-nxopen-api-key=top-secret-value'},
+  headers: {authorization: 'Bearer should-not-escape'}, secret: 'should-not-escape'
+}, 400);
+assert.equal(parsedUpstream400.upstreamCode, 'OPENAPI00003');
+assert.equal(parsedUpstream400.category, 'invalid_identifier');
+assert.doesNotMatch(parsedUpstream400.upstreamMessage, /0123456789abcdef|top-secret-value|\n/);
+assert.match(parsedUpstream400.upstreamMessage, /\[식별자 숨김\]|\[숨김\]/);
+assert.deepEqual(nexonProxyInternals.upstreamErrorDetails({error: {name: 'OPENAPI00009', message: 'data preparing'}}, 400), {
+  upstreamCode: 'OPENAPI00009', upstreamMessage: 'data preparing', category: 'data_preparing'
+});
+assert.equal(nexonProxyInternals.schedulerErrorMessage(400, parsedUpstream400), 'NEXON scheduler에서 이 캐릭터를 조회할 수 없습니다. API Key 소유 계정의 캐릭터인지 확인해주세요.');
 assert.match(nexonApiSource, /process\.env\.NEXON_OPEN_API_KEY/);
 assert.doesNotMatch(nexonApiSource, /VITE_NEXON/);
 assert.match(nexonApiSource, /'x-nxopen-api-key': apiKey/);
@@ -1120,11 +1138,23 @@ for (const status of [400, 403, 429, 500]) {
   context.fetch = async target => {
     const url = String(target);
     if (url.startsWith('/api/nexon-character?')) return {ok: true, status: 200, json: async () => structuredClone(context.__linkProfileResponse)};
-    if (url.startsWith('/api/nexon-scheduler?')) return {ok: false, status, json: async () => ({ok: false, code: `SCHEDULER_${status}`, message: 'scheduler failed'})};
+    if (url.startsWith('/api/nexon-scheduler?')) return {ok: false, status, json: async () => ({
+      ok: false,
+      code: status === 400 ? 'OPENAPI00003' : `SCHEDULER_${status}`,
+      message: status === 400 ? 'NEXON scheduler에서 이 캐릭터를 조회할 수 없습니다.' : 'scheduler failed',
+      ...(status === 400 ? {category: 'invalid_identifier', source: 'nexon_upstream', upstreamMessage: 'invalid identifier'} : {})
+    })};
     throw new Error('unexpected client path: ' + url);
   };
   const result = await run("syncNexonCharacter('c1',{characterName:'넥슨본캐'})");
   assert.equal(result.schedulerWarning.status, status);
+  if (status === 400) {
+    assert.equal(result.schedulerWarning.code, 'OPENAPI00003');
+    assert.equal(result.schedulerWarning.category, 'invalid_identifier');
+    assert.equal(result.schedulerWarning.source, 'nexon_upstream');
+    assert.equal(result.schedulerWarning.upstreamMessage, 'invalid identifier');
+    assert.match(result.schedulerWarning.message, /이 캐릭터를 조회할 수 없습니다/);
+  }
   assert.equal(run("state.characters[0].nexonCharacter.ocid"), '0123456789abcdef0123456789abcdef');
   assert.equal(run("state.characters[0].nexonCharacter.characterName"), '넥슨본캐');
 }
@@ -1278,6 +1308,44 @@ await nexonCharacterHandler(
 assert.equal(missingProfileKeyStatus, 503);
 assert.equal(missingProfileKeyBody.code, 'NOT_CONFIGURED');
 process.env.NEXON_OPEN_API_KEY = 'test-only-key';
+const schedulerFetchBeforeDiagnosticTest = globalThis.fetch;
+const consoleErrorBeforeDiagnosticTest = console.error;
+let capturedSchedulerTarget = '';
+try {
+  console.error = () => {};
+  globalThis.fetch = async target => {
+    capturedSchedulerTarget = String(target);
+    return {ok: false, status: 400, json: async () => ({
+      error: {name: 'OPENAPI00003', message: `invalid identifier ${schedulerResponse.character.ocid}`},
+      apiKey: 'must-not-escape', headers: {authorization: 'must-not-escape'}
+    })};
+  };
+  let diagnosticStatus = 0, diagnosticBody = null;
+  await nexonSchedulerHandler(
+    {method: 'GET', query: {ocid: schedulerResponse.character.ocid}},
+    {status(code) { diagnosticStatus = code; return this; }, json(body) { diagnosticBody = body; return this; }, setHeader() {}}
+  );
+  assert.equal(diagnosticStatus, 400);
+  assert.equal(diagnosticBody.code, 'OPENAPI00003');
+  assert.equal(diagnosticBody.category, 'invalid_identifier');
+  assert.equal(diagnosticBody.source, 'nexon_upstream');
+  assert.match(diagnosticBody.message, /API Key 소유 계정/);
+  assert.doesNotMatch(JSON.stringify(diagnosticBody), /must-not-escape|0123456789abcdef/);
+  const capturedUrl = new URL(capturedSchedulerTarget);
+  assert.equal(capturedUrl.searchParams.get('ocid'), schedulerResponse.character.ocid);
+  assert.equal(capturedUrl.searchParams.has('date'), false);
+} finally {
+  globalThis.fetch = schedulerFetchBeforeDiagnosticTest;
+  console.error = consoleErrorBeforeDiagnosticTest;
+}
+let proxyValidationStatus = 0, proxyValidationBody = null;
+await nexonSchedulerHandler(
+  {method: 'GET', query: {ocid: 'invalid ocid'}},
+  {status(code) { proxyValidationStatus = code; return this; }, json(body) { proxyValidationBody = body; return this; }, setHeader() {}}
+);
+assert.equal(proxyValidationStatus, 400);
+assert.equal(proxyValidationBody.code, 'BAD_REQUEST');
+assert.equal(proxyValidationBody.source, 'proxy_validation');
 let invalidProfileOcidStatus = 0, invalidProfileOcidBody = null;
 await nexonCharacterHandler(
   {method: 'GET', query: {ocid: 'invalid ocid'}},

@@ -923,7 +923,9 @@ function nexonProfileFailure(character, error, nexonCharacter = '') {
 }
 function nexonSchedulerWarning(character, error) {
   const status = Number(error?.status) || 0;
-  const message = status === 403
+  const message = status === 400 && error?.category && error.category !== 'unknown_upstream_error'
+    ? `NEXON 캐릭터 연동 완료 · ${error.message}`
+    : status === 403
     ? 'NEXON 캐릭터 연동 완료 · 주간 기록 조회 권한을 확인해주세요.'
     : status === 429
       ? 'NEXON 캐릭터 연동 완료 · 잠시 후 주간 기록을 다시 확인해주세요.'
@@ -935,6 +937,9 @@ function nexonSchedulerWarning(character, error) {
     nexonCharacter: character?.nexonCharacter?.characterName || '',
     status,
     code: typeof error?.code === 'string' ? error.code : 'SCHEDULER_ERROR',
+    category: typeof error?.category === 'string' ? error.category : '',
+    source: typeof error?.source === 'string' ? error.source : '',
+    upstreamMessage: typeof error?.upstreamMessage === 'string' ? error.upstreamMessage : '',
     message
   };
 }
@@ -1034,7 +1039,7 @@ function renderNexonDiagnostics() {
   const groups = nexonDiagnosticGroups(result);
   const samples = (result.diagnosticSamples || []).slice(0, 30), completedItems = result.completedItems || [];
   const activitySamples = (result.diagnosticActivitySamples || []).slice(0, 30), completedActivities = result.activityCompletedItems || [];
-  const schedulerWarningHtml = result.schedulerWarning ? `<section class="nexon-completed-items"><b>주간 기록 조회 경고</b><p>${escapeHtml(result.schedulerWarning.message || '')}</p><small>HTTP ${escapeHtml(String(result.schedulerWarning.status || '-'))} · ${escapeHtml(result.schedulerWarning.code || 'SCHEDULER_ERROR')}</small></section>` : '';
+  const schedulerWarningHtml = result.schedulerWarning ? `<section class="nexon-completed-items"><b>주간 기록 조회 경고</b><p>${escapeHtml(result.schedulerWarning.message || '')}</p><small>HTTP ${escapeHtml(String(result.schedulerWarning.status || '-'))} · ${escapeHtml(result.schedulerWarning.code || 'SCHEDULER_ERROR')}${result.schedulerWarning.category ? ` · ${escapeHtml(result.schedulerWarning.category)}` : ''}${result.schedulerWarning.source ? ` · ${escapeHtml(result.schedulerWarning.source)}` : ''}</small>${result.schedulerWarning.upstreamMessage ? `<p class="muted">NEXON 응답: ${escapeHtml(result.schedulerWarning.upstreamMessage)}</p>` : ''}</section>` : '';
   const summary = [['보스 조회', result.fetched], ['보스 완료', result.apiCompleted], ['메기 매칭', result.matched], ['보스 자동 완료', result.autoCompleted], ['콘텐츠 조회', result.activitiesFetched], ['콘텐츠 완료', result.apiActivitiesCompleted], ['콘텐츠 자동 완료', result.activityAutoCompleted], ['매칭 실패', nexonDiagnosticFailureCount(result)], ['프로필 실패', result.profileFailures?.length || 0]];
   const completedHtml = `<section class="nexon-completed-items"><b>완료 항목 ${completedItems.length}</b>${completedItems.length ? completedItems.map(item => `<article class="nexon-completed-item"><small>${escapeHtml(item.character || '(메기 캐릭터 없음)')}${item.nexonCharacter ? ` → ${escapeHtml(item.nexonCharacter)}` : ''}</small><p>${escapeHtml(item.contentName || '(이름 없음)')} · ${escapeHtml(item.difficulty || '(난이도 없음)')} · ${escapeHtml(item.cycle || '(cycle 없음)')}</p><strong>→ ${escapeHtml(nexonCompletionResultLabel(item.result))}</strong></article>`).join('') : '<p class="muted">완료로 반환된 항목이 없습니다.</p>'}</section>`;
   const activityCompletedHtml = `<section class="nexon-completed-items"><b>완료 콘텐츠 ${completedActivities.length}</b>${completedActivities.length ? completedActivities.map(item => `<article class="nexon-completed-item"><small>${escapeHtml(item.character || '(메기 캐릭터 없음)')}${item.nexonCharacter ? ` → ${escapeHtml(item.nexonCharacter)}` : ''}</small><p>${escapeHtml(item.contentName || '(이름 없음)')} · ${escapeHtml(item.activityType || '(유형 없음)')}</p><strong>→ ${escapeHtml(nexonCompletionResultLabel(item.result))}</strong></article>`).join('') : '<p class="muted">완료로 확인된 지원 콘텐츠가 없습니다.</p>'}</section>`;
@@ -1090,7 +1095,12 @@ async function fetchNexonScheduler(character, characterName = '', requestDate = 
   try { data = await response.json(); } catch { throw new Error('NEXON API 응답을 읽지 못했습니다.'); }
   if (!response.ok || !data?.ok) {
     const error = new Error(data?.message || 'NEXON 주간 기록을 확인하지 못했습니다.');
-    error.status = response.status; error.code = data?.code || 'SCHEDULER_REQUEST_FAILED'; throw error;
+    error.status = response.status;
+    error.code = data?.code || 'SCHEDULER_REQUEST_FAILED';
+    error.category = data?.category || '';
+    error.source = data?.source || '';
+    error.upstreamMessage = data?.upstreamMessage || '';
+    throw error;
   }
   return data;
 }

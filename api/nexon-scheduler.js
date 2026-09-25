@@ -37,9 +37,55 @@ function publicError(status) {
   };
 }
 
-async function requestNexon(path, params, apiKey) {
+function sanitizeUpstreamText(value) {
+  if (typeof value !== 'string') return '';
+  return value
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/(bearer|x-nxopen-api-key)\s*[:=]?\s*[^\s,;]+/gi, '$1 [숨김]')
+    .replace(/[A-Za-z0-9_-]{16,}/g, '[식별자 숨김]')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160);
+}
+
+function upstreamErrorDetails(payload, status) {
+  const rawCode = payload?.error?.name;
+  const upstreamCode = typeof rawCode === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(rawCode) ? rawCode : '';
+  const upstreamMessage = sanitizeUpstreamText(payload?.error?.message);
+  const categoryByCode = {
+    OPENAPI00003: 'invalid_identifier',
+    OPENAPI00004: 'invalid_parameter',
+    OPENAPI00005: 'invalid_api_key',
+    OPENAPI00006: 'invalid_path',
+    OPENAPI00009: 'data_preparing',
+    OPENAPI00010: 'game_maintenance',
+    OPENAPI00011: 'upstream_unavailable'
+  };
+  const category = categoryByCode[upstreamCode]
+    || (status === 403 ? 'forbidden' : status === 429 ? 'rate_limited' : status >= 500 ? 'upstream_unavailable' : 'unknown_upstream_error');
+  return {upstreamCode, upstreamMessage, category};
+}
+
+function schedulerErrorMessage(status, details) {
+  if (details.category === 'invalid_identifier') return 'NEXON scheduler에서 이 캐릭터를 조회할 수 없습니다. API Key 소유 계정의 캐릭터인지 확인해주세요.';
+  if (details.category === 'invalid_parameter') return 'NEXON scheduler 요청 파라미터가 유효하지 않습니다.';
+  if (details.category === 'invalid_api_key') return 'NEXON Open API Key 설정을 확인해주세요.';
+  if (details.category === 'invalid_path') return 'NEXON scheduler API 경로가 유효하지 않습니다.';
+  if (details.category === 'data_preparing') return 'NEXON scheduler 데이터가 아직 준비 중입니다. 잠시 후 다시 확인해주세요.';
+  if (details.category === 'game_maintenance') return '메이플스토리 점검 중에는 주간 기록을 조회할 수 없습니다.';
+  return publicError(status).message;
+}
+
+function buildNexonUrl(path, params = {}) {
   const target = new URL(path, NEXON_BASE_URL);
-  for (const [key, value] of Object.entries(params)) if (value) target.searchParams.set(key, value);
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && String(value) !== '') target.searchParams.set(key, String(value));
+  }
+  return target;
+}
+
+async function requestNexon(path, params, apiKey) {
+  const target = buildNexonUrl(path, params);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8_000);
   let response;
@@ -53,7 +99,22 @@ async function requestNexon(path, params, apiKey) {
   }
   if (!response.ok) {
     const status = [400, 403, 429, 500, 503].includes(response.status) ? response.status : 502;
-    throw Object.assign(new Error(publicError(status).message), {status});
+    let payload = null;
+    try { payload = await response.json(); } catch {}
+    const details = upstreamErrorDetails(payload, status);
+    console.error('NEXON scheduler upstream request failed', {
+      endpoint: path.replace(/^\/maplestory\/v1\//, ''),
+      status,
+      upstreamCode: details.upstreamCode,
+      upstreamMessage: details.upstreamMessage
+    });
+    throw Object.assign(new Error(schedulerErrorMessage(status, details)), {
+      status,
+      code: details.upstreamCode || publicError(status).code,
+      category: details.category,
+      source: 'nexon_upstream',
+      upstreamMessage: details.upstreamMessage
+    });
   }
   try {
     return await response.json();
@@ -152,7 +213,7 @@ export default async function handler(req, res) {
   let ocid = String(req.query.ocid || '').trim();
   const date = String(req.query.date || '').trim();
   if ((!characterName && !ocid) || characterName.length > 40 || (ocid && !validOcid(ocid)) || !validDate(date)) {
-    return send(res, 400, {ok: false, ...publicError(400)});
+    return send(res, 400, {ok: false, ...publicError(400), category: 'invalid_request', source: 'proxy_validation'});
   }
   const cacheKey = (ocid || 'name:' + characterName) + ':' + (date || 'live');
   const cached = cache.get(cacheKey);
@@ -169,8 +230,16 @@ export default async function handler(req, res) {
     return send(res, 200, value);
   } catch (error) {
     const status = Number(error?.status) || 502;
-    return send(res, status, {ok: false, ...publicError(status), message: error?.message || publicError(status).message});
+    const fallback = publicError(status);
+    return send(res, status, {
+      ok: false,
+      code: error?.code || fallback.code,
+      message: error?.message || fallback.message,
+      category: error?.category || (status >= 500 ? 'upstream_unavailable' : 'unknown_upstream_error'),
+      source: error?.source || 'proxy_runtime',
+      ...(error?.upstreamMessage ? {upstreamMessage: error.upstreamMessage} : {})
+    });
   }
 }
 
-export const nexonProxyInternals = {diagnosticRaw, diagnosticSample, parseFlag, publicError, sanitizeScheduler, sanitizeWeeklyContent, validDate, validOcid};
+export const nexonProxyInternals = {buildNexonUrl, diagnosticRaw, diagnosticSample, parseFlag, publicError, sanitizeScheduler, sanitizeUpstreamText, sanitizeWeeklyContent, schedulerErrorMessage, upstreamErrorDetails, validDate, validOcid};
