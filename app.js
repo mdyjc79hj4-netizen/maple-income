@@ -971,8 +971,8 @@ function reconcileCloudSelection(previousBossCharacterId, previousWeek, nextStat
 function applyCloudState(raw) {
   if (storageBlocked) throw new Error('로컬 저장소를 사용할 수 없어 클라우드 데이터를 적용할 수 없습니다.');
   const previousBossCharacterId = selectedBossCharacterId, previousWeek = selectedWeek;
-  const next = migrateState(raw), previousWeek = next.currentWeek, rolled = rollover(next);
-  const changedWeek = previousWeek !== next.currentWeek;
+  const next = migrateState(raw), previousDataWeek = next.currentWeek, rolled = rollover(next);
+  const changedWeek = previousDataWeek !== next.currentWeek;
   persist(next, {touch: rolled, notify: rolled});
   const selection = reconcileCloudSelection(previousBossCharacterId, previousWeek, state);
   selectedBossCharacterId = selection.bossCharacterId; selectedWeek = selection.week;
