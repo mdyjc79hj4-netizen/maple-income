@@ -11,7 +11,7 @@
 <body>
 <div class="app">
   <header class="top">
-    <div class="brand-row"><h1><span class="brand-mark" aria-hidden="true">m.</span>메기</h1><span class="device-save" id="syncBadge"><i></i><span>이 기기에 저장</span></span></div>
+    <div class="brand-row"><h1><span class="brand-mark" aria-hidden="true">m.</span>메기</h1><span class="device-save" id="syncBadge" data-sync-state="local"><i></i><span>이 기기에 저장 중</span></span></div>
     <div class="header-stats"><div><small>총수익</small><strong id="headerTotal">0</strong></div><div><small>이번 주</small><strong id="headerWeek">0</strong></div></div>
     <p class="sub" id="weekLabel"></p>
   </header>
@@ -56,6 +56,7 @@
       </fieldset></form>
       <div class="section-divider"><h3>저장내역</h3><span class="muted">최근 기록부터</span></div>
       <div class="chip-scroll" id="historyFilters" role="group" aria-label="저장내역 필터"><button class="chip active" data-history-filter="all" aria-pressed="true">전체</button><button class="chip" data-history-filter="hunt" aria-pressed="false">재획</button><button class="chip" data-history-filter="gather" aria-pressed="false">채집</button><button class="chip" data-history-filter="drop" aria-pressed="false">드랍·기타</button><button class="chip" data-history-filter="sold" aria-pressed="false">판매완료</button><button class="chip" data-history-filter="unsold" aria-pressed="false">미판매</button></div>
+      <div class="history-desktop-head" aria-hidden="true"><span>유형</span><span>항목</span><span>내용</span><span>결과 금액</span><span>기록시간</span><span></span></div>
       <div id="incomeHistory" class="history compact-history"></div>
     </section>
     <section class="panel hidden" data-page="price" id="priceTab">

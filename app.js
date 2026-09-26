@@ -682,6 +682,32 @@ const NEXON_CHECK_COOLDOWN_MS = 60_000;
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 function message(text, error = false) { $('#status').textContent = text; $('#status').classList.toggle('error', error); }
+const syncBadgeLabels = {
+  '이 기기에 저장': ['이 기기에 저장 중', 'local'],
+  '이 기기에 저장 중': ['이 기기에 저장 중', 'local'],
+  '동기화 대기': ['클라우드 동기화 대기', 'pending'],
+  '동기화 중': ['클라우드 동기화 중…', 'pending'],
+  '최신 상태': ['클라우드 동기화 완료', 'synced'],
+  '오프라인 저장 중': ['오프라인 · 이 기기에 저장 중', 'offline'],
+  '충돌 병합 완료': ['클라우드 병합 완료', 'synced'],
+  '동기화 실패': ['동기화 확인 필요', 'error']
+};
+function normalizeSyncBadge() {
+  const badge = $('#syncBadge'), label = badge?.querySelector('span');
+  if (!badge || !label) return;
+  const mapped = syncBadgeLabels[label.textContent.trim()];
+  if (!mapped) return;
+  const [text, stateName] = mapped;
+  badge.dataset.syncState = stateName;
+  if (label.textContent !== text) label.textContent = text;
+}
+function watchSyncBadge() {
+  const badge = $('#syncBadge'), label = badge?.querySelector('span');
+  if (!badge || !label || typeof MutationObserver === 'undefined') return;
+  normalizeSyncBadge();
+  const observer = new MutationObserver(normalizeSyncBadge);
+  observer.observe(label, {childList: true, characterData: true, subtree: true});
+}
 function nextUpdatedAt(previous) {
   const prior = Date.parse(previous || '');
   return new Date(Math.max(Date.now(), Number.isNaN(prior) ? 0 : prior + 1)).toISOString();
@@ -885,15 +911,23 @@ function renderHistory(data) {
   $('#incomeHistory').innerHTML = rows.map(({row: r}) => {
     const kind = recordKind(r), value = incomeValue(r), qty = won(r.qty ?? r.quantity);
     const feeRecorded = kind === 'sold' && r.feeRate != null && r.grossSale != null && r.feeAmount != null && r.netSale != null;
+    const category = escapeHtml(labels[r.category] || r.categoryLabel || '기타');
+    const item = escapeHtml(r.item);
+    const unitPrice = n(r.salePrice ?? r.price ?? r.unitPrice);
     const detail = kind === 'income'
-      ? `${value >= 0 ? '+' : ''}${won(value)} 메소`
+      ? '직접 획득'
       : kind === 'acquired'
         ? `${qty}개 · 미판매`
         : feeRecorded
-          ? `판매가 ${koreanMeso(r.grossSale)} · 수수료 ${saleFeePercent(r.feeRate)}% ${koreanMeso(r.feeAmount)}`
+          ? `${qty}개 판매 · 개당 ${koreanMeso(unitPrice)} · 수수료 ${saleFeePercent(r.feeRate)}%`
           : `${qty}개 판매 · 기존 계산값`;
+    const result = kind === 'income'
+      ? `<small>획득</small><span class="${value < 0 ? 'negative' : 'mint'}">${value >= 0 ? '+' : ''}${koreanMeso(value)}</span>`
+      : kind === 'sold'
+        ? `<small>실수령</small><span class="${value < 0 ? 'negative' : 'mint'}">${value >= 0 ? '+' : ''}${koreanMeso(value)}</span>`
+        : '<span class="muted">—</span>';
     const disabled = isPast() || storageBlocked;
-    return `<article class="history-item compact-record"><div class="record-copy"><b>${escapeHtml(labels[r.category] || r.categoryLabel || '기타')} · ${escapeHtml(r.item)}</b><p class="${kind === 'acquired' ? 'pending' : value < 0 ? 'negative' : 'mint'} ${feeRecorded ? 'sale-detail' : ''}">${escapeHtml(detail)}</p><small class="muted">${escapeHtml(historyDate(r))}${r.memo ? ` · ${escapeHtml(r.memo)}` : ''}</small></div>${kind === 'sold' ? `<strong class="${value < 0 ? 'negative' : 'mint'}"><small>실수령</small>${value >= 0 ? '+' : ''}${koreanMeso(value)}</strong>` : ''}<details class="more-menu record-more ${disabled ? 'hidden' : ''}"><summary aria-label="${escapeHtml(r.item)} 기록 메뉴">⋯</summary><div class="more-menu-popover"><button type="button" data-income-action="edit" data-income-id="${escapeHtml(r.id)}">수정</button><button type="button" class="danger-text" data-income-action="delete" data-income-id="${escapeHtml(r.id)}">삭제</button></div></details></article>`;
+    return `<article class="history-item compact-record"><span class="record-category">${category}</span><div class="record-item"><b><span class="record-category-inline">${category} · </span>${item}</b>${r.memo ? `<small class="record-memo muted">${escapeHtml(r.memo)}</small>` : ''}</div><p class="record-detail ${kind === 'acquired' ? 'pending' : value < 0 ? 'negative' : 'mint'}">${escapeHtml(detail)}</p><strong class="record-value">${result}</strong><small class="record-time muted">${escapeHtml(historyDate(r))}</small><details class="more-menu record-more ${disabled ? 'hidden' : ''}"><summary aria-label="${item} 기록 메뉴">⋯</summary><div class="more-menu-popover"><button type="button" data-income-action="edit" data-income-id="${escapeHtml(r.id)}">수정</button><button type="button" class="danger-text" data-income-action="delete" data-income-id="${escapeHtml(r.id)}">삭제</button></div></details></article>`;
   }).join('') || '<p class="empty">이 필터에 해당하는 기록이 없습니다.</p>';
 }
 function renderPrices() {
@@ -1459,7 +1493,7 @@ function init() {
       if (avatar) avatar.hidden = true;
     }
   }, true);
-  loadState(); renderIncomeForm(true); render(); if (!storageBlocked) message('이 기기에 자동 저장됩니다.');
+  loadState(); watchSyncBadge(); renderIncomeForm(true); render(); if (!storageBlocked) message('이 기기에 자동 저장됩니다.');
   $('#weekSelect').addEventListener('change', e => { selectedWeek = e.target.value; render(); });
   $('#returnCurrent').addEventListener('click', () => { selectedWeek = ''; render(); });
   $('#characterList').addEventListener('click', e => {
