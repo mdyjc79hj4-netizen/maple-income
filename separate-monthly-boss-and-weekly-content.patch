@@ -1,0 +1,651 @@
+diff --git a/app.js b/app.js
+--- a/app.js
++++ b/app.js
+@@ -6 +6 @@
+-const STATE_VERSION = 7;
++const STATE_VERSION = 8;
+@@ -175 +175,11 @@
+ function dateKey(date) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; }
++function monthKey(date = new Date()) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`; }
++function monthLabel(value) {
++  const [year, month] = String(value || '').split('-');
++  return year && month ? `${year}년 ${n(month)}월` : String(value || '');
++}
++function weekEndReference(weekId, fallback = new Date()) {
++  if (!validWeek(weekId)) return fallback;
++  const end = weekId.split('~')[1], date = new Date(`${end}T12:00:00`);
++  return Number.isNaN(date.getTime()) ? fallback : date;
++}
+@@ -221,13 +221,17 @@
+   const manualOverride = typeof source.manualOverride === 'boolean' ? source.manualOverride : undefined;
+   const done = manualOverride == null ? !!source.done : manualOverride;
++  const monthlyCompletions = normalizeMonthlyCompletions(source.monthlyCompletions);
+   return {
+     bossId, name, difficulty, party: partySize, partySize,
+     price: source.price == null ? referencePrice(name, difficulty) : n(source.price),
+     done,
+     ...(!done || source.completedIncome == null ? {} : {completedIncome: n(source.completedIncome)}),
++    ...(Object.keys(monthlyCompletions).length ? {monthlyCompletions} : {}),
+     ...(typeof source.apiCompleted === 'boolean' ? {apiCompleted: source.apiCompleted} : {}),
+     ...(typeof source.manualOverride === 'boolean' ? {manualOverride: source.manualOverride} : {}),
+-    ...(['manual', 'nexon-api'].includes(source.completionSource) ? {completionSource: source.completionSource} : {}),
++    ...(typeof source.manualOverrideMonth === 'string' ? {manualOverrideMonth: source.manualOverrideMonth} : {}),
++    ...(['manual', 'nexon-api', 'migration'].includes(source.completionSource) ? {completionSource: source.completionSource} : {}),
+     ...(typeof source.apiCheckedWeek === 'string' ? {apiCheckedWeek: source.apiCheckedWeek} : {}),
++    ...(typeof source.apiCheckedMonth === 'string' ? {apiCheckedMonth: source.apiCheckedMonth} : {}),
+     ...(typeof source.apiCompletedAt === 'string' ? {apiCompletedAt: source.apiCompletedAt} : {})
+   };
+@@ -274,5 +274,77 @@
+ function bossValue(b) { return Math.floor(n(b.price) / Math.max(1, n(b.party ?? b.partySize) || 1)); }
++function isMonthlyBoss(boss) { return boss?.bossId === 'black-mage' || canonicalBossName(boss?.name) === '검은 마법사'; }
++function normalizeMonthlyCompletions(value) {
++  const result = {};
++  if (!value || typeof value !== 'object' || Array.isArray(value)) return result;
++  for (const [month, raw] of Object.entries(value)) {
++    if (!/^\d{4}-\d{2}$/.test(month) || !raw || typeof raw !== 'object' || !validWeek(raw.weekId)) continue;
++    const entry = {weekId: raw.weekId, income: Math.max(0, Math.trunc(n(raw.income)))};
++    if (typeof raw.completedAt === 'string' && !Number.isNaN(Date.parse(raw.completedAt))) entry.completedAt = raw.completedAt;
++    if (['manual', 'nexon-api', 'migration'].includes(raw.source)) entry.source = raw.source;
++    result[month] = entry;
++  }
++  return result;
++}
++function monthlyBossIncomeForWeek(boss, weekId = '') {
++  return Object.values(normalizeMonthlyCompletions(boss?.monthlyCompletions))
++    .filter(entry => !weekId || entry.weekId === weekId)
++    .reduce((sum, entry) => sum + n(entry.income), 0);
++}
++function syncMonthlyBossCurrentState(boss, now = new Date()) {
++  if (!isMonthlyBoss(boss)) return false;
++  const before = JSON.stringify(boss), currentMonth = monthKey(now);
++  boss.monthlyCompletions = normalizeMonthlyCompletions(boss.monthlyCompletions);
++  if (boss.manualOverrideMonth && boss.manualOverrideMonth !== currentMonth) {
++    delete boss.manualOverride;
++    delete boss.manualOverrideMonth;
++  }
++  if (boss.apiCheckedMonth && boss.apiCheckedMonth !== currentMonth) {
++    delete boss.apiCompleted;
++    delete boss.apiCheckedMonth;
++    delete boss.apiCompletedAt;
++  }
++  const entry = boss.monthlyCompletions[currentMonth];
++  const blocked = boss.manualOverride === false && boss.manualOverrideMonth === currentMonth;
++  boss.done = !!entry && !blocked;
++  if (boss.done) {
++    boss.completedIncome = n(entry.income);
++    boss.completionSource = entry.source || boss.completionSource || 'manual';
++  } else {
++    delete boss.completedIncome;
++    if (!blocked) delete boss.completionSource;
++  }
++  return before !== JSON.stringify(boss);
++}
++function recordMonthlyBossCompletion(boss, completionMonth, weekId, options = {}) {
++  if (!isMonthlyBoss(boss) || !/^\d{4}-\d{2}$/.test(completionMonth) || !validWeek(weekId)) return false;
++  const now = options.now instanceof Date ? options.now : new Date(options.now || Date.now());
++  const history = normalizeMonthlyCompletions(boss.monthlyCompletions);
++  const entry = {weekId, income: Math.max(0, Math.trunc(n(options.income ?? bossValue(boss))))};
++  if (typeof options.completedAt === 'string' && !Number.isNaN(Date.parse(options.completedAt))) entry.completedAt = options.completedAt;
++  if (['manual', 'nexon-api', 'migration'].includes(options.source)) entry.source = options.source;
++  history[completionMonth] = entry;
++  boss.monthlyCompletions = history;
++  if (completionMonth === monthKey(now)) {
++    boss.done = true;
++    boss.completedIncome = entry.income;
++    boss.completionSource = entry.source || 'manual';
++  }
++  return true;
++}
++function clearMonthlyBossCompletion(boss, completionMonth, now = new Date()) {
++  if (!isMonthlyBoss(boss)) return false;
++  const history = normalizeMonthlyCompletions(boss.monthlyCompletions), existed = Object.hasOwn(history, completionMonth);
++  delete history[completionMonth];
++  boss.monthlyCompletions = history;
++  if (completionMonth === monthKey(now)) {
++    boss.done = false;
++    delete boss.completedIncome;
++    delete boss.completionSource;
++  }
++  return existed;
++}
+ function resetBossWeeklyState(boss) {
++  if (isMonthlyBoss(boss)) return;
+   boss.done = false;
+   delete boss.completedIncome;
+   delete boss.apiCompleted;
+@@ -281,3 +353,14 @@
+   delete boss.apiCheckedWeek;
+   delete boss.apiCompletedAt;
+ }
++function resetBossCurrentPeriodState(boss, now = new Date()) {
++  if (!isMonthlyBoss(boss)) { resetBossWeeklyState(boss); return; }
++  const currentMonth = monthKey(now);
++  clearMonthlyBossCompletion(boss, currentMonth, now);
++  delete boss.apiCompleted;
++  delete boss.manualOverride;
++  delete boss.manualOverrideMonth;
++  delete boss.apiCheckedMonth;
++  delete boss.apiCheckedWeek;
++  delete boss.apiCompletedAt;
++}
+@@ -323,5 +323,8 @@
+-function isNexonWeeklyCycle(value) {
++function nexonBossCycle(value) {
+   const normalized = normalizeNexonText(value).replace(/\s+/g, '').toLowerCase();
+-  if (['bossdaily', 'daily', '일간'].includes(normalized)) return false;
+-  return true;
++  if (normalized.includes('daily') || normalized === 'day' || normalized.includes('일간')) return 'daily';
++  if (normalized.includes('monthly') || normalized.includes('month') || normalized.includes('월간')) return 'monthly';
++  if (normalized.includes('weekly') || normalized.includes('week') || normalized.includes('주간')) return 'weekly';
++  return 'weekly';
+ }
++function isNexonWeeklyCycle(value) { return nexonBossCycle(value) === 'weekly'; }
+@@ -377,3 +377,6 @@
+   const character = data.characters.find(item => item.id === characterId);
+   if (!character) throw new Error('연동할 메기 캐릭터를 찾을 수 없습니다.');
++  const responseDate = parseNexonDate(response.requestedDate || response.date) || parseNexonDate(checkedAt) || new Date();
++  const responseWeek = currentWeekKey(responseDate), responseMonth = monthKey(responseDate);
++  const checkedDate = parseNexonDate(checkedAt) || new Date();
+   const diagnosticCharacter = {
+@@ -386 +386 @@
+-    matched: 0, matchedCompleted: 0, autoCompleted: 0,
++    matched: 0, matchedCompleted: 0, autoCompleted: 0, monthlyAutoCompleted: 0,
+@@ -409,4 +409,6 @@
+-    if (!isNexonWeeklyCycle(value.cycle)) {
++    const cycle = nexonBossCycle(value.cycle);
++    const expectedCycle = value.bossId === 'black-mage' ? 'monthly' : 'weekly';
++    if (cycle !== expectedCycle) {
+       diagnostics.ignoredCycle.push({...diagnosticCharacter, bossId: value.bossId, contentName: value.contentName, difficulty: value.difficulty, cycle: value.cycle, complete: value.complete});
+       if (value.complete) addCompletedItem(value, 'ignored-cycle');
+       continue;
+@@ -439,21 +439,41 @@
+   for (const {boss, api: apiBoss} of matches.values()) {
+-    const before = JSON.stringify(boss);
+-    const wasDoneBefore = boss.done === true;
+-    const wasApiCompleted = boss.apiCompleted === true && boss.apiCheckedWeek === data.currentWeek;
++    const before = JSON.stringify(boss), monthly = isMonthlyBoss(boss);
++    const monthlyHistory = monthly ? normalizeMonthlyCompletions(boss.monthlyCompletions) : {};
++    const wasDoneBefore = monthly ? !!monthlyHistory[responseMonth] : boss.done === true;
++    const wasApiCompleted = monthly
++      ? boss.apiCompleted === true && boss.apiCheckedMonth === responseMonth
++      : boss.apiCompleted === true && boss.apiCheckedWeek === data.currentWeek;
+     boss.apiCompleted = apiBoss.complete;
+-    boss.apiCheckedWeek = data.currentWeek;
++    if (monthly) {
++      boss.apiCheckedMonth = responseMonth;
++      delete boss.apiCheckedWeek;
++    } else {
++      boss.apiCheckedWeek = data.currentWeek;
++    }
+     if (apiBoss.complete) {
+-      const result = boss.manualOverride === false ? 'blocked-manual-override' : wasDoneBefore ? 'matched-already-done' : 'matched-auto-completed';
++      const blocked = boss.manualOverride === false && (!monthly || boss.manualOverrideMonth === responseMonth);
++      const result = blocked ? 'blocked-manual-override' : wasDoneBefore ? 'matched-already-done' : 'matched-auto-completed';
+       addCompletedItem(apiBoss, result);
+       if (result === 'blocked-manual-override') diagnostics.blockedByManualOverride.push({...diagnosticCharacter, contentName: apiBoss.contentName, difficulty: apiBoss.difficulty, cycle: apiBoss.cycle});
+-      if (result === 'matched-auto-completed') diagnostics.autoCompleted++;
++      if (result === 'matched-auto-completed') {
++        diagnostics.autoCompleted++;
++        if (monthly) diagnostics.monthlyAutoCompleted++;
++      }
+       if (!wasApiCompleted) boss.apiCompletedAt = checkedAt;
+-      if (boss.manualOverride !== false) {
+-        if (!boss.done) newlyCompleted++;
+-        boss.done = true;
+-        if (boss.manualOverride !== true) boss.completionSource = 'nexon-api';
+-        if (boss.completedIncome == null || boss.completionSource === 'nexon-api') boss.completedIncome = bossValue(boss);
++      if (!blocked) {
++        if (!wasDoneBefore) newlyCompleted++;
++        if (monthly) {
++          recordMonthlyBossCompletion(boss, responseMonth, responseWeek, {
++            income: bossValue(boss), completedAt: checkedAt, source: 'nexon-api', now: checkedDate
++          });
++          if (boss.manualOverride !== true || boss.manualOverrideMonth !== responseMonth) boss.completionSource = 'nexon-api';
++        } else {
++          boss.done = true;
++          if (boss.manualOverride !== true) boss.completionSource = 'nexon-api';
++          if (boss.completedIncome == null || boss.completionSource === 'nexon-api') boss.completedIncome = bossValue(boss);
++        }
+       }
+     }
++    if (monthly) syncMonthlyBossCurrentState(boss, checkedDate);
+     if (before !== JSON.stringify(boss)) bossesChanged = true;
+   }
+@@ -553,11 +553,22 @@
+ function characterStats(c) {
+-  const list = normalizeBosses(c.bosses), completed = list.filter(b => b.done);
++  const list = normalizeBosses(c.bosses).filter(boss => !isMonthlyBoss(boss)), completed = list.filter(b => b.done);
+   const expected = list.reduce((sum, b) => sum + bossValue(b), 0);
+   const earned = completed.reduce((sum, b) => sum + (b.completedIncome == null ? bossValue(b) : n(b.completedIncome)), 0);
+   return {count: list.length, done: completed.length, expected, earned, remaining: expected - earned};
+ }
++function bossIncomeForWeek(character, weekId = '') {
++  return normalizeBosses(character?.bosses).reduce((sum, boss) => {
++    if (isMonthlyBoss(boss)) {
++      const recorded = monthlyBossIncomeForWeek(boss, weekId);
++      if (recorded || weekId) return sum + recorded;
++      return sum + (boss.done ? n(boss.completedIncome ?? bossValue(boss)) : 0);
++    }
++    return sum + (boss.done ? n(boss.completedIncome ?? bossValue(boss)) : 0);
++  }, 0);
++}
+ function totalsFor(data) {
+-  const t = {boss: (data.characters || []).reduce((sum, c) => sum + characterStats(c).earned, 0), hunt: 0, gather: 0, drop: 0};
++  const weekId = data?.weekId || data?.currentWeek || '';
++  const t = {boss: (data.characters || []).reduce((sum, c) => sum + bossIncomeForWeek(c, weekId), 0), hunt: 0, gather: 0, drop: 0};
+   for (const row of data.incomes || []) t[Object.hasOwn(items, row.category) ? row.category : 'drop'] += incomeValue(row);
+   t.total = t.boss + t.hunt + t.gather + t.drop; return t;
+ }
+@@ -583,5 +583,6 @@
+   const bossShape = bosses => normalizeBosses(bosses).map(boss => ({
+     bossId: boss.bossId, difficulty: boss.difficulty, partySize: boss.partySize, price: boss.price,
+     done: boss.done, completedIncome: boss.completedIncome, manualOverride: boss.manualOverride,
+-    apiCompleted: boss.apiCompleted, completionSource: boss.completionSource
++    manualOverrideMonth: boss.manualOverrideMonth, monthlyCompletions: boss.monthlyCompletions,
++    apiCompleted: boss.apiCompleted, apiCheckedMonth: boss.apiCheckedMonth, completionSource: boss.completionSource
+   }));
+@@ -599,4 +599,57 @@
+   else delete result.nexonCharacter;
+   return result;
+ }
++function migrateMonthlyBossState(character, {weekId = '', now = new Date(), syncCurrent = true} = {}) {
++  if (!character || !Array.isArray(character.bosses)) return character;
++  for (const boss of character.bosses) {
++    if (!isMonthlyBoss(boss)) continue;
++    const history = normalizeMonthlyCompletions(boss.monthlyCompletions);
++    if (boss.done && !Object.keys(history).length && validWeek(weekId)) {
++      const apiDate = parseNexonDate(boss.apiCompletedAt);
++      const reference = apiDate || weekEndReference(weekId, now);
++      const completionMonth = monthKey(reference);
++      history[completionMonth] = {
++        weekId,
++        income: Math.max(0, Math.trunc(n(boss.completedIncome ?? bossValue(boss)))),
++        ...(typeof boss.apiCompletedAt === 'string' && !Number.isNaN(Date.parse(boss.apiCompletedAt)) ? {completedAt: boss.apiCompletedAt} : {}),
++        source: ['manual', 'nexon-api'].includes(boss.completionSource) ? boss.completionSource : 'migration'
++      };
++    }
++    boss.monthlyCompletions = history;
++    if (typeof boss.manualOverride === 'boolean' && !boss.manualOverrideMonth) {
++      const reference = parseNexonDate(boss.apiCompletedAt) || weekEndReference(weekId, now);
++      boss.manualOverrideMonth = monthKey(reference);
++    }
++    if (syncCurrent) syncMonthlyBossCurrentState(boss, now);
++  }
++  return character;
++}
++function restoreMonthlyHistory(characters, weeklyHistory) {
++  const current = new Map((characters || []).map(character => [character.id, character]));
++  for (const [historyKey, snapshot] of Object.entries(weeklyHistory || {}).sort(([left], [right]) => left.localeCompare(right))) {
++    const weekId = validWeek(snapshot?.weekId) ? snapshot.weekId : validWeek(historyKey) ? historyKey : '';
++    if (!weekId) continue;
++    for (const historicalCharacter of snapshot?.characters || []) {
++      const targetCharacter = current.get(historicalCharacter.id);
++      if (!targetCharacter) continue;
++      for (const historicalBoss of historicalCharacter.bosses || []) {
++        if (!isMonthlyBoss(historicalBoss)) continue;
++        const targetBoss = targetCharacter.bosses.find(boss => boss.bossId === historicalBoss.bossId);
++        if (!targetBoss) continue;
++        const targetHistory = normalizeMonthlyCompletions(targetBoss.monthlyCompletions);
++        for (const [month, entry] of Object.entries(normalizeMonthlyCompletions(historicalBoss.monthlyCompletions))) {
++          if (!targetHistory[month]) targetHistory[month] = entry;
++        }
++        targetBoss.monthlyCompletions = targetHistory;
++      }
++    }
++  }
++}
++function refreshMonthlyBossStates(data, now = new Date()) {
++  let changed = false;
++  for (const character of data?.characters || []) for (const boss of character.bosses || []) {
++    if (isMonthlyBoss(boss) && syncMonthlyBossCurrentState(boss, now)) changed = true;
++  }
++  return changed;
++}
+ function migrationCollectionManifest(data) {
+@@ -632,3 +632,11 @@
+-  for (const snapshot of Object.values(result.weeklyHistory)) {
+-    if (Array.isArray(snapshot?.characters)) snapshot.characters = snapshot.characters.map(c => normalizeCharacterState(c, legacy));
++  for (const [historyKey, snapshot] of Object.entries(result.weeklyHistory)) {
++    if (!Array.isArray(snapshot?.characters)) continue;
++    const weekId = validWeek(snapshot.weekId) ? snapshot.weekId : validWeek(historyKey) ? historyKey : '';
++    const reference = weekEndReference(weekId, now);
++    snapshot.characters = snapshot.characters.map(c => {
++      const normalized = normalizeCharacterState(c, legacy);
++      return migrateMonthlyBossState(normalized, {weekId, now: reference, syncCurrent: false});
++    });
+   }
++  restoreMonthlyHistory(result.characters, result.weeklyHistory);
++  result.characters.forEach(character => migrateMonthlyBossState(character, {weekId: result.currentWeek, now, syncCurrent: true}));
+@@ -654,11 +654,12 @@
+ function rollover(data, now = new Date()) {
+-  const target = currentWeekKey(now); if (data.currentWeek >= target) return false;
++  const target = currentWeekKey(now);
++  let changed = false;
+   while (data.currentWeek < target) {
+     const closing = data.currentWeek, rows = data.incomes.filter(r => recordWeek(r, closing) <= closing);
+     if (!Object.hasOwn(data.weeklyHistory, closing)) {
+       const snapshot = {weekId: closing, characters: copy(data.characters), incomes: copy(rows), closedAt: now.toISOString()};
+       snapshot.totals = totalsFor(snapshot); data.weeklyHistory[closing] = snapshot;
+-    } else if (rows.length || data.characters.some(c => characterStats(c).done)) {
++    } else if (rows.length || data.characters.some(c => characterStats(c).done || bossIncomeForWeek(c, closing) > 0)) {
+       (data.recoveredWeeks ||= []).push({weekId: closing, characters: copy(data.characters), incomes: copy(rows)});
+     }
+     data.incomes = data.incomes.filter(r => recordWeek(r, closing) > closing);
+@@ -669,6 +670,7 @@
+       c.weeklyActivities = activities;
+     });
+     const next = new Date(`${closing.slice(0, 10)}T12:00:00`); next.setDate(next.getDate() + 7); data.currentWeek = currentWeekKey(next);
++    changed = true;
+   }
+-  return true;
++  return refreshMonthlyBossStates(data, now) || changed;
+ }
+@@ -747,2 +747,3 @@
+-    const next = copy(state), changedWeek = rollover(next); change(next); persist(next); selectedWeek = '';
++    const next = copy(state), previousWeek = state.currentWeek; rollover(next); const changedWeek = previousWeek !== next.currentWeek;
++    change(next); persist(next); selectedWeek = '';
+     render(); message(changedWeek ? '지난 주를 마감하고 이번 주에 저장했습니다.' : '이 기기에 저장했습니다.'); return true;
+@@ -755 +755,5 @@
+-    const next = copy(state); if (rollover(next)) { persist(next); render(); message('지난 주 기록을 보관하고 새 주차를 시작했습니다.'); }
++    const next = copy(state), previousWeek = state.currentWeek;
++    if (rollover(next)) {
++      persist(next); render();
++      message(previousWeek !== next.currentWeek ? '지난 주 기록을 보관하고 새 주차를 시작했습니다.' : '새 달 기준으로 월간 보스 상태를 갱신했습니다.');
++    }
+@@ -769,2 +769,3 @@
+-  const next = migrateState(raw), rolled = rollover(next);
++  const next = migrateState(raw), previousWeek = next.currentWeek, rolled = rollover(next);
++  const changedWeek = previousWeek !== next.currentWeek;
+   persist(next, {touch: rolled, notify: rolled});
+@@ -774 +774 @@
+-  message(rolled ? '클라우드 데이터를 불러오고 새 주차를 시작했습니다.' : '클라우드의 최신 데이터를 반영했습니다.');
++  message(changedWeek ? '클라우드 데이터를 불러오고 새 주차를 시작했습니다.' : rolled ? '클라우드 데이터를 불러오고 월간 보스 상태를 갱신했습니다.' : '클라우드의 최신 데이터를 반영했습니다.');
+@@ -858 +858 @@
+-    return `<article class="character" data-character="${escapeHtml(c.id)}"><span class="character-main"><span class="character-identity">${nexonProfileAvatar(c, 'summary-art')}<span class="character-identity-copy"><b>${escapeHtml(c.name)}</b>${nexonProfileCopy(c)}</span></span></span>${nexonSpecSummary(c, statsExpanded)}<span class="character-progress"><span class="character-progress-head"><small>${s.done} / ${s.count} 완료 · 진행률 ${percent}%</small><span class="character-weekly-income"><small>이번 주 완료수익</small><strong class="mint">${money(s.earned)}</strong></span></span><progress value="${s.done}" max="${s.count || 1}" aria-label="${escapeHtml(c.name)} 보스 진행률"></progress></span><dl class="character-income-grid"><div><dt>완료 수익</dt><dd>${money(s.earned)}</dd></div><div><dt>예상 수익</dt><dd>${money(s.expected)}</dd></div><div><dt>남은 수익</dt><dd>${money(s.remaining)}</dd></div></dl>${statsExpanded ? nexonStatDetails(c) : ''}</article>`;
++    return `<article class="character" data-character="${escapeHtml(c.id)}"><span class="character-main"><span class="character-identity">${nexonProfileAvatar(c, 'summary-art')}<span class="character-identity-copy"><b>${escapeHtml(c.name)}</b>${nexonProfileCopy(c)}</span></span></span>${nexonSpecSummary(c, statsExpanded)}<span class="character-progress"><span class="character-progress-head"><small>주간 보스 ${s.done} / ${s.count} 완료 · 진행률 ${percent}%</small><span class="character-weekly-income"><small>이번 주 보스 수익</small><strong class="mint">${money(bossIncomeForWeek(c, data.weekId || data.currentWeek || ''))}</strong></span></span><progress value="${s.done}" max="${s.count || 1}" aria-label="${escapeHtml(c.name)} 주간 보스 진행률"></progress></span><dl class="character-income-grid"><div><dt>주간 완료 수익</dt><dd>${money(s.earned)}</dd></div><div><dt>주간 예상 수익</dt><dd>${money(s.expected)}</dd></div><div><dt>주간 남은 수익</dt><dd>${money(s.remaining)}</dd></div></dl>${statsExpanded ? nexonStatDetails(c) : ''}</article>`;
+@@ -862 +862 @@
+-  renderBosses(data); renderHistory(data); renderPrices(); renderSettings();
++  renderWeeklyActivities(data); renderBosses(data); renderHistory(data); renderPrices(); renderSettings();
+@@ -869,3 +869,18 @@
++function bossDoneForView(boss, data) {
++  if (!isMonthlyBoss(boss)) return !!boss.done;
++  if (!isPast()) return !!boss.done;
++  const weekId = data?.weekId || selectedWeek || '';
++  return Object.values(normalizeMonthlyCompletions(boss.monthlyCompletions)).some(entry => entry.weekId === weekId);
++}
++function renderBossRows(entries, data, disabled = '') {
++  return entries.map(({b, bi}) => {
++    const done = bossDoneForView(b, data), diffs = Object.keys(bossDB[b.name] || {[b.difficulty]: b.price});
++    const value = isMonthlyBoss(b) && isPast()
++      ? monthlyBossIncomeForWeek(b, data?.weekId || selectedWeek || '') || bossValue(b)
++      : done && b.completedIncome != null ? b.completedIncome : bossValue(b);
++    return `<div class="boss-line ${done ? 'completed' : ''}" data-bi="${bi}"><label class="boss-name"><input type="checkbox" data-field="done" aria-label="${escapeHtml(b.name)} 완료" ${done ? 'checked' : ''} ${disabled}><span>${escapeHtml(b.name)}${bossApiBadge(b)}</span></label><strong class="boss-earned mint">${money(value)}</strong><div class="boss-controls"><select data-field="difficulty" aria-label="${escapeHtml(b.name)} 난이도" ${disabled}>${diffs.map(d => option(d, d, d === b.difficulty)).join('')}</select><select data-field="party" aria-label="${escapeHtml(b.name)} 파티 인원" ${disabled}>${Array.from({length: Math.max(6, b.party)}, (_, i) => option(i + 1, i === 0 ? '솔로' : `${i + 1}인`, i + 1 === b.party)).join('')}</select><button class="icon danger" data-action="remove-boss" aria-label="${escapeHtml(b.name)} 삭제" ${disabled}>×</button></div><details class="boss-price-detail"><summary>결정석 ${won(b.price)} · 가격 수정</summary><label>결정석 전체 가격<input class="money-input" data-field="price" inputmode="numeric" value="${won(b.price)}" ${disabled}><small class="money-hint">${koreanMeso(b.price)} 메소</small></label></details></div>`;
++  }).join('');
++}
+ function renderBosses(data) {
+   const disabled = isPast() || storageBlocked ? 'disabled' : '';
+   const characters = data.characters || [], c = selectedCharacter(data), ci = c ? characters.findIndex(x => x.id === c.id) : -1;
+@@ -873,23 +888,29 @@
+   $('#bossCharacterSelect').disabled = !characters.length;
+   $('#addCharacterFromBoss').disabled = !!disabled;
+   $('#characterMenu').classList.toggle('hidden', !c || !!disabled);
+-  if (!c) {
+-    $('#bossEditor').innerHTML = '<p class="empty">캐릭터를 추가해 주세요.</p>';
+-    renderWeeklyActivities(null, -1, disabled);
+-    return;
+-  }
+-  const list = normalizeBosses(c.bosses), stats = characterStats(c);
+-  const shown = list.map((b, bi) => ({b, bi})).filter(({b}) => bossFilter === 'all' || (bossFilter === 'done' ? b.done : !b.done));
+-  $('#bossEditor').innerHTML = `<section class="boss-char" data-ci="${ci}"><div class="panel-head boss-profile-head"><div class="boss-profile-identity">${nexonProfileAvatar(c, 'boss-art')}<div><h3>${escapeHtml(c.name)}</h3>${nexonProfileCopy(c)}<small class="muted">${stats.done} / ${stats.count} 완료 · ${koreanMeso(stats.earned)}</small></div></div></div>${shown.map(({b, bi}) => {
+-    const diffs = Object.keys(bossDB[b.name] || {[b.difficulty]: b.price});
+-    return `<div class="boss-line ${b.done ? 'completed' : ''}" data-bi="${bi}"><label class="boss-name"><input type="checkbox" data-field="done" aria-label="${escapeHtml(b.name)} 완료" ${b.done ? 'checked' : ''} ${disabled}><span>${escapeHtml(b.name)}${bossApiBadge(b)}</span></label><strong class="boss-earned mint">${money(b.done && b.completedIncome != null ? b.completedIncome : bossValue(b))}</strong><div class="boss-controls"><select data-field="difficulty" aria-label="${escapeHtml(b.name)} 난이도" ${disabled}>${diffs.map(d => option(d, d, d === b.difficulty)).join('')}</select><select data-field="party" aria-label="${escapeHtml(b.name)} 파티 인원" ${disabled}>${Array.from({length: Math.max(6, b.party)}, (_, i) => option(i + 1, i === 0 ? '솔로' : `${i + 1}인`, i + 1 === b.party)).join('')}</select><button class="icon danger" data-action="remove-boss" aria-label="${escapeHtml(b.name)} 삭제" ${disabled}>×</button></div><details class="boss-price-detail"><summary>결정석 ${won(b.price)} · 가격 수정</summary><label>결정석 전체 가격<input class="money-input" data-field="price" inputmode="numeric" value="${won(b.price)}" ${disabled}><small class="money-hint">${koreanMeso(b.price)} 메소</small></label></details></div>`;
+-  }).join('') || '<p class="empty">이 필터에 해당하는 보스가 없습니다.</p>'}<div class="boss-actions"><button class="ghost" data-action="add-boss" ${disabled}>+ 보스 등록</button></div></section>`;
+-  renderWeeklyActivities(c, ci, disabled);
++  if (!c) { $('#bossEditor').innerHTML = '<p class="empty">캐릭터를 추가해 주세요.</p>'; return; }
++  const list = normalizeBosses(c.bosses), stats = characterStats(c), viewWeek = data.weekId || data.currentWeek || '';
++  const entries = list.map((b, bi) => ({b, bi}));
++  const filterEntries = source => source.filter(({b}) => {
++    const done = bossDoneForView(b, data);
++    return bossFilter === 'all' || (bossFilter === 'done' ? done : !done);
++  });
++  const weekly = filterEntries(entries.filter(({b}) => !isMonthlyBoss(b)));
++  const monthly = filterEntries(entries.filter(({b}) => isMonthlyBoss(b)));
++  const monthlyAll = entries.filter(({b}) => isMonthlyBoss(b)), monthlyDone = monthlyAll.filter(({b}) => bossDoneForView(b, data)).length;
++  const monthlyMeta = isPast() ? '조회 주차에 완료한 월간 기록' : `${monthLabel(monthKey(new Date()))} · 매월 1일 00:00 초기화`;
++  $('#bossEditor').innerHTML = `<section class="boss-char" data-ci="${ci}"><div class="panel-head boss-profile-head"><div class="boss-profile-identity">${nexonProfileAvatar(c, 'boss-art')}<div><h3>${escapeHtml(c.name)}</h3>${nexonProfileCopy(c)}<small class="muted">주간 ${stats.done} / ${stats.count} 완료 · 이번 주 보스 수익 ${koreanMeso(bossIncomeForWeek(c, viewWeek))}</small></div></div></div><section class="boss-cycle-section weekly-cycle"><div class="boss-cycle-head"><div><h3>주간 보스</h3><p class="muted">목요일 00:00 초기화</p></div><strong>${stats.done} / ${stats.count}</strong></div>${renderBossRows(weekly, data, disabled) || '<p class="empty compact-empty">이 필터에 해당하는 주간 보스가 없습니다.</p>'}<div class="boss-actions"><button class="ghost" data-action="add-boss" ${disabled}>+ 보스 등록</button></div></section><section class="boss-cycle-section monthly-cycle"><div class="boss-cycle-head"><div><h3>월간 보스</h3><p class="muted">${escapeHtml(monthlyMeta)}</p></div><strong>${monthlyDone} / ${monthlyAll.length}</strong></div>${renderBossRows(monthly, data, disabled) || '<p class="empty compact-empty">이 필터에 해당하는 월간 보스가 없습니다.</p>'}</section></section>`;
+ }
+-function renderWeeklyActivities(character, characterIndex, disabled = '') {
++function renderWeeklyActivities(data) {
+   const target = $('#weeklyActivityList');
+   if (!target) return;
+-  if (!character) { target.innerHTML = '<p class="empty">캐릭터를 선택하면 주간 콘텐츠를 확인할 수 있습니다.</p>'; return; }
+-  const activities = normalizeWeeklyActivities(character.weeklyActivities);
+-  target.innerHTML = activities.length ? `<div class="weekly-activity-card" data-ci="${characterIndex}">${activities.map((activity, index) => `<label class="weekly-activity-row ${activity.done ? 'completed' : ''}" data-ai="${index}"><input type="checkbox" data-activity-done aria-label="${escapeHtml(activity.name)} 완료" ${activity.done ? 'checked' : ''} ${disabled}><span><small>${escapeHtml(activity.label)}</small><b>${escapeHtml(activity.name)}</b></span>${weeklyActivityApiBadge(activity)}<strong>${activity.done ? '완료' : '미완료'}</strong></label>`).join('')}</div>` : '<p class="empty compact-empty">NEXON 기록을 확인하면 지원하는 주간 콘텐츠가 표시됩니다.</p>';
++  const disabled = isPast() || storageBlocked ? 'disabled' : '', characters = data?.characters || [];
++  if (!characters.length) { target.innerHTML = '<p class="empty">캐릭터를 추가하면 주간 콘텐츠를 확인할 수 있습니다.</p>'; return; }
++  target.innerHTML = characters.map((character, characterIndex) => {
++    const activities = normalizeWeeklyActivities(character.weeklyActivities), done = activities.filter(activity => activity.done).length;
++    const content = activities.length
++      ? `<div class="weekly-activity-card">${activities.map((activity, index) => `<label class="weekly-activity-row ${activity.done ? 'completed' : ''}" data-ai="${index}"><input type="checkbox" data-activity-done aria-label="${escapeHtml(activity.name)} 완료" ${activity.done ? 'checked' : ''} ${disabled}><span><small>${escapeHtml(activity.label)}</small><b>${escapeHtml(activity.name)}</b></span>${weeklyActivityApiBadge(activity)}<strong>${activity.done ? '완료' : '미완료'}</strong></label>`).join('')}</div>`
++      : '<p class="empty compact-empty">NEXON 기록을 확인하면 지원하는 주간 콘텐츠가 표시됩니다.</p>';
++    return `<section class="weekly-activity-character" data-ci="${characterIndex}"><div class="weekly-activity-character-head"><b>${escapeHtml(character.name)}</b><span>${done} / ${activities.length} 완료</span></div>${content}</section>`;
++  }).join('');
+ }
+@@ -1060 +1060 @@
+-  for (const key of ['fetched', 'apiCompleted', 'matched', 'matchedCompleted', 'autoCompleted', 'activitiesFetched', 'apiActivitiesCompleted', 'activityMatched', 'activityMatchedCompleted', 'activityAutoCompleted']) total[key] = (total[key] || 0) + (result[key] || 0);
++  for (const key of ['fetched', 'apiCompleted', 'matched', 'matchedCompleted', 'autoCompleted', 'monthlyAutoCompleted', 'activitiesFetched', 'apiActivitiesCompleted', 'activityMatched', 'activityMatchedCompleted', 'activityAutoCompleted']) total[key] = (total[key] || 0) + (result[key] || 0);
+@@ -1198,9 +1198,12 @@
+ function nexonUserStatusMessage(result, cooldown = false) {
+   if (cooldown && result?.profileUpdated) return `캐릭터 프로필 ${result.profileUpdated}개를 갱신했습니다.`;
+   if (cooldown) return '최근 확인한 기록입니다.';
+-  const bosses = result?.autoCompleted || 0, activities = result?.activityAutoCompleted || 0;
+-  if (bosses && activities) return `주간 보스 ${bosses}개 · 주간 콘텐츠 ${activities}개를 자동 확인했습니다.`;
+-  if (bosses) return `주간 보스 ${bosses}개를 자동 확인했습니다.`;
+-  if (activities) return `주간 콘텐츠 ${activities}개를 자동 확인했습니다.`;
+-  return '새로 확인된 주간 기록이 없습니다.';
++  const monthly = result?.monthlyAutoCompleted || 0;
++  const weekly = Math.max(0, (result?.autoCompleted || 0) - monthly);
++  const activities = result?.activityAutoCompleted || 0;
++  const parts = [];
++  if (weekly) parts.push(`주간 보스 ${weekly}개`);
++  if (monthly) parts.push(`월간 보스 ${monthly}개`);
++  if (activities) parts.push(`주간 콘텐츠 ${activities}개`);
++  return parts.length ? `${parts.join(' · ')}를 자동 확인했습니다.` : '새로 확인된 기록이 없습니다.';
+ }
+@@ -1279,4 +1279,4 @@
+-  nexonApiState = {status: 'checking', message: '주간 기록 확인 중…', diagnostics: null}; renderNexonSettings();
++  nexonApiState = {status: 'checking', message: '보스·주간 콘텐츠 확인 중…', diagnostics: null}; renderNexonSettings();
+   let checked = 0, cooldown = 0, checkingCharacterId = '';
+   const profileFailureIds = [];
+-  const total = {fetched: 0, apiCompleted: 0, matched: 0, matchedCompleted: 0, autoCompleted: 0, activitiesFetched: 0, apiActivitiesCompleted: 0, activityMatched: 0, activityMatchedCompleted: 0, activityAutoCompleted: 0, profileUpdated: 0, unknown: [], difficultyMismatch: [], ambiguous: [], notConfigured: [], localNotFound: [], ignoredCycle: [], completedItems: [], blockedByManualOverride: [], diagnosticSamples: [], unsupportedActivity: [], activityCompletedItems: [], activityBlockedByManualOverride: [], diagnosticActivitySamples: [], profileFailures: []};
++  const total = {fetched: 0, apiCompleted: 0, matched: 0, matchedCompleted: 0, autoCompleted: 0, monthlyAutoCompleted: 0, activitiesFetched: 0, apiActivitiesCompleted: 0, activityMatched: 0, activityMatchedCompleted: 0, activityAutoCompleted: 0, profileUpdated: 0, unknown: [], difficultyMismatch: [], ambiguous: [], notConfigured: [], localNotFound: [], ignoredCycle: [], completedItems: [], blockedByManualOverride: [], diagnosticSamples: [], unsupportedActivity: [], activityCompletedItems: [], activityBlockedByManualOverride: [], diagnosticActivitySamples: [], profileFailures: []};
+@@ -1425,7 +1425,18 @@
+-function resetCurrentWeek(data) {
++function resetCurrentWeek(data, now = new Date()) {
+   data.incomes = [];
++  const currentMonth = monthKey(now);
+   data.characters.forEach(character => {
+-    character.bosses.forEach(resetBossWeeklyState);
++    character.bosses.forEach(boss => {
++      if (!isMonthlyBoss(boss)) { resetBossWeeklyState(boss); return; }
++      const history = normalizeMonthlyCompletions(boss.monthlyCompletions);
++      for (const [month, entry] of Object.entries(history)) if (entry.weekId === data.currentWeek) delete history[month];
++      boss.monthlyCompletions = history;
++      if (boss.manualOverrideMonth === currentMonth) {
++        delete boss.manualOverride;
++        delete boss.manualOverrideMonth;
++      }
++      syncMonthlyBossCurrentState(boss, now);
++    });
+     character.weeklyActivities = normalizeWeeklyActivities(character.weeklyActivities);
+     character.weeklyActivities.forEach(resetWeeklyActivityState);
+   });
+@@ -1585,8 +1585,27 @@
+     const field = e.target.dataset.field; if (!field) return;
+     const ci = n(e.target.closest('[data-ci]').dataset.ci), bi = n(e.target.closest('[data-bi]').dataset.bi), value = field === 'done' ? e.target.checked : e.target.value;
+     transaction(next => {
+-      const b = next.characters[ci].bosses[bi];
+-      if (field === 'done') { b.done = value; b.manualOverride = value; b.completionSource = 'manual'; if (value) b.completedIncome = bossValue(b); else delete b.completedIncome; }
+-      else { b[field] = field === 'difficulty' ? value : Math.max(field === 'party' ? 1 : 0, n(value)); if (field === 'party') b.partySize = b.party; if (field === 'difficulty') b.price = referencePrice(b.name, value); resetBossWeeklyState(b); }
++      const b = next.characters[ci].bosses[bi], now = new Date();
++      if (field === 'done') {
++        if (isMonthlyBoss(b)) {
++          const currentMonth = monthKey(now);
++          if (value) {
++            b.manualOverride = true; b.manualOverrideMonth = currentMonth; b.completionSource = 'manual';
++            recordMonthlyBossCompletion(b, currentMonth, next.currentWeek, {income: bossValue(b), completedAt: now.toISOString(), source: 'manual', now});
++          } else {
++            clearMonthlyBossCompletion(b, currentMonth, now);
++            b.manualOverride = false; b.manualOverrideMonth = currentMonth; b.completionSource = 'manual';
++          }
++          syncMonthlyBossCurrentState(b, now);
++        } else {
++          b.done = value; b.manualOverride = value; b.completionSource = 'manual';
++          if (value) b.completedIncome = bossValue(b); else delete b.completedIncome;
++        }
++      } else {
++        b[field] = field === 'difficulty' ? value : Math.max(field === 'party' ? 1 : 0, n(value));
++        if (field === 'party') b.partySize = b.party;
++        if (field === 'difficulty') b.price = referencePrice(b.name, value);
++        resetBossCurrentPeriodState(b, now);
++      }
+     });
+   });
+@@ -1597 +1597 @@
+-    if (button.dataset.action === 'remove-boss') { const bi = n(button.closest('[data-bi]').dataset.bi); if (confirm(`${c.name}의 ${c.bosses[bi].name}을 삭제할까요? 이번 주 완료 수익에서도 제외됩니다.`)) transaction(next => next.characters[ci].bosses.splice(bi, 1)); }
++    if (button.dataset.action === 'remove-boss') { const bi = n(button.closest('[data-bi]').dataset.bi); if (confirm(`${c.name}의 ${c.bosses[bi].name}을 삭제할까요? 보스 수익 기록에서도 제외됩니다.`)) transaction(next => next.characters[ci].bosses.splice(bi, 1)); }
+diff --git a/index.html b/index.html
+--- a/index.html
++++ b/index.html
+@@ -33,3 +33,7 @@
+         <div id="characterList"></div><button class="ghost full" id="addCharacter">+ 캐릭터 추가</button>
+       </section>
++      <section class="panel weekly-content-panel" aria-labelledby="weeklyActivitiesTitle">
++        <div class="weekly-activities-head"><div><h2 id="weeklyActivitiesTitle">주간 콘텐츠</h2><p class="muted">에픽던전 · 무릉도장 · 길드 콘텐츠를 캐릭터별로 확인합니다.</p></div><small class="api-badge">NEXON 연동</small></div>
++        <div id="weeklyActivityList"></div>
++      </section>
+     </div>
+@@ -37 +37 @@
+-      <div class="boss-page-head"><div><h2>주간 보스</h2><p class="muted">선택한 캐릭터의 보스만 관리해요.</p></div><div class="boss-character-tools"><label class="sr-only" for="bossCharacterSelect">캐릭터 선택</label><select id="bossCharacterSelect" aria-label="캐릭터 선택"></select><button class="ghost compact" id="addCharacterFromBoss" type="button">+ 캐릭터 추가</button><details class="more-menu" id="characterMenu"><summary aria-label="캐릭터 메뉴">⋯</summary><div class="more-menu-popover"><button type="button" data-character-action="rename">캐릭터 이름 변경</button><button type="button" data-character-action="apply-preset">프리셋 적용</button><button type="button" data-character-action="save-preset">현재 구성을 프리셋으로 저장</button><button type="button" class="danger-text" data-character-action="delete">캐릭터 삭제</button></div></details></div></div>
++      <div class="boss-page-head"><div><h2>보스</h2><p class="muted">주간·월간 보스를 초기화 주기에 맞게 관리해요.</p></div><div class="boss-character-tools"><label class="sr-only" for="bossCharacterSelect">캐릭터 선택</label><select id="bossCharacterSelect" aria-label="캐릭터 선택"></select><button class="ghost compact" id="addCharacterFromBoss" type="button">+ 캐릭터 추가</button><details class="more-menu" id="characterMenu"><summary aria-label="캐릭터 메뉴">⋯</summary><div class="more-menu-popover"><button type="button" data-character-action="rename">캐릭터 이름 변경</button><button type="button" data-character-action="apply-preset">프리셋 적용</button><button type="button" data-character-action="save-preset">현재 구성을 프리셋으로 저장</button><button type="button" class="danger-text" data-character-action="delete">캐릭터 삭제</button></div></details></div></div>
+@@ -40,2 +40 @@
+-      <section class="weekly-activities" aria-labelledby="weeklyActivitiesTitle"><div class="weekly-activities-head"><div><h3 id="weeklyActivitiesTitle">주간 콘텐츠</h3><p class="muted">에픽던전 · 무릉도장 · 길드 콘텐츠</p></div><small class="api-badge">NEXON 연동</small></div><div id="weeklyActivityList"></div></section>
+-      <p class="footnote">난이도·인원·가격을 바꾸면 완료 체크가 해제됩니다. 검은 마법사도 완료를 기록한 주차 수익에 포함됩니다.</p>
++      <p class="footnote">주간 보스는 목요일 00:00, 월간 보스는 매월 1일 00:00 기준으로 관리합니다. 난이도·인원·가격을 바꾸면 해당 주기의 완료 기록이 해제됩니다.</p>
+@@ -71 +71 @@
+-      <section class="settings-section nexon-section"><div class="settings-title"><div><h3>NEXON Open API</h3><p class="muted">Data based on NEXON Open API</p></div></div><p class="muted nexon-help">캐릭터 정보는 자동으로 불러옵니다. 주간 보스·주간 콘텐츠 자동 확인은 NEXON Scheduler API 제한으로 일부 계정에서 사용할 수 없습니다.</p><details class="nexon-availability"><summary>지원 범위 안내</summary><div><p><b>사용 가능</b><span>캐릭터 연동 · 프로필 · 레벨/직업/월드 · 전투력 · 상세 능력치 · 유니온</span></p><p><b>제한될 수 있음</b><span>주간 보스·주간 콘텐츠 자동 확인</span></p><small>자동 확인을 사용할 수 없어도 주간 보스는 직접 체크할 수 있습니다.</small></div></details><div id="nexonCharacterList" class="nexon-character-list"></div><div class="nexon-sync-summary"><small id="nexonLastChecked" class="muted">마지막 확인 없음</small><p id="nexonApiStatus" class="muted" role="status" aria-live="polite">연동할 캐릭터를 선택해주세요.</p></div><button id="checkNexonBosses" class="primary nexon-check" type="button">주간 기록 지금 확인</button><details id="nexonDiagnostics" class="nexon-diagnostics hidden"><summary>상세 진단 보기</summary><div id="nexonDiagnosticsContent" class="nexon-diagnostics-content"></div></details></section>
++      <section class="settings-section nexon-section"><div class="settings-title"><div><h3>NEXON Open API</h3><p class="muted">Data based on NEXON Open API</p></div></div><p class="muted nexon-help">캐릭터 정보는 자동으로 불러옵니다. 보스·주간 콘텐츠 자동 확인은 NEXON Scheduler API 제한으로 일부 계정에서 사용할 수 없습니다.</p><details class="nexon-availability"><summary>지원 범위 안내</summary><div><p><b>사용 가능</b><span>캐릭터 연동 · 프로필 · 레벨/직업/월드 · 전투력 · 상세 능력치 · 유니온</span></p><p><b>제한될 수 있음</b><span>보스·주간 콘텐츠 자동 확인</span></p><small>자동 확인을 사용할 수 없어도 보스는 직접 체크할 수 있습니다.</small></div></details><div id="nexonCharacterList" class="nexon-character-list"></div><div class="nexon-sync-summary"><small id="nexonLastChecked" class="muted">마지막 확인 없음</small><p id="nexonApiStatus" class="muted" role="status" aria-live="polite">연동할 캐릭터를 선택해주세요.</p></div><button id="checkNexonBosses" class="primary nexon-check" type="button">보스·주간 콘텐츠 지금 확인</button><details id="nexonDiagnostics" class="nexon-diagnostics hidden"><summary>상세 진단 보기</summary><div id="nexonDiagnosticsContent" class="nexon-diagnostics-content"></div></details></section>
+@@ -78 +78 @@
+-  <nav class="tabs" aria-label="메인 메뉴"><button data-tab="summary" class="active" aria-current="page"><span aria-hidden="true">⌂</span>요약</button><button data-tab="boss"><span aria-hidden="true">✓</span>주간보스</button><button data-tab="income"><span aria-hidden="true">＋</span>수익입력</button><button data-tab="price"><span aria-hidden="true">₩</span>가격표</button><button data-tab="settings"><span aria-hidden="true">⚙</span>설정</button></nav>
++  <nav class="tabs" aria-label="메인 메뉴"><button data-tab="summary" class="active" aria-current="page"><span aria-hidden="true">⌂</span>요약</button><button data-tab="boss"><span aria-hidden="true">✓</span>보스</button><button data-tab="income"><span aria-hidden="true">＋</span>수익입력</button><button data-tab="price"><span aria-hidden="true">₩</span>가격표</button><button data-tab="settings"><span aria-hidden="true">⚙</span>설정</button></nav>
+diff --git a/style.css b/style.css
+--- a/style.css
++++ b/style.css
+@@ -160,2 +160,19 @@
+ .boss-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+ .boss-actions button{flex:1;white-space:normal;font-size:11px}
++.boss-cycle-section{margin-top:16px;border:1px solid var(--line);border-radius:13px;background:#0d1922;overflow:hidden}
++.boss-cycle-section+.boss-cycle-section{margin-top:12px}
++.boss-cycle-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;border-bottom:1px solid var(--line);background:#10212b}
++.boss-cycle-head h3{font-size:13px}
++.boss-cycle-head p{margin-top:2px;font-size:10px}
++.boss-cycle-head>strong{color:var(--mint);font-size:11px;white-space:nowrap}
++.boss-cycle-section .boss-line{padding-left:12px;padding-right:12px}
++.boss-cycle-section .boss-actions{margin:0;padding:10px 12px;border-top:1px solid var(--line)}
++.monthly-cycle{border-color:#5b5035}
++.monthly-cycle .boss-cycle-head{background:#241f16}
++.monthly-cycle .boss-cycle-head h3,.monthly-cycle .boss-cycle-head>strong{color:var(--amber)}
++.weekly-content-panel .weekly-activities-head{margin-bottom:10px}
++.weekly-activity-character{display:grid;gap:7px;margin-top:12px}
++.weekly-activity-character:first-child{margin-top:0}
++.weekly-activity-character-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0 2px}
++.weekly-activity-character-head b{font-size:12px}
++.weekly-activity-character-head span{color:var(--muted);font-size:10px}
+diff --git a/verify.mjs b/verify.mjs
+--- a/verify.mjs
++++ b/verify.mjs
+@@ -64 +64 @@
+-assert.equal(migrated.version, 7);
++assert.equal(migrated.version, 8);
+@@ -217,2 +217,5 @@
+ assert.equal(run("isNexonWeeklyCycle('bossWeekly')"), true);
+ assert.equal(run("isNexonWeeklyCycle('bossDaily')"), false);
++assert.equal(run("nexonBossCycle('bossMonthly')"), 'monthly');
++assert.equal(run("nexonBossCycle('bossMonth')"), 'monthly');
++assert.equal(run("nexonBossCycle('월간')"), 'monthly');
+@@ -262 +262 @@
+-assert.equal(run('nexonUserStatusMessage({...__appliedDiagnostics, autoCompleted: 0})'), '새로 확인된 주간 기록이 없습니다.');
++assert.equal(run('nexonUserStatusMessage({...__appliedDiagnostics, autoCompleted: 0})'), '새로 확인된 기록이 없습니다.');
+@@ -577 +577 @@
+-assert.equal(run("prepareImportedState(__backup, new Date('2026-09-20T12:00:00')).version"), 7);
++assert.equal(run("prepareImportedState(__backup, new Date('2026-09-20T12:00:00')).version"), 8);
+@@ -631 +631,51 @@
++context.__monthlyBossState = {
++  version: 7, currentWeek: '2026-09-24~2026-09-30', updatedAt: '2026-09-26T00:00:00.000Z',
++  characters: [{id:'monthly-c1',name:'월간캐릭터',bosses:[
++    {bossId:'black-mage',name:'검은 마법사',difficulty:'하드',party:1,partySize:1,price:665000000,done:true,completedIncome:665000000,completionSource:'manual',manualOverride:true}
++  ],weeklyActivities:[]}],
++  incomes: [], weeklyHistory: {}, presets: [], settings: {defaultSaleFeeRate:0.05}
++};
++const migratedMonthly = json("migrateState(__monthlyBossState, new Date('2026-09-26T12:00:00'))");
++assert.equal(migratedMonthly.version, 8);
++assert.equal(migratedMonthly.characters[0].bosses[0].monthlyCompletions['2026-09'].weekId, '2026-09-24~2026-09-30');
++assert.equal(migratedMonthly.characters[0].bosses[0].done, true);
++context.__migratedMonthly = structuredClone(migratedMonthly);
++assert.equal(run("characterStats(__migratedMonthly.characters[0]).count"), 0);
++assert.equal(run("totalsFor(__migratedMonthly).boss"), 665000000);
++context.__migratedMonthly.currentWeek = '2026-10-01~2026-10-07';
++assert.equal(run("totalsFor(__migratedMonthly).boss"), 0);
++
++context.__crossMonthBoss = structuredClone(migratedMonthly.characters[0].bosses[0]);
++run("recordMonthlyBossCompletion(__crossMonthBoss,'2026-10','2026-09-24~2026-09-30',{income:465000000,completedAt:'2026-10-01T00:10:00.000Z',source:'manual',now:new Date('2026-10-01T00:10:00')})");
++assert.equal(run("monthlyBossIncomeForWeek(__crossMonthBoss,'2026-09-24~2026-09-30')"), 1130000000);
++run("syncMonthlyBossCurrentState(__crossMonthBoss,new Date('2026-10-01T12:00:00'))");
++assert.equal(context.__crossMonthBoss.done, true);
++assert.equal(context.__crossMonthBoss.completedIncome, 465000000);
++
++context.__monthlyResetState = structuredClone(migratedMonthly);
++run("resetCurrentWeek(__monthlyResetState,new Date('2026-09-26T12:00:00'))");
++assert.equal(run("Object.keys(__monthlyResetState.characters[0].bosses[0].monthlyCompletions).length"), 0);
++assert.equal(context.__monthlyResetState.characters[0].bosses[0].done, false);
++
++context.__priorMonthly = structuredClone(migratedMonthly);
++context.__priorMonthly.characters[0].bosses[0].monthlyCompletions['2026-09'].weekId = '2026-09-17~2026-09-23';
++run("resetCurrentWeek(__priorMonthly,new Date('2026-09-26T12:00:00'))");
++assert.equal(context.__priorMonthly.characters[0].bosses[0].done, true);
++assert.equal(run("monthlyBossIncomeForWeek(__priorMonthly.characters[0].bosses[0],'2026-09-17~2026-09-23')"), 665000000);
++
++context.__monthlySchedulerState = {
++  version: 8, currentWeek: '2026-09-24~2026-09-30',
++  characters: [{id:'monthly-c1',name:'월간캐릭터',bosses:[{bossId:'black-mage',name:'검은 마법사',difficulty:'하드',party:1,partySize:1,price:665000000,done:false}],weeklyActivities:[]}],
++  incomes: [], weeklyHistory: {}, presets: [], settings: {}
++};
++context.__monthlySchedulerResponse = {
++  date:'2026-09-26',requestedDate:null,mode:'live',character:{name:'월간캐릭터'},
++  bosses:[{contentName:'검은 마법사',difficulty:'hard',cycle:'bossMonthly',complete:true}],activities:[]
++};
++const monthlySchedulerResult = json("applyNexonSchedulerState(__monthlySchedulerState,'monthly-c1',__monthlySchedulerResponse,'2026-09-26T03:00:00.000Z')");
++assert.equal(monthlySchedulerResult.monthlyAutoCompleted, 1);
++assert.equal(monthlySchedulerResult.autoCompleted, 1);
++assert.equal(context.__monthlySchedulerState.characters[0].bosses[0].monthlyCompletions['2026-09'].weekId, '2026-09-24~2026-09-30');
++assert.equal(run("nexonUserStatusMessage({autoCompleted:1,monthlyAutoCompleted:1,activityAutoCompleted:0})"), '월간 보스 1개를 자동 확인했습니다.');
++
+ context.__activityReset = structuredClone(context.__activityState);
+@@ -1361 +1361 @@
+-assert.match(nexonSettingsHtml, /자동 확인을 사용할 수 없어도 주간 보스는 직접 체크할 수 있습니다/);
++assert.match(nexonSettingsHtml, /자동 확인을 사용할 수 없어도 보스는 직접 체크할 수 있습니다/);
+@@ -1523 +1523,14 @@
++assert.match(html, /class="panel weekly-content-panel"/);
++assert.ok(html.indexOf('id="weeklyActivityList"') < html.indexOf('data-page="boss"'));
++const bossPageHtml = html.slice(html.indexOf('data-page="boss"'), html.indexOf('data-page="income"'));
++assert.doesNotMatch(bossPageHtml, /weeklyActivityList/);
++assert.match(bossPageHtml, /<h2>보스<\/h2>/);
++assert.match(html, /data-tab="boss"><span aria-hidden="true">✓<\/span>보스<\/button>/);
++assert.match(source, /function isMonthlyBoss\(boss\)/);
++assert.match(source, /function monthlyBossIncomeForWeek\(boss, weekId = ''\)/);
++assert.match(source, /monthlyAutoCompleted/);
++assert.match(source, /주간 보스 \$\{s\.done\} \/ \$\{s\.count\} 완료/);
++assert.match(css, /\.boss-cycle-section\{/);
++assert.match(css, /\.monthly-cycle\{/);
++assert.match(css, /\.weekly-activity-character-head\{/);
+ const referencedIds = [...source.matchAll(/\$\('#([A-Za-z][A-Za-z0-9_-]*)'\)/g)].map(match => match[1]);

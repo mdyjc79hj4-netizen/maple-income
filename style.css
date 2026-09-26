@@ -159,6 +159,23 @@ dd{margin:0;font-size:12px}
 .completed .boss-name{color:var(--mint)}
 .boss-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 .boss-actions button{flex:1;white-space:normal;font-size:11px}
+.boss-cycle-section{margin-top:16px;border:1px solid var(--line);border-radius:13px;background:#0d1922;overflow:hidden}
+.boss-cycle-section+.boss-cycle-section{margin-top:12px}
+.boss-cycle-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;border-bottom:1px solid var(--line);background:#10212b}
+.boss-cycle-head h3{font-size:13px}
+.boss-cycle-head p{margin-top:2px;font-size:10px}
+.boss-cycle-head>strong{color:var(--mint);font-size:11px;white-space:nowrap}
+.boss-cycle-section .boss-line{padding-left:12px;padding-right:12px}
+.boss-cycle-section .boss-actions{margin:0;padding:10px 12px;border-top:1px solid var(--line)}
+.monthly-cycle{border-color:#5b5035}
+.monthly-cycle .boss-cycle-head{background:#241f16}
+.monthly-cycle .boss-cycle-head h3,.monthly-cycle .boss-cycle-head>strong{color:var(--amber)}
+.weekly-content-panel .weekly-activities-head{margin-bottom:10px}
+.weekly-activity-character{display:grid;gap:7px;margin-top:12px}
+.weekly-activity-character:first-child{margin-top:0}
+.weekly-activity-character-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0 2px}
+.weekly-activity-character-head b{font-size:12px}
+.weekly-activity-character-head span{color:var(--muted);font-size:10px}
 .weekly-activities{margin-top:20px;padding-top:16px;border-top:1px solid var(--line)}
 .weekly-activities-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
 .weekly-activities-head p{margin-top:2px;font-size:10px}

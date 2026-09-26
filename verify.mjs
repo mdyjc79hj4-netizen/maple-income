@@ -61,7 +61,7 @@ const legacy = {
 };
 context.__legacy = legacy;
 const migrated = json("migrateState(__legacy, new Date('2026-09-20T12:00:00'))");
-assert.equal(migrated.version, 7);
+assert.equal(migrated.version, 8);
 assert.equal(migrated.settings.defaultSaleFeeRate, 0.05);
 assert.deepEqual(migrated.characters[0].weeklyActivities, []);
 assert.ok(!Number.isNaN(Date.parse(migrated.updatedAt)));
@@ -216,6 +216,9 @@ context.__apiDifficulty = ' hard ';
 assert.equal(run('normalizeNexonDifficulty(__apiDifficulty)'), '하드');
 assert.equal(run("isNexonWeeklyCycle('bossWeekly')"), true);
 assert.equal(run("isNexonWeeklyCycle('bossDaily')"), false);
+assert.equal(run("nexonBossCycle('bossMonthly')"), 'monthly');
+assert.equal(run("nexonBossCycle('bossMonth')"), 'monthly');
+assert.equal(run("nexonBossCycle('월간')"), 'monthly');
 
 const schedulerState = {
   version: 5, updatedAt: '2026-09-23T00:00:00.000Z', currentWeek: '2026-09-17~2026-09-23',
@@ -259,7 +262,7 @@ assert.deepEqual(json('Object.keys(nexonDiagnosticGroups(__appliedDiagnostics))'
 assert.equal(run('nexonDiagnosticGroups(__appliedDiagnostics).unknownName.length'), 1);
 assert.deepEqual(appliedScheduler.completedItems.map(item => item.result).sort(), ['matched-auto-completed', 'unknown-name'].sort());
 assert.equal(run('nexonUserStatusMessage(__appliedDiagnostics)'), '주간 보스 1개를 자동 확인했습니다.');
-assert.equal(run('nexonUserStatusMessage({...__appliedDiagnostics, autoCompleted: 0})'), '새로 확인된 주간 기록이 없습니다.');
+assert.equal(run('nexonUserStatusMessage({...__appliedDiagnostics, autoCompleted: 0})'), '새로 확인된 기록이 없습니다.');
 assert.equal(run('nexonUserStatusMessage(__appliedDiagnostics, true)'), '최근 확인한 기록입니다.');
 assert.equal(run("latestNexonCheckedAt([{nexonCharacter:{lastCheckedAt:'2026-09-23T01:00:00.000Z'}},{nexonCharacter:{lastCheckedAt:'2026-09-24T02:00:00.000Z'}}])"), '2026-09-24T02:00:00.000Z');
 assert.equal(run("nexonDefaultStatusMessage([{nexonCharacter:{ocid:'linked',lastCheckedAt:'2026-09-24T02:00:00.000Z'}}])"), '최신 상태');
@@ -574,7 +577,7 @@ assert.equal(migratedV1.characters[0].bosses.find(b => b.bossId === 'seren').pri
 assert.equal(migratedV1.characters[0].bosses.find(b => b.bossId === 'kalos').price, 1230000000);
 
 context.__backup = JSON.stringify(legacy);
-assert.equal(run("prepareImportedState(__backup, new Date('2026-09-20T12:00:00')).version"), 7);
+assert.equal(run("prepareImportedState(__backup, new Date('2026-09-20T12:00:00')).version"), 8);
 assert.equal(run("prepareImportedState(__backup, new Date('2026-09-20T12:00:00')).settings.defaultSaleFeeRate"), 0.05);
 assert.throws(() => run("prepareImportedState('{broken')"), /JSON/);
 assert.throws(() => run("prepareImportedState('{}')"), /저장 데이터 형식/);
@@ -627,6 +630,56 @@ assert.equal(context.__activityRoll.weeklyHistory['2026-09-17~2026-09-23'].chara
 assert.equal(context.__activityRoll.weeklyHistory['2026-09-17~2026-09-23'].characters[0].weeklyActivities[0].completionSource, 'nexon-api');
 assert.equal(context.__activityRoll.characters[0].weeklyActivities[0].done, false);
 assert.equal('apiCompleted' in context.__activityRoll.characters[0].weeklyActivities[0], false);
+
+context.__monthlyBossState = {
+  version: 7, currentWeek: '2026-09-24~2026-09-30', updatedAt: '2026-09-26T00:00:00.000Z',
+  characters: [{id:'monthly-c1',name:'월간캐릭터',bosses:[
+    {bossId:'black-mage',name:'검은 마법사',difficulty:'하드',party:1,partySize:1,price:665000000,done:true,completedIncome:665000000,completionSource:'manual',manualOverride:true}
+  ],weeklyActivities:[]}],
+  incomes: [], weeklyHistory: {}, presets: [], settings: {defaultSaleFeeRate:0.05}
+};
+const migratedMonthly = json("migrateState(__monthlyBossState, new Date('2026-09-26T12:00:00'))");
+assert.equal(migratedMonthly.version, 8);
+assert.equal(migratedMonthly.characters[0].bosses[0].monthlyCompletions['2026-09'].weekId, '2026-09-24~2026-09-30');
+assert.equal(migratedMonthly.characters[0].bosses[0].done, true);
+context.__migratedMonthly = structuredClone(migratedMonthly);
+assert.equal(run("characterStats(__migratedMonthly.characters[0]).count"), 0);
+assert.equal(run("totalsFor(__migratedMonthly).boss"), 665000000);
+context.__migratedMonthly.currentWeek = '2026-10-01~2026-10-07';
+assert.equal(run("totalsFor(__migratedMonthly).boss"), 0);
+
+context.__crossMonthBoss = structuredClone(migratedMonthly.characters[0].bosses[0]);
+run("recordMonthlyBossCompletion(__crossMonthBoss,'2026-10','2026-09-24~2026-09-30',{income:465000000,completedAt:'2026-10-01T00:10:00.000Z',source:'manual',now:new Date('2026-10-01T00:10:00')})");
+assert.equal(run("monthlyBossIncomeForWeek(__crossMonthBoss,'2026-09-24~2026-09-30')"), 1130000000);
+run("syncMonthlyBossCurrentState(__crossMonthBoss,new Date('2026-10-01T12:00:00'))");
+assert.equal(context.__crossMonthBoss.done, true);
+assert.equal(context.__crossMonthBoss.completedIncome, 465000000);
+
+context.__monthlyResetState = structuredClone(migratedMonthly);
+run("resetCurrentWeek(__monthlyResetState,new Date('2026-09-26T12:00:00'))");
+assert.equal(run("Object.keys(__monthlyResetState.characters[0].bosses[0].monthlyCompletions).length"), 0);
+assert.equal(context.__monthlyResetState.characters[0].bosses[0].done, false);
+
+context.__priorMonthly = structuredClone(migratedMonthly);
+context.__priorMonthly.characters[0].bosses[0].monthlyCompletions['2026-09'].weekId = '2026-09-17~2026-09-23';
+run("resetCurrentWeek(__priorMonthly,new Date('2026-09-26T12:00:00'))");
+assert.equal(context.__priorMonthly.characters[0].bosses[0].done, true);
+assert.equal(run("monthlyBossIncomeForWeek(__priorMonthly.characters[0].bosses[0],'2026-09-17~2026-09-23')"), 665000000);
+
+context.__monthlySchedulerState = {
+  version: 8, currentWeek: '2026-09-24~2026-09-30',
+  characters: [{id:'monthly-c1',name:'월간캐릭터',bosses:[{bossId:'black-mage',name:'검은 마법사',difficulty:'하드',party:1,partySize:1,price:665000000,done:false}],weeklyActivities:[]}],
+  incomes: [], weeklyHistory: {}, presets: [], settings: {}
+};
+context.__monthlySchedulerResponse = {
+  date:'2026-09-26',requestedDate:null,mode:'live',character:{name:'월간캐릭터'},
+  bosses:[{contentName:'검은 마법사',difficulty:'hard',cycle:'bossMonthly',complete:true}],activities:[]
+};
+const monthlySchedulerResult = json("applyNexonSchedulerState(__monthlySchedulerState,'monthly-c1',__monthlySchedulerResponse,'2026-09-26T03:00:00.000Z')");
+assert.equal(monthlySchedulerResult.monthlyAutoCompleted, 1);
+assert.equal(monthlySchedulerResult.autoCompleted, 1);
+assert.equal(context.__monthlySchedulerState.characters[0].bosses[0].monthlyCompletions['2026-09'].weekId, '2026-09-24~2026-09-30');
+assert.equal(run("nexonUserStatusMessage({autoCompleted:1,monthlyAutoCompleted:1,activityAutoCompleted:0})"), '월간 보스 1개를 자동 확인했습니다.');
 
 context.__activityReset = structuredClone(context.__activityState);
 run('resetCurrentWeek(__activityReset)');
@@ -1358,7 +1411,7 @@ assert.match(source, /data-nexon-action="unlink"/);
 const nexonSettingsStart = html.indexOf('<section class="settings-section nexon-section">');
 const nexonSettingsHtml = html.slice(nexonSettingsStart, html.indexOf('</section>', nexonSettingsStart) + '</section>'.length);
 assert.match(nexonSettingsHtml, /Scheduler API 제한으로 일부 계정에서 사용할 수 없습니다/);
-assert.match(nexonSettingsHtml, /자동 확인을 사용할 수 없어도 주간 보스는 직접 체크할 수 있습니다/);
+assert.match(nexonSettingsHtml, /자동 확인을 사용할 수 없어도 보스는 직접 체크할 수 있습니다/);
 assert.doesNotMatch(nexonSettingsHtml, /type="password"|nexonApiKey|nexon-key/i);
 assert.doesNotMatch(source, /nexonApiKey|nexon-key/i);
 const originalNexonKey = process.env.NEXON_OPEN_API_KEY;
@@ -1520,6 +1573,19 @@ assert.match(css, /@media\(min-width:1000px\)\{[\s\S]*\.tabs\{top:0;bottom:0;lef
 assert.match(css, /@media\(min-width:1000px\)\{[\s\S]*\.history-desktop-head\{display:grid/);
 assert.match(css, /#incomeHistory \.compact-record\{grid-template-columns:88px/);
 assert.match(css, /@media\(max-width:430px\)\{[\s\S]*grid-template-areas:"item menu" "detail menu" "value menu" "time menu"/);
+assert.match(html, /class="panel weekly-content-panel"/);
+assert.ok(html.indexOf('id="weeklyActivityList"') < html.indexOf('data-page="boss"'));
+const bossPageHtml = html.slice(html.indexOf('data-page="boss"'), html.indexOf('data-page="income"'));
+assert.doesNotMatch(bossPageHtml, /weeklyActivityList/);
+assert.match(bossPageHtml, /<h2>보스<\/h2>/);
+assert.match(html, /data-tab="boss"><span aria-hidden="true">✓<\/span>보스<\/button>/);
+assert.match(source, /function isMonthlyBoss\(boss\)/);
+assert.match(source, /function monthlyBossIncomeForWeek\(boss, weekId = ''\)/);
+assert.match(source, /monthlyAutoCompleted/);
+assert.match(source, /주간 보스 \$\{s\.done\} \/ \$\{s\.count\} 완료/);
+assert.match(css, /\.boss-cycle-section\{/);
+assert.match(css, /\.monthly-cycle\{/);
+assert.match(css, /\.weekly-activity-character-head\{/);
 const referencedIds = [...source.matchAll(/\$\('#([A-Za-z][A-Za-z0-9_-]*)'\)/g)].map(match => match[1]);
 const htmlIds = new Set([...html.matchAll(/id="([^"]+)"/g)].map(match => match[1]));
 assert.deepEqual([...new Set(referencedIds)].filter(id => !htmlIds.has(id)), []);
