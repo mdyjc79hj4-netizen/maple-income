@@ -171,11 +171,14 @@ dd{margin:0;font-size:12px}
 .monthly-cycle .boss-cycle-head{background:#241f16}
 .monthly-cycle .boss-cycle-head h3,.monthly-cycle .boss-cycle-head>strong{color:var(--amber)}
 .weekly-content-panel .weekly-activities-head{margin-bottom:10px}
-.weekly-activity-character{display:grid;gap:7px;margin-top:12px}
-.weekly-activity-character:first-child{margin-top:0}
-.weekly-activity-character-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0 2px}
-.weekly-activity-character-head b{font-size:12px}
-.weekly-activity-character-head span{color:var(--muted);font-size:10px}
+.weekly-activity-scope{display:grid;gap:7px;margin-top:12px}
+.weekly-activity-scope:first-child{margin-top:0}
+.weekly-activity-scope-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0 2px}
+.weekly-activity-scope-head>div{display:grid;gap:2px;min-width:0}
+.weekly-activity-scope-head b{font-size:12px}
+.weekly-activity-scope-head small,.weekly-activity-scope-head>span{color:var(--muted);font-size:10px}
+.character-picker-head label{max-width:170px;min-width:0}
+.character-picker-head select{width:100%;min-height:36px;padding:7px 28px 7px 9px;font-size:12px}
 .weekly-activities{margin-top:20px;padding-top:16px;border-top:1px solid var(--line)}
 .weekly-activities-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
 .weekly-activities-head p{margin-top:2px;font-size:10px}
@@ -388,6 +391,8 @@ main{padding:24px 30px}
 .character-income-grid dd{text-align:right}
 .character-stat-details{grid-area:details}
 .character-stat-groups{grid-template-columns:repeat(4,minmax(0,1fr));gap:18px}
+#weeklyActivityList{display:grid;grid-template-columns:minmax(230px,.8fr) minmax(320px,1.2fr);align-items:start;gap:14px}
+.weekly-activity-scope{margin-top:0}
 .history-desktop-head{display:grid;grid-template-columns:88px minmax(120px,.9fr) minmax(220px,1.8fr) minmax(150px,.9fr) 110px 44px;gap:12px;padding:0 8px 7px 12px;color:var(--muted);font-size:10px}
 #incomeHistory.compact-history{gap:0;border:1px solid var(--line);border-radius:12px;overflow:visible}
 #incomeHistory .compact-record{grid-template-columns:88px minmax(120px,.9fr) minmax(220px,1.8fr) minmax(150px,.9fr) 110px 44px;grid-template-areas:"category item detail value time menu";gap:12px;align-items:center;min-height:54px;padding:8px 8px 8px 12px;border:0;border-radius:0;border-top:1px solid var(--line);background:#0f1b24}
@@ -415,6 +420,8 @@ main{padding:24px 30px}
 }
 
 @media(max-width:430px){
+.weekly-activity-scope-head{align-items:flex-start}
+.character-picker-head label{width:min(46vw,160px)}
 .boss-character-tools{grid-template-columns:minmax(0,1fr) 44px}
 .boss-character-tools .compact{grid-column:1/-1;grid-row:2;width:100%}
 .more-menu{grid-column:2;grid-row:1}

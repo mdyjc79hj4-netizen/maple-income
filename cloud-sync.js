@@ -22,7 +22,7 @@ const timestamp = value => {
 const isoMax = (...values) => new Date(Math.max(0, ...values.map(timestamp))).toISOString();
 const same = (left, right) => JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
 
-const migrationGroups = ['incomes', 'characters', 'bosses', 'activities', 'presets', 'weeklyHistory'];
+const migrationGroups = ['incomes', 'characters', 'bosses', 'accountActivities', 'activities', 'presets', 'weeklyHistory'];
 function normalizeMigrationGuard(value) {
   const baseline = asObject(value?.baseline || value);
   return Object.fromEntries(migrationGroups.map(group => [
@@ -41,8 +41,8 @@ async function contentHash(value) {
 function emptySync() {
   return {
     schema: 1,
-    revisions: {root: '', settings: '', incomes: {}, characters: {}, bosses: {}, activities: {}, presets: {}, weeklyHistory: {}},
-    tombstones: {incomes: {}, characters: {}, bosses: {}, activities: {}, presets: {}, weeklyHistory: {}},
+    revisions: {root: '', settings: '', incomes: {}, characters: {}, bosses: {}, accountActivities: {}, activities: {}, presets: {}, weeklyHistory: {}},
+    tombstones: {incomes: {}, characters: {}, bosses: {}, accountActivities: {}, activities: {}, presets: {}, weeklyHistory: {}},
     conflicts: []
   };
 }
@@ -54,7 +54,7 @@ function normalizeSync(value) {
   const tombstones = asObject(source.tombstones);
   result.revisions.root = typeof revisions.root === 'string' ? revisions.root : '';
   result.revisions.settings = typeof revisions.settings === 'string' ? revisions.settings : '';
-  for (const key of ['incomes', 'characters', 'bosses', 'activities', 'presets', 'weeklyHistory']) {
+  for (const key of ['incomes', 'characters', 'bosses', 'accountActivities', 'activities', 'presets', 'weeklyHistory']) {
     result.revisions[key] = {...asObject(revisions[key])};
     result.tombstones[key] = {...asObject(tombstones[key])};
   }
@@ -65,6 +65,7 @@ function normalizeSync(value) {
 function meaningfulLocalData(state) {
   if (!state) return false;
   if (state.incomes?.length || Object.keys(state.weeklyHistory || {}).length || state.presets?.length) return true;
+  if (state.accountWeeklyActivities?.some(activity => activity.done || activity.manualOverride != null || activity.apiCompleted)) return true;
   const settings = asObject(state.settings);
   if (Object.keys(settings).some(key => key !== 'defaultSaleFeeRate')) return true;
   if (settings.defaultSaleFeeRate != null && Number(settings.defaultSaleFeeRate) !== 0.05) return true;
@@ -73,7 +74,7 @@ function meaningfulLocalData(state) {
   return !!character && !!(
     character.name !== '본캐' || character.nexonCharacter ||
     character.bosses?.some(boss => boss.done || boss.manualOverride != null || boss.apiCompleted) ||
-    character.weeklyActivities?.length
+    character.weeklyActivities?.some(activity => activity.done || activity.manualOverride != null || activity.apiCompleted)
   );
 }
 
@@ -90,7 +91,7 @@ const mapBy = (items, key = 'id') => new Map((Array.isArray(items) ? items : [])
 const historyMap = history => new Map(Object.entries(asObject(history)).map(([key, value]) => [String(value?.weekId || key), value]));
 const rootData = state => {
   const value = {...asObject(state)};
-  for (const key of ['incomes', 'characters', 'presets', 'weeklyHistory', 'settings', 'sync', 'updatedAt', 'version', 'migrationNote']) delete value[key];
+  for (const key of ['incomes', 'characters', 'accountWeeklyActivities', 'presets', 'weeklyHistory', 'settings', 'sync', 'updatedAt', 'version', 'migrationNote']) delete value[key];
   return value;
 };
 const characterData = character => {
@@ -148,6 +149,7 @@ function prepareStateForMerge(input, baseInput = null, now = new Date().toISOStr
   const base = copy(asObject(baseInput));
   state.incomes = Array.isArray(state.incomes) ? state.incomes : [];
   state.characters = Array.isArray(state.characters) ? state.characters : [];
+  state.accountWeeklyActivities = Array.isArray(state.accountWeeklyActivities) ? state.accountWeeklyActivities : [];
   state.presets = Array.isArray(state.presets) ? state.presets : [];
   state.weeklyHistory = asObject(state.weeklyHistory);
   state.settings = asObject(state.settings);
@@ -161,6 +163,7 @@ function prepareStateForMerge(input, baseInput = null, now = new Date().toISOStr
   if (!same(rootData(state), rootData(base))) sync.revisions.root = isoMax(sync.revisions.root, changedAt);
   if (!same(state.settings, base.settings || {})) sync.revisions.settings = isoMax(sync.revisions.settings, changedAt);
   for (const group of ['incomes', 'presets']) markCollectionChanges(mapBy(state[group]), mapBy(base[group]), sync, group, changedAt, migrationGuard);
+  markCollectionChanges(mapBy(state.accountWeeklyActivities), mapBy(base.accountWeeklyActivities), sync, 'accountActivities', changedAt, migrationGuard);
   markCollectionChanges(historyMap(state.weeklyHistory), historyMap(base.weeklyHistory), sync, 'weeklyHistory', changedAt, migrationGuard);
 
   const characters = mapBy(state.characters);
@@ -330,6 +333,12 @@ function mergeStates(baseInput, localInput, remoteInput, now = new Date().toISOS
     sync.revisions[group] = collections[group].revisions;
     sync.tombstones[group] = collections[group].tombstones;
   }
+  const accountActivities = mergeCollection({
+    baseMap: mapBy(base.accountWeeklyActivities), localMap: mapBy(local.accountWeeklyActivities), remoteMap: mapBy(remote.accountWeeklyActivities),
+    localSync, remoteSync, group: 'accountActivities', scope: 'accountWeeklyActivities', conflicts, now
+  });
+  sync.revisions.accountActivities = accountActivities.revisions;
+  sync.tombstones.accountActivities = accountActivities.tombstones;
   const history = mergeCollection({
     baseMap: historyMap(base.weeklyHistory), localMap: historyMap(local.weeklyHistory), remoteMap: historyMap(remote.weeklyHistory),
     localSync, remoteSync, group: 'weeklyHistory', conflicts, now
@@ -387,6 +396,7 @@ function mergeStates(baseInput, localInput, remoteInput, now = new Date().toISOS
     ...root,
     settings,
     incomes: [...collections.incomes.result.values()],
+    accountWeeklyActivities: [...accountActivities.result.values()],
     characters,
     presets: [...collections.presets.result.values()],
     weeklyHistory: Object.fromEntries([...history.result].map(([id, value]) => [id, {...value, weekId: value?.weekId || id}])),
