@@ -1148,18 +1148,19 @@ function renderWeeklyActivities(data) {
   const disabled = isPast() || storageBlocked ? 'disabled' : '', characters = data?.characters || [];
   const accountActivities = normalizeWeeklyActivities(data?.accountWeeklyActivities, 'account', true);
   const accountDone = accountActivities.filter(activity => activity.done).length;
-  const activityRows = (activities, scope) => `<div class="weekly-activity-card">${activities.map((activity, index) => `<label class="weekly-activity-row ${activity.done ? 'completed' : ''}" data-ai="${index}"><input type="checkbox" data-activity-done data-activity-scope="${scope}" aria-label="${escapeHtml(activity.name)} 완료" ${activity.done ? 'checked' : ''} ${disabled}><span><small>${escapeHtml(activity.label)}</small><b>${escapeHtml(activity.name)}</b></span>${weeklyActivityApiBadge(activity)}<strong>${activity.done ? '완료' : '미완료'}</strong></label>`).join('')}</div>`;
-  const accountHtml = `<section class="weekly-activity-scope account-scope"><div class="weekly-activity-scope-head"><div><b>계정 공용</b><small>캐릭터 선택과 관계없이 함께 적용됩니다.</small></div><span>${accountDone} / ${accountActivities.length} 완료</span></div>${activityRows(accountActivities, 'account')}</section>`;
+  const progressBadge = (done, total) => `<span class="weekly-activity-progress ${total > 0 && done === total ? 'complete' : done > 0 ? 'partial' : ''}">${done} / ${total} 완료</span>`;
+  const activityRows = (activities, scope) => `<div class="weekly-activity-card">${activities.map((activity, index) => `<label class="weekly-activity-row ${activity.done ? 'completed' : ''}" data-ai="${index}"><input type="checkbox" data-activity-done data-activity-scope="${scope}" aria-label="${escapeHtml(activity.name)} 완료" ${activity.done ? 'checked' : ''} ${disabled}><span class="weekly-activity-name"><b>${escapeHtml(activity.name)}</b></span>${weeklyActivityApiBadge(activity)}<strong>${activity.done ? '완료' : '미완료'}</strong></label>`).join('')}</div>`;
+  const accountHtml = `<section class="weekly-activity-scope account-scope"><div class="weekly-activity-scope-head"><div class="weekly-activity-scope-copy"><div class="weekly-activity-scope-title"><b>계정 공용</b>${progressBadge(accountDone, accountActivities.length)}</div><small>캐릭터 선택과 관계없이 함께 적용됩니다.</small></div></div>${activityRows(accountActivities, 'account')}</section>`;
   if (!characters.length) {
     selectedActivityCharacterId = '';
-    target.innerHTML = `${accountHtml}<section class="weekly-activity-scope character-scope"><div class="weekly-activity-scope-head"><b>캐릭터별</b></div><p class="empty compact-empty">캐릭터를 등록하면 캐릭터별 주간 콘텐츠를 관리할 수 있습니다.</p></section>`;
+    target.innerHTML = `${accountHtml}<section class="weekly-activity-scope character-scope"><div class="weekly-activity-scope-head"><div class="weekly-activity-scope-copy"><div class="weekly-activity-scope-title"><b>캐릭터별</b></div><small>선택한 캐릭터의 주간 콘텐츠</small></div></div><p class="empty compact-empty">캐릭터를 등록하면 캐릭터별 주간 콘텐츠를 관리할 수 있습니다.</p></section>`;
     return;
   }
   if (!characters.some(character => character.id === selectedActivityCharacterId)) selectedActivityCharacterId = characters[0].id;
   const character = characters.find(item => item.id === selectedActivityCharacterId) || characters[0];
   const activities = normalizeWeeklyActivities(character.weeklyActivities, 'character', true), done = activities.filter(activity => activity.done).length;
   const characterOptions = characters.map(item => option(item.id, item.name, item.id === character.id)).join('');
-  const characterHtml = `<section class="weekly-activity-scope character-scope" data-activity-character-id="${escapeHtml(character.id)}"><div class="weekly-activity-scope-head character-picker-head"><div><b>캐릭터별</b><small>${done} / ${activities.length} 완료</small></div><label><span class="sr-only">주간 콘텐츠 캐릭터 선택</span><select id="weeklyActivityCharacterSelect" ${disabled}>${characterOptions}</select></label></div>${activityRows(activities, 'character')}</section>`;
+  const characterHtml = `<section class="weekly-activity-scope character-scope" data-activity-character-id="${escapeHtml(character.id)}"><div class="weekly-activity-scope-head character-picker-head"><div class="weekly-activity-scope-copy"><div class="weekly-activity-scope-title"><b>캐릭터별</b>${progressBadge(done, activities.length)}</div><small>선택한 캐릭터의 주간 콘텐츠</small></div><label class="weekly-activity-character-picker"><span class="sr-only">주간 콘텐츠 캐릭터 선택</span><select id="weeklyActivityCharacterSelect" aria-label="주간 콘텐츠 캐릭터 선택" ${disabled}>${characterOptions}</select></label></div>${activityRows(activities, 'character')}</section>`;
   target.innerHTML = `${accountHtml}${characterHtml}`;
 }
 function historyDate(row) {
