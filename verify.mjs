@@ -1278,9 +1278,8 @@ assert.equal(schedulerRestrictionWarning.code, 'OPENAPI00004');
 assert.equal(schedulerRestrictionWarning.category, 'invalid_parameter');
 assert.equal(schedulerRestrictionWarning.source, 'nexon_upstream');
 assert.equal(schedulerRestrictionWarning.upstreamMessage, 'Please input valid parameter');
-assert.match(schedulerRestrictionWarning.message, /NEXON 캐릭터 연동은 정상/);
 assert.match(schedulerRestrictionWarning.message, /주간 자동 확인 요청을 처리하지 못했습니다/);
-assert.match(schedulerRestrictionWarning.message, /상세 진단에서 NEXON 오류 코드/);
+assert.match(schedulerRestrictionWarning.message, /고급 진단 정보에서 자세한 내용/);
 assert.doesNotMatch(schedulerRestrictionWarning.message, /서버 API Key와 연결된 NEXON 계정/);
 context.__restrictedLinkUiState = run("nexonLinkUiState({schedulerWarning:nexonSchedulerWarning(__linkState.characters[0], __schedulerRestrictionError)}, 'c1')");
 assert.equal(context.__restrictedLinkUiState.status, 'warning');
@@ -1305,7 +1304,7 @@ const nexonSyncSource = source.slice(source.indexOf('async function syncNexonCha
 assert.ok(nexonSyncSource.indexOf("fetchNexonProfile('', characterName)") < nexonSyncSource.indexOf("fetchNexonScheduler(linkedCharacter, '', requestDate)"));
 assert.match(nexonSyncSource, /schedulerWarning: warning/);
 assert.match(source, /nexonApiState = nexonLinkUiState\(result, character\.id\)/);
-assert.match(source, /schedulerRestricted \? '주간 자동 확인 제한' : schedulerWarning \? '주간 기록 조회 실패'/);
+assert.match(source, /schedulerRestricted \|\| schedulerWarning \? '주간 자동 확인 준비 중'/);
 assert.match(source, /const badge = linked \? '<span class="nexon-link-badge linked">연동됨<\/span>'/);
 const localMemory = new Map();
 context.localStorage = {
@@ -1407,8 +1406,12 @@ assert.match(source, /HTTP \$\{item\.status \|\| '-'\}/);
 assert.match(source, /console\.info\('NEXON scheduler sync diagnostics', result\)/);
 assert.match(html, /id="nexonDiagnostics"/);
 assert.match(html, /id="nexonDiagnosticsContent"/);
-assert.match(html, /<details id="nexonDiagnostics" class="nexon-diagnostics hidden"><summary>상세 진단 보기<\/summary>/);
+assert.match(html, /<details id="nexonDiagnostics" class="nexon-diagnostics hidden"><summary><span>문제가 있나요\?<\/span><b>고급 진단 정보 보기<\/b><\/summary>/);
 assert.doesNotMatch(html, /<details id="nexonDiagnostics"[^>]*\sopen(?:\s|=|>)/);
+assert.match(html, /id="nexonCharacterConnectionState"/);
+assert.match(html, /id="nexonCredentialConnectionState"/);
+assert.match(html, /id="nexonAutomationConnectionState"/);
+assert.match(html, /id="nexonAutomationNotice" class="nexon-automation-notice hidden"/);
 assert.match(html, /id="nexonLastChecked"/);
 assert.match(html, /id="weeklyActivityList"/);
 assert.match(html, /주간 콘텐츠/);
@@ -1507,7 +1510,7 @@ assert.match(source, /data-nexon-action="link"/);
 assert.match(source, /data-nexon-action="unlink"/);
 const nexonSettingsStart = html.indexOf('<section class="settings-section nexon-section">');
 const nexonSettingsHtml = html.slice(nexonSettingsStart, html.indexOf('</section>', nexonSettingsStart) + '</section>'.length);
-assert.match(nexonSettingsHtml, /상세 진단에서 NEXON 오류 코드를 확인할 수 있습니다/);
+assert.match(nexonSettingsHtml, /문제가 생기면 고급 진단 정보에서 자세한 내용을 확인할 수 있습니다/);
 assert.match(nexonSettingsHtml, /자동 확인 요청이 실패해도 캐릭터 연동과 수동 보스 체크는 계속 사용할 수 있습니다/);
 assert.doesNotMatch(nexonSettingsHtml, /서버 API Key와 연결된 NEXON 계정|일부 계정에서 사용할 수 없습니다/);
 assert.match(nexonSettingsHtml, /id="nexonCredentialInput"[^>]+type="password"/);
@@ -1768,7 +1771,9 @@ assert.equal(missingAccountResult.body.characterOwnedByServerKey, false);
 assert.equal(missingAccountResult.body.applicationCategory, 'scheduler_account_restriction');
 assert.match(run("nexonAccountOwnershipCard({ok:true,characterOwnedByServerKey:true,accountCount:2,characterCount:3})"), /확인됨/);
 assert.doesNotMatch(run("nexonAccountOwnershipCard({ok:true,characterOwnedByServerKey:true,accountCount:2,characterCount:3})"), /불일치/);
-assert.match(run("nexonAccountOwnershipCard({ok:true,characterOwnedByServerKey:false,accountCount:1,characterCount:15,applicationCategory:'scheduler_account_restriction'})"), /불일치/);
+assert.match(run("nexonAccountOwnershipCard({ok:true,characterOwnedByServerKey:false,accountCount:1,characterCount:15,applicationCategory:'scheduler_account_restriction'})"), /서버 진단용 API Key 확인/);
+assert.match(run("nexonAccountOwnershipCard({ok:true,characterOwnedByServerKey:false,accountCount:1,characterCount:15,applicationCategory:'scheduler_account_restriction'})"), /서버 진단용 API Key와 선택한 캐릭터의 계정이 일치하지 않습니다/);
+assert.match(run("nexonAccountOwnershipCard({ok:true,characterOwnedByServerKey:false,accountCount:1,characterCount:15,applicationCategory:'scheduler_account_restriction'})"), /등록한 개인 NEXON API Key의 오류를 의미하지 않습니다/);
 assert.match(run("nexonAccountOwnershipCard({ok:false,status:403,code:'OPENAPI00005',category:'invalid_api_key'})"), /오류/);
 const ownershipErrorResult = await invokeAccountOwnership({error: {name: 'OPENAPI00005', message: `invalid key ${selectedOcid} x-nxopen-api-key=secret-value`}}, {ok: false, status: 403});
 assert.equal(ownershipErrorResult.body.code, 'OPENAPI00005');
@@ -2083,6 +2088,20 @@ assert.match(html, /id="nexonCredentialInput"[^>]+type="password"[^>]+autocomple
 assert.match(html, /API Key는 서버에서 암호화하여 저장하며/);
 const credentialClientSource = source.slice(source.indexOf('function nexonCredentialErrorMessage'), source.indexOf('function renderNexonSettings'));
 assert.doesNotMatch(credentialClientSource, /localStorage|sessionStorage|transaction\(|applyCloudState|weeklyHistory/);
+assert.doesNotMatch(source.slice(source.indexOf('function renderNexonCredentialSettings'), source.indexOf('async function nexonCredentialRequest')), /nexonApiState|schedulerWarning/);
+context.__connectionCharacters = [{id: 'c1', nexonCharacter: {ocid: 'linked-ocid'}}];
+context.__connectionCredential = {status: 'ready', hasCredential: true};
+context.__connectionApiWarning = {status: 'warning'};
+assert.deepEqual(json('nexonConnectionStatusSummary(__connectionCharacters,__connectionCredential,true,__connectionApiWarning)'), {
+  character: {label: '정상', tone: 'success'},
+  credential: {label: '등록 완료', tone: 'success'},
+  automation: {label: '아직 연결되지 않음', tone: 'warning'},
+  showPreparationNotice: true
+});
+assert.equal(run("nexonConnectionStatusSummary(__connectionCharacters,__connectionCredential,true,{status:'ok'}).automation.label"), '정상');
+assert.equal(run("nexonConnectionStatusSummary([],__connectionCredential,true,{status:'warning'}).automation.label"), '캐릭터 연동 필요');
+assert.match(source, /주간 자동 확인 연결 상태를 확인해주세요/);
+assert.match(source, /주간 자동 확인 준비 중/);
 assert.doesNotMatch(JSON.stringify(json('emptyState()')), /apiKey|credential|ciphertext|auth_tag/);
 assert.match(source, /fetch\('\/api\/nexon-credential'/);
 assert.match(source, /Authorization: `Bearer \$\{token\}`/);

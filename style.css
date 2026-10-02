@@ -277,6 +277,14 @@ dd{margin:0;font-size:12px}
 .cloud-choice.caution{border-color:#65404a;color:#ffc0c0}
 .cloud-choice-card .warning{margin:14px 0 2px;border-color:#65404a;background:#2a1d22;color:#ffc0c0}
 .nexon-help{margin-top:7px;font-size:11px}
+.nexon-connection-status{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:10px}
+.nexon-connection-status>div{display:grid;gap:2px;align-content:start;border:1px solid var(--line);border-radius:9px;padding:7px 8px;background:var(--panel)}
+.nexon-connection-status span{color:var(--muted);font-size:9px;line-height:1.35;overflow-wrap:anywhere}
+.nexon-connection-status b{font-size:11px;line-height:1.35;overflow-wrap:anywhere}
+.nexon-connection-status b.success{color:var(--mint)}
+.nexon-connection-status b.pending{color:var(--amber)}
+.nexon-connection-status b.warning{color:var(--amber)}
+.nexon-connection-status b.muted{color:var(--muted)}
 .nexon-credential{display:grid;gap:10px;margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:11px;background:#0c1821}
 .nexon-credential-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
 .nexon-credential-head-copy{display:grid;gap:3px;min-width:0}
@@ -341,9 +349,13 @@ dd{margin:0;font-size:12px}
 .nexon-sync-summary{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
 .nexon-sync-summary small{flex:none;font-size:10px}
 #nexonApiStatus{min-width:0;text-align:right;font-size:11px;overflow-wrap:anywhere}
+.nexon-automation-notice{display:grid;gap:2px;margin-top:8px;border-left:2px solid var(--mint);padding:6px 8px;background:var(--panel)}
+.nexon-automation-notice b{font-size:11px;color:var(--mint)}
+.nexon-automation-notice p{color:var(--muted);font-size:10px;line-height:1.45;overflow-wrap:anywhere}
 .nexon-check{width:100%;margin-top:8px}
 .nexon-diagnostics{margin-top:7px;border-top:1px solid var(--line);font-size:11px}
-.nexon-diagnostics>summary{min-height:44px;display:flex;align-items:center;color:var(--blue);font-weight:700;cursor:pointer;list-style-position:inside}
+.nexon-diagnostics>summary{min-height:44px;display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--muted);cursor:pointer;list-style-position:inside}
+.nexon-diagnostics>summary b{color:var(--blue);font-size:11px}
 .nexon-diagnostics-content{display:grid;gap:8px;padding-bottom:4px}
 .nexon-scheduler-comparison{display:grid;gap:8px;margin-bottom:9px;padding:10px;border:1px solid var(--line);border-radius:10px;background:#0c1821}
 .nexon-scheduler-comparison-head{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0}
@@ -370,6 +382,8 @@ dd{margin:0;font-size:12px}
 .nexon-api-key-ownership.error{border-color:#613b43}
 .nexon-api-key-ownership p,.nexon-api-key-ownership small{overflow-wrap:anywhere}
 .nexon-api-key-ownership small{color:var(--muted)}
+.nexon-api-key-ownership .nexon-ownership-description{color:var(--muted);font-size:10px}
+.nexon-api-key-ownership .nexon-ownership-note{display:block;margin-top:3px;color:var(--mint)}
 .nexon-diagnostic-summary{display:flex;flex-wrap:wrap;gap:5px;padding:8px;border-radius:9px;background:#0c1821}
 .nexon-diagnostic-summary span{padding:4px 7px;border-radius:999px;background:#172934;color:var(--muted);white-space:nowrap}
 .nexon-diagnostic-summary b{color:var(--text)}
@@ -516,6 +530,8 @@ main{padding:24px 30px}
 .cloud-auth{grid-template-columns:1fr}
 .cloud-auth .cloud-actions{grid-column:1}
 .nexon-section{padding-top:12px;padding-bottom:12px}
+.nexon-connection-status{gap:4px}
+.nexon-connection-status>div{padding:7px 6px}
 .nexon-credential-form{grid-template-columns:1fr}
 .nexon-credential-form label,.nexon-credential-form small{grid-column:1}
 .nexon-credential-form .nexon-credential-actions{display:grid;grid-template-columns:1fr auto}

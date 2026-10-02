@@ -1253,7 +1253,7 @@ function nexonSchedulerWarning(character, error) {
   const message = accountRestricted
     ? '캐릭터 연동은 정상적으로 완료되었습니다. 주간 자동 확인은 현재 이 캐릭터에서 사용할 수 없습니다. NEXON Scheduler API는 서버 API Key와 연결된 NEXON 계정의 캐릭터만 조회할 수 있습니다.'
     : status === 400 && error?.category === 'invalid_parameter'
-    ? 'NEXON 캐릭터 연동은 정상입니다. 주간 자동 확인 요청을 처리하지 못했습니다. 상세 진단에서 NEXON 오류 코드를 확인할 수 있습니다.'
+    ? '주간 자동 확인 요청을 처리하지 못했습니다. 고급 진단 정보에서 자세한 내용을 확인할 수 있습니다.'
     : status === 400 && error?.category && error.category !== 'unknown_upstream_error'
     ? `NEXON 캐릭터 연동 완료 · ${error.message}`
     : status === 403
@@ -1393,14 +1393,14 @@ function nexonAccountOwnershipCard(item) {
   const mismatch = item.ok && item.characterOwnedByServerKey === false;
   const label = confirmed ? '확인됨' : mismatch ? '불일치' : '오류';
   const message = confirmed
-    ? '선택한 캐릭터가 서버 API Key 계정에 포함되어 있습니다.'
+    ? '선택한 캐릭터가 서버 진단용 API Key 계정에 포함되어 있습니다.'
     : mismatch
-      ? '선택한 캐릭터가 현재 서버 API Key 계정에 포함되어 있지 않습니다.'
-      : 'NEXON API Key 계정 확인 요청을 처리하지 못했습니다.';
+      ? '서버 진단용 API Key와 선택한 캐릭터의 계정이 일치하지 않습니다.'
+      : '서버 진단용 API Key 계정 확인 요청을 처리하지 못했습니다.';
   const detail = item.ok
     ? `<small>계정 ${n(item.accountCount)}개 · 캐릭터 ${n(item.characterCount)}개</small>`
     : `<small>HTTP ${escapeHtml(String(item.status || '-'))} · ${escapeHtml(item.code || 'OWNERSHIP_CHECK_FAILED')}${item.category ? ` · ${escapeHtml(item.category)}` : ''}</small>`;
-  return `<article class="nexon-api-key-ownership ${confirmed ? 'confirmed' : mismatch ? 'mismatch' : 'error'}"><div><b>API Key 계정 확인</b><span>${label}</span></div><p>${escapeHtml(message)}</p>${detail}</article>`;
+  return `<article class="nexon-api-key-ownership ${confirmed ? 'confirmed' : mismatch ? 'mismatch' : 'error'}"><div><b>서버 진단용 API Key 확인</b><span>${label}</span></div><p class="nexon-ownership-description">자동 확인 서버에서 사용하는 진단용 API Key와 선택한 캐릭터 계정의 일치 여부를 확인한 결과입니다.</p><p>${escapeHtml(message)}</p>${detail}<small class="nexon-ownership-note">이 결과는 등록한 개인 NEXON API Key의 오류를 의미하지 않습니다.</small></article>`;
 }
 function renderNexonSchedulerComparison() {
   const select = $('#nexonSchedulerDiagnosticCharacter'), button = $('#runNexonSchedulerDiagnostic');
@@ -1529,6 +1529,42 @@ function onNexonCredentialAuthChanged({signedIn = false} = {}) {
   }
   refreshNexonCredentialStatus();
 }
+function nexonConnectionStatusSummary(characters, credentialState, signedIn, apiState) {
+  const linked = characters.some(character => character.nexonCharacter?.ocid);
+  const credentialReady = signedIn && credentialState?.hasCredential === true;
+  const character = linked ? {label: '정상', tone: 'success'} : {label: '미연동', tone: 'muted'};
+  const credential = !signedIn
+    ? {label: '로그인 필요', tone: 'muted'}
+    : ['loading', 'saving', 'deleting'].includes(credentialState?.status)
+      ? {label: '확인 중', tone: 'pending'}
+      : credentialReady
+        ? {label: '등록 완료', tone: 'success'}
+        : credentialState?.status === 'error'
+          ? {label: '확인 필요', tone: 'warning'}
+          : {label: '미등록', tone: 'muted'};
+  let automation = {label: '캐릭터 연동 필요', tone: 'muted'};
+  if (linked && apiState?.status === 'checking') automation = {label: '확인 중', tone: 'pending'};
+  else if (linked && apiState?.status === 'ok') automation = {label: '정상', tone: 'success'};
+  else if (linked && apiState?.status === 'warning' && credentialReady) automation = {label: '아직 연결되지 않음', tone: 'warning'};
+  else if (linked && ['warning', 'error'].includes(apiState?.status)) automation = {label: '확인 필요', tone: 'warning'};
+  else if (linked) automation = {label: '확인 전', tone: 'muted'};
+  return {character, credential, automation, showPreparationNotice: linked && credentialReady && apiState?.status === 'warning'};
+}
+function renderNexonConnectionStatus() {
+  const signedIn = !!nexonCredentialAuthBridge?.isSignedIn?.();
+  const summary = nexonConnectionStatusSummary(state.characters, nexonCredentialState, signedIn, nexonApiState);
+  for (const [id, value] of [
+    ['nexonCharacterConnectionState', summary.character],
+    ['nexonCredentialConnectionState', summary.credential],
+    ['nexonAutomationConnectionState', summary.automation]
+  ]) {
+    const element = $('#' + id);
+    if (!element) continue;
+    element.textContent = value.label;
+    element.className = value.tone;
+  }
+  $('#nexonAutomationNotice')?.classList.toggle('hidden', !summary.showPreparationNotice);
+}
 function renderNexonSettings() {
   const list = $('#nexonCharacterList');
   if (!list) return;
@@ -1543,18 +1579,24 @@ function renderNexonSettings() {
     const hasError = nexonApiState.errorCharacterId === character.id || profileFailed;
     const badge = linked ? '<span class="nexon-link-badge linked">연동됨</span>' : hasError ? '<span class="nexon-link-badge error">오류</span>' : '<span class="nexon-link-badge">미연동</span>';
     const levelClass = [Number.isInteger(link?.level) ? `Lv. ${link.level}` : '', link?.className || ''].filter(Boolean).join(' ');
-    const profileStatus = profileFailed ? '프로필 갱신 실패' : profileMissing ? '프로필 갱신 필요' : schedulerRestricted ? '주간 자동 확인 제한' : schedulerWarning ? '주간 기록 조회 실패' : '';
+    const profileStatus = profileFailed ? '프로필 갱신 실패' : profileMissing ? '프로필 갱신 필요' : schedulerRestricted || schedulerWarning ? '주간 자동 확인 준비 중' : '';
     const detail = linked ? `<p>${escapeHtml(link.characterName || '')}</p>${levelClass || link.world ? `<small class="nexon-character-profile">${escapeHtml([levelClass, link.world || ''].filter(Boolean).join(' · '))}</small>` : ''}<small>마지막 확인 ${escapeHtml(nexonCheckedTimeLabel(link.lastCheckedAt))}${profileStatus ? ` · ${profileStatus}` : ''}</small>` : '<p class="muted">NEXON 캐릭터 미연동</p>';
     return `<div class="nexon-character-row" data-nexon-character="${escapeHtml(character.id)}"><div class="nexon-character-info">${nexonProfileAvatar(character, 'settings-avatar')}<div class="nexon-character-copy"><div class="nexon-character-heading"><b>${escapeHtml(character.name)}</b>${badge}</div>${detail}</div></div><div class="nexon-character-actions"><button type="button" class="ghost" data-nexon-action="link" ${disabled}>${linked ? '변경' : '연동'}</button>${linked ? `<button type="button" class="text-button" data-nexon-action="unlink" ${disabled}>해제</button>` : ''}</div></div>`;
   }).join('') || '<p class="empty">먼저 캐릭터를 추가해주세요.</p>';
   const lastCheckedAt = latestNexonCheckedAt(state.characters);
   $('#nexonLastChecked').textContent = lastCheckedAt ? `마지막 확인 ${nexonCheckedLabel(lastCheckedAt)}` : '마지막 확인 없음';
   const status = $('#nexonApiStatus');
-  status.textContent = nexonApiState.status === 'idle' ? nexonDefaultStatusMessage(state.characters) : nexonApiState.message;
+  const credentialReady = !!nexonCredentialAuthBridge?.isSignedIn?.() && nexonCredentialState.hasCredential;
+  status.textContent = nexonApiState.status === 'idle'
+    ? nexonDefaultStatusMessage(state.characters)
+    : nexonApiState.status === 'warning' && credentialReady
+      ? '주간 자동 확인 연결 상태를 확인해주세요.'
+      : nexonApiState.message;
   status.className = nexonApiState.status === 'error' ? 'negative' : ['checking', 'warning'].includes(nexonApiState.status) ? 'pending' : nexonApiState.status === 'ok' ? 'mint' : 'muted';
   const button = $('#checkNexonBosses');
   button.disabled = nexonApiState.status === 'checking' || isPast() || storageBlocked || !state.characters.some(character => character.nexonCharacter?.ocid);
   renderNexonCredentialSettings();
+  renderNexonConnectionStatus();
   renderNexonDiagnostics();
 }
 function renderSettings() {
