@@ -2412,4 +2412,81 @@ assert.match(css, /\.nexon-credential-guide>summary\{[^}]*min-height:44px/);
 assert.match(css, /\.nexon-credential-guide-link\{[^}]*min-height:44px/);
 assert.match(css, /\.nexon-credential-security-more>summary\{[^}]*min-height:32px/);
 assert.match(css, /@media\(max-width:430px\)[\s\S]*\.nexon-credential-guide-link\{justify-self:stretch;width:100%\}/);
+
+assert.equal(run("normalizeThemePreference('sepia')"), 'system');
+assert.equal(run("normalizeThemePreference(null)"), 'system');
+assert.equal(run("resolveTheme('system', false)"), 'light');
+assert.equal(run("resolveTheme('system', true)"), 'dark');
+assert.equal(run("resolveTheme('light', true)"), 'light');
+assert.equal(run("resolveTheme('dark', false)"), 'dark');
+assert.equal(run("themePreference='system';handleSystemThemeChange({matches:true})"), 'dark');
+assert.equal(run("themePreference='system';handleSystemThemeChange({matches:false})"), 'light');
+assert.equal(run("themePreference='light';handleSystemThemeChange({matches:true})"), 'light');
+assert.equal(run("themePreference='dark';handleSystemThemeChange({matches:false})"), 'dark');
+run("__themeStorage={value:null,getItem(){return this.value},setItem(key,value){this.key=key;this.value=value}};themePreference='system'");
+assert.equal(run("setThemePreference('dark',__themeStorage)"), 'dark');
+assert.equal(run("__themeStorage.key"), 'maple-income-theme');
+assert.equal(run("readThemePreference(__themeStorage)"), 'dark');
+assert.equal(run("setThemePreference('light',__themeStorage)"), 'light');
+assert.equal(run("readThemePreference(__themeStorage)"), 'light');
+assert.equal(run("setThemePreference('system',__themeStorage)"), 'light');
+assert.equal(run("readThemePreference(__themeStorage)"), 'system');
+assert.doesNotMatch(JSON.stringify(json('emptyState()')), /maple-income-theme|themePreference|resolvedTheme/);
+assert.match(source, /const THEME_STORAGE_KEY = 'maple-income-theme'/);
+assert.match(source, /matchMedia\('\(prefers-color-scheme: dark\)'\)/);
+assert.match(source, /addEventListener\?\.\('change', handleSystemThemeChange\)/);
+assert.match(source, /document\.documentElement\.dataset\.theme = resolved/);
+assert.match(source, /document\.documentElement\.style\.colorScheme = resolved/);
+assert.match(source, /meta\[name="theme-color"\]/);
+assert.doesNotMatch(cloudSource, /maple-income-theme|THEME_STORAGE_KEY|themePreference/);
+assert.doesNotMatch(source, /localStorage\.clear\(\)/);
+assert.match(html, /data-settings-route="display"/);
+assert.match(html, /id="settingsThemeSummary">시스템 설정/);
+assert.equal((html.match(/data-theme-preference="system"/g) || []).length, 1);
+assert.equal((html.match(/data-theme-preference="light"/g) || []).length, 1);
+assert.equal((html.match(/data-theme-preference="dark"/g) || []).length, 1);
+assert.match(html, /data-theme-preference="system" aria-pressed="true"/);
+assert.match(html, /시스템 설정은 기기의 화면 모드를 자동으로 따릅니다/);
+assert.ok(html.indexOf("localStorage.getItem(key)") < html.indexOf('<link rel="stylesheet"'));
+assert.ok(html.indexOf("matchMedia('(prefers-color-scheme: dark)')") < html.indexOf('<link rel="stylesheet"'));
+assert.match(html, /document\.documentElement\.dataset\.theme = resolved/);
+assert.match(html, /meta name="theme-color" content="#0d151c"/);
+const themeBootstrapSource = html.slice(html.indexOf('<script>') + '<script>'.length, html.indexOf('</script>'));
+function runThemeBootstrap(savedPreference, systemDark) {
+  const result = {theme: '', colorScheme: '', themeColor: ''};
+  const document = {
+    documentElement: {dataset: {}, style: {}},
+    querySelector: () => ({setAttribute: (_name, value) => { result.themeColor = value; }})
+  };
+  vm.runInNewContext(themeBootstrapSource, {
+    localStorage: {getItem: () => savedPreference},
+    matchMedia: () => ({matches: systemDark}),
+    document
+  });
+  result.theme = document.documentElement.dataset.theme;
+  result.colorScheme = document.documentElement.style.colorScheme;
+  return result;
+}
+assert.deepEqual(runThemeBootstrap(null, false), {theme: 'light', colorScheme: 'light', themeColor: '#f5f7f9'});
+assert.deepEqual(runThemeBootstrap(null, true), {theme: 'dark', colorScheme: 'dark', themeColor: '#0d151c'});
+assert.deepEqual(runThemeBootstrap('light', true), {theme: 'light', colorScheme: 'light', themeColor: '#f5f7f9'});
+assert.deepEqual(runThemeBootstrap('dark', false), {theme: 'dark', colorScheme: 'dark', themeColor: '#0d151c'});
+assert.deepEqual(runThemeBootstrap('invalid', true), {theme: 'dark', colorScheme: 'dark', themeColor: '#0d151c'});
+assert.match(css, /:root,\[data-theme="light"\]\{color-scheme:light/);
+assert.match(css, /\[data-theme="dark"\]\{color-scheme:dark/);
+assert.match(css, /--bg:#f5f7f9/);
+assert.match(css, /--panel:#fff/);
+assert.match(css, /--sidebar:#f8fafb/);
+assert.match(css, /--bg:#0d151c/);
+assert.match(css, /--panel:#14212a/);
+assert.match(css, /--sidebar:#101c25/);
+assert.match(css, /\.theme-selector\{[^}]*grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
+assert.match(css, /\.theme-selector button\{[^}]*min-height:44px/);
+assert.match(css, /\.top\{[^}]*background:var\(--header-bg\)/);
+assert.match(css, /select,input\{[^}]*background:var\(--input-bg\)/);
+assert.match(css, /\.tabs\{[^}]*background:var\(--nav-bg\)/);
+assert.match(css, /dialog::backdrop\{background:var\(--overlay\)/);
+assert.match(css, /\.danger-zone\{[^}]*background:var\(--danger-bg\)/);
+const themedCssRules = css.split('\n').slice(2).join('\n');
+assert.doesNotMatch(themedCssRules, /#[0-9a-fA-F]{3,8}|rgba?\(/, 'component rules should use semantic theme tokens');
 console.log('boss roster, preset, migration, backup, reset, rollover, income, NEXON scheduler and multi-device cloud sync regression checks passed');

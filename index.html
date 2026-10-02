@@ -1,10 +1,27 @@
 <!doctype html>
-<html lang="ko">
+<html lang="ko" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#0b141b">
+  <meta name="theme-color" content="#0d151c">
   <title>메기 · 메이플 수익 관리</title>
+  <script>
+    (() => {
+      const key = 'maple-income-theme';
+      const allowed = new Set(['system', 'light', 'dark']);
+      let preference = 'system';
+      try {
+        const saved = localStorage.getItem(key);
+        if (allowed.has(saved)) preference = saved;
+      } catch {}
+      const resolved = preference === 'system'
+        ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+        : preference;
+      document.documentElement.dataset.theme = resolved;
+      document.documentElement.style.colorScheme = resolved;
+      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', resolved === 'dark' ? '#0d151c' : '#f5f7f9');
+    })();
+  </script>
   <link rel="stylesheet" href="./style.css">
   <script type="module" src="./main.js"></script>
 </head>
@@ -144,6 +161,7 @@
         <button id="checkNexonBosses" class="primary nexon-check" type="button">보스·주간 콘텐츠 지금 확인</button>
       </section>
       </div></details>
+      <details class="settings-route" data-settings-route="display"><summary><span><b>화면</b><small id="settingsThemeSummary">시스템 설정</small></span><i aria-hidden="true">›</i></summary><div class="settings-route-body"><section class="settings-section display-settings"><div class="settings-title"><div><h3>테마</h3><p class="muted">이 기기에서 사용할 화면 모드를 선택합니다.</p></div></div><div class="theme-selector" role="group" aria-label="화면 테마"><button type="button" data-theme-preference="system" aria-pressed="true">시스템 설정</button><button type="button" data-theme-preference="light" aria-pressed="false">라이트</button><button type="button" data-theme-preference="dark" aria-pressed="false">다크</button></div><p class="muted theme-help">시스템 설정은 기기의 화면 모드를 자동으로 따릅니다.</p></section></div></details>
       <details class="settings-route" data-settings-route="presets"><summary><span><b>프리셋</b><small>보스 구성 관리</small></span><i aria-hidden="true">›</i></summary><div class="settings-route-body"><section class="settings-section"><div class="settings-title"><div><h3>프리셋</h3><p class="muted">사용자 저장 프리셋의 이름을 바꾸거나 삭제합니다.</p></div></div><div id="presetManager" class="preset-manager"></div></section></div></details>
       <button class="settings-route settings-route-button" type="button" data-open-page="price"><span><b>가격표</b><small>최근 판매 단가와 결정석 기준</small></span><i aria-hidden="true">›</i></button>
       <details class="settings-route" data-settings-route="data"><summary><span><b>데이터 및 백업</b><small>내보내기·가져오기</small></span><i aria-hidden="true">›</i></summary><div class="settings-route-body"><section class="settings-section"><div class="settings-title"><div><h3>데이터</h3><p class="save-state"><i></i>이 기기에 자동 저장 중</p></div></div><p class="muted" id="migrationNote"></p><p class="pending" id="recoveryNote"></p><div class="settings-actions"><button id="exportData" class="ghost">JSON 백업 내보내기</button><button id="importData" class="ghost">JSON 백업 가져오기</button><button id="exportOriginal" class="text-button">이전 버전 원본 내려받기</button></div><input id="importFile" class="sr-only" type="file" accept="application/json,.json"></section></div></details>

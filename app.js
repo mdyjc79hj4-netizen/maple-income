@@ -5,6 +5,59 @@ const BACKUP_KEY = `${KEY}-before-v2`;
 const MIGRATION_SYNC_KEY = `${KEY}-migration-sync-pending`;
 const STATE_VERSION = 9;
 const LOCAL_CHANGE_EVENT = 'maple-income:local-change';
+const THEME_STORAGE_KEY = 'maple-income-theme';
+const THEME_PREFERENCES = ['system', 'light', 'dark'];
+const THEME_LABELS = {system: '시스템 설정', light: '라이트', dark: '다크'};
+const THEME_COLORS = {light: '#f5f7f9', dark: '#0d151c'};
+let themePreference = 'system', themeMediaQuery = null;
+function normalizeThemePreference(value) {
+  return THEME_PREFERENCES.includes(value) ? value : 'system';
+}
+function resolveTheme(preference = 'system', systemDark = false) {
+  const normalized = normalizeThemePreference(preference);
+  return normalized === 'system' ? (systemDark ? 'dark' : 'light') : normalized;
+}
+function readThemePreference(storage = localStorage) {
+  try { return normalizeThemePreference(storage.getItem(THEME_STORAGE_KEY)); }
+  catch { return 'system'; }
+}
+function applyTheme(preference = themePreference, systemDark = themeMediaQuery?.matches === true) {
+  const resolved = resolveTheme(preference, systemDark);
+  if (typeof document !== 'undefined') {
+    document.documentElement.dataset.theme = resolved;
+    document.documentElement.style.colorScheme = resolved;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', THEME_COLORS[resolved]);
+  }
+  return resolved;
+}
+function renderThemeSettings() {
+  if (typeof document === 'undefined') return;
+  document.querySelectorAll('[data-theme-preference]').forEach(button => {
+    const selected = button.dataset.themePreference === themePreference;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  });
+  const summary = document.querySelector('#settingsThemeSummary');
+  if (summary) summary.textContent = THEME_LABELS[themePreference];
+}
+function setThemePreference(value, storage = localStorage) {
+  themePreference = normalizeThemePreference(value);
+  try { storage.setItem(THEME_STORAGE_KEY, themePreference); } catch {}
+  const resolved = applyTheme(themePreference);
+  renderThemeSettings();
+  return resolved;
+}
+function handleSystemThemeChange(event) {
+  if (themePreference === 'system') return applyTheme(themePreference, event.matches === true);
+  return resolveTheme(themePreference, event.matches === true);
+}
+function setupThemeController() {
+  themePreference = readThemePreference();
+  themeMediaQuery = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
+  themeMediaQuery?.addEventListener?.('change', handleSystemThemeChange);
+  applyTheme(themePreference, themeMediaQuery?.matches === true);
+  renderThemeSettings();
+}
 const items = {hunt: ['메소', '솔 에르다 조각', '코어 젬스톤'], gather: ['쥬니퍼베리 씨앗', '쥬니퍼베리 씨앗 오일', '소형 재물 획득의 비약'], drop: ['보스 드랍 아이템', '칠흑 아이템', '기타 드랍 아이템']};
 const labels = {boss: '보스', hunt: '재획', gather: '채집', drop: '드랍·기타'};
 // KMS reference: https://gi.maplestory.nexon.com/Update/813, 2026-09-17.
@@ -1774,6 +1827,7 @@ function renderSettings() {
     const linked = state.characters.filter(character => character.nexonCharacter?.ocid);
     nexonSummary.textContent = linked.length ? `${linked[0].nexonCharacter?.characterName || linked[0].name}${linked.length > 1 ? ` 외 ${linked.length - 1}` : ''} · ${nexonApiState.status === 'ok' ? '자동 확인 정상' : '연결됨'}` : '캐릭터 연결 필요';
   }
+  renderThemeSettings();
 }
 
 async function nexonAuthenticatedFetch(url) {
@@ -2211,6 +2265,7 @@ async function linkNexonCharacter(character, characterName) {
 }
 function init() {
   validatePresetIntegrity();
+  setupThemeController();
   document.addEventListener('error', event => {
     const image = event.target;
     if (image?.matches?.('[data-nexon-profile-image]')) {
@@ -2483,6 +2538,7 @@ function init() {
     const feeRate = normalizeSaleFeeRate($('#defaultSaleFeeRate').value);
     if (transaction(next => { next.settings.defaultSaleFeeRate = feeRate; })) { incomeFeeRateDraft = feeRate; renderIncomeForm(); }
   });
+  $$('[data-theme-preference]').forEach(button => button.addEventListener('click', () => setThemePreference(button.dataset.themePreference)));
   $('#exportData').addEventListener('click', () => downloadBackup()); $('#exportOriginal').addEventListener('click', () => downloadBackup(true));
   $('#importData').addEventListener('click', () => $('#importFile').click());
   $('#importFile').addEventListener('change', async e => {
@@ -2502,7 +2558,10 @@ function init() {
   $('#resetWeek').addEventListener('click', () => { if (!isPast() && confirm('이번 주 보스 완료 체크와 수익 기록만 초기화할까요? 캐릭터 구성, 프리셋, 과거 주차는 유지됩니다.')) transaction(resetCurrentWeek); });
   $('#resetAll').addEventListener('click', () => { if (!isPast() && confirm('현재 데이터와 과거 주차를 모두 초기화할까요? 먼저 백업을 권장합니다. 이전 버전 원본 백업은 유지됩니다.')) { try { persist(emptyState()); selectedWeek = ''; selectedBossCharacterId = ''; renderIncomeForm(true); render(); message('전체 데이터를 초기화했습니다.'); } catch (error) { message(error.message, true); } } });
   window.addEventListener('focus', checkWeek);
-  window.addEventListener('storage', e => { if (e.key === KEY) { loadState(); render(); renderIncomeForm(); message('다른 탭에서 저장한 변경을 반영했습니다.'); } });
+  window.addEventListener('storage', e => {
+    if (e.key === KEY) { loadState(); render(); renderIncomeForm(); message('다른 탭에서 저장한 변경을 반영했습니다.'); }
+    if (e.key === THEME_STORAGE_KEY) { themePreference = normalizeThemePreference(e.newValue); applyTheme(themePreference); renderThemeSettings(); }
+  });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) checkWeek(); }); setInterval(checkWeek, 15000);
 }
 if (typeof window !== 'undefined') window.mapleIncomeApp = {
