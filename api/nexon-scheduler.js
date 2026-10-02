@@ -18,6 +18,9 @@ function send(res, status, body) {
 function validDate(value) {
   if (!value) return true;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  const calendarDate = new Date(Date.UTC(year, month - 1, day));
+  if (calendarDate.getUTCFullYear() !== year || calendarDate.getUTCMonth() !== month - 1 || calendarDate.getUTCDate() !== day) return false;
   const requested = Date.parse(value + 'T00:00:00+09:00');
   if (Number.isNaN(requested)) return false;
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en', {timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit'}).formatToParts(new Date()).map(part => [part.type, part.value]));
@@ -67,8 +70,8 @@ function upstreamErrorDetails(payload, status) {
 }
 
 function schedulerErrorMessage(status, details) {
-  if (details.category === 'invalid_identifier') return 'NEXON scheduler에서 이 캐릭터를 조회할 수 없습니다. API Key 소유 계정의 캐릭터인지 확인해주세요.';
-  if (details.category === 'invalid_parameter') return 'NEXON scheduler 요청 파라미터가 유효하지 않습니다.';
+  if (details.category === 'invalid_identifier') return 'NEXON Scheduler에서 캐릭터 식별자를 확인하지 못했습니다.';
+  if (details.category === 'invalid_parameter') return 'NEXON Scheduler 요청 파라미터를 확인해주세요.';
   if (details.category === 'invalid_api_key') return 'NEXON Open API Key 설정을 확인해주세요.';
   if (details.category === 'invalid_path') return 'NEXON scheduler API 경로가 유효하지 않습니다.';
   if (details.category === 'data_preparing') return 'NEXON scheduler 데이터가 아직 준비 중입니다. 잠시 후 다시 확인해주세요.';
@@ -82,6 +85,13 @@ function buildNexonUrl(path, params = {}) {
     if (value !== undefined && value !== null && String(value) !== '') target.searchParams.set(key, String(value));
   }
   return target;
+}
+
+function requestLogContext(path, params = {}) {
+  const endpoint = path.replace(/^\/maplestory\/v1\//, '');
+  if (endpoint !== 'scheduler/character-state') return {endpoint};
+  const hasDate = params.date !== undefined && params.date !== null && String(params.date) !== '';
+  return {endpoint, mode: hasDate ? 'historical' : 'live', hasOcid: !!params.ocid, hasDate};
 }
 
 async function requestNexon(path, params, apiKey) {
@@ -103,10 +113,11 @@ async function requestNexon(path, params, apiKey) {
     try { payload = await response.json(); } catch {}
     const details = upstreamErrorDetails(payload, status);
     console.error('NEXON scheduler upstream request failed', {
-      endpoint: path.replace(/^\/maplestory\/v1\//, ''),
+      ...requestLogContext(path, params),
       status,
       upstreamCode: details.upstreamCode,
-      upstreamMessage: details.upstreamMessage
+      upstreamMessage: details.upstreamMessage,
+      category: details.category
     });
     throw Object.assign(new Error(schedulerErrorMessage(status, details)), {
       status,
@@ -224,7 +235,8 @@ export default async function handler(req, res) {
       if (!identity || typeof identity.ocid !== 'string' || !identity.ocid) throw Object.assign(new Error('캐릭터 식별자를 확인하지 못했습니다.'), {status: 502});
       ocid = identity.ocid;
     }
-    const payload = await requestNexon('/maplestory/v1/scheduler/character-state', {ocid, date}, apiKey);
+    const schedulerParams = date ? {ocid, date} : {ocid};
+    const payload = await requestNexon('/maplestory/v1/scheduler/character-state', schedulerParams, apiKey);
     const value = sanitizeScheduler(payload, ocid, date);
     cache.set(cacheKey, {savedAt: Date.now(), value});
     return send(res, 200, value);
@@ -242,4 +254,4 @@ export default async function handler(req, res) {
   }
 }
 
-export const nexonProxyInternals = {buildNexonUrl, diagnosticRaw, diagnosticSample, parseFlag, publicError, sanitizeScheduler, sanitizeUpstreamText, sanitizeWeeklyContent, schedulerErrorMessage, upstreamErrorDetails, validDate, validOcid};
+export const nexonProxyInternals = {buildNexonUrl, diagnosticRaw, diagnosticSample, parseFlag, publicError, requestLogContext, sanitizeScheduler, sanitizeUpstreamText, sanitizeWeeklyContent, schedulerErrorMessage, upstreamErrorDetails, validDate, validOcid};

@@ -1241,9 +1241,7 @@ function nexonProfileFailure(character, error, nexonCharacter = '') {
   };
 }
 function isSchedulerAccountRestriction(error) {
-  return Number(error?.status) === 400
-    && error?.code === 'OPENAPI00004'
-    && error?.category === 'invalid_parameter'
+  return error?.category === 'account_restriction'
     && error?.source === 'nexon_upstream';
 }
 function nexonSchedulerWarning(character, error) {
@@ -1251,6 +1249,8 @@ function nexonSchedulerWarning(character, error) {
   const accountRestricted = isSchedulerAccountRestriction(error);
   const message = accountRestricted
     ? '캐릭터 연동은 정상적으로 완료되었습니다. 주간 자동 확인은 현재 이 캐릭터에서 사용할 수 없습니다. NEXON Scheduler API는 서버 API Key와 연결된 NEXON 계정의 캐릭터만 조회할 수 있습니다.'
+    : status === 400 && error?.category === 'invalid_parameter'
+    ? 'NEXON 캐릭터 연동은 정상입니다. 주간 자동 확인 요청을 처리하지 못했습니다. 상세 진단에서 NEXON 오류 코드를 확인할 수 있습니다.'
     : status === 400 && error?.category && error.category !== 'unknown_upstream_error'
     ? `NEXON 캐릭터 연동 완료 · ${error.message}`
     : status === 403
