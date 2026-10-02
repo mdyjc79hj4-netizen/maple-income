@@ -923,6 +923,7 @@ let cloudAuthUiState = {initialized: false, signedIn: false, ready: false};
 let onboardingWasActive = false, onboardingDismissed = false;
 let onboardingCharacterCandidate = null;
 let activeMainTab = 'summary', returnTabAfterIncome = 'summary';
+const mainNavigationPages = ['summary', 'boss', 'history', 'settings'];
 const NEXON_CHECK_COOLDOWN_MS = 60_000;
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -1016,14 +1017,22 @@ function renderAppExperience() {
   });
   if (stage === 'character') renderOnboardingCharacters();
 }
-function activatePage(page, {updateNavigation = true} = {}) {
-  if (!document.querySelector(`[data-page="${page}"]`)) return;
-  if (updateNavigation && ['summary', 'boss', 'history', 'settings'].includes(page)) activeMainTab = page;
-  $$('[data-tab]').forEach(button => {
-    const active = button.dataset.tab === activeMainTab;
+function navigationSurfaceFor(page, mainTab = activeMainTab) {
+  if (page === 'income') return 'income';
+  return mainNavigationPages.includes(page) ? page : mainTab;
+}
+function applyNavigationState(buttons, surface) {
+  buttons.forEach(button => {
+    const target = button.dataset.navigationSurface || button.dataset.tab || '';
+    const active = target === surface;
     button.classList.toggle('active', active);
     button.setAttribute('aria-current', active ? 'page' : 'false');
   });
+}
+function activatePage(page, {updateNavigation = true} = {}) {
+  if (!document.querySelector(`[data-page="${page}"]`)) return;
+  if (updateNavigation && mainNavigationPages.includes(page)) activeMainTab = page;
+  applyNavigationState($$('.tabs [data-tab], .tabs [data-navigation-surface]'), navigationSurfaceFor(page));
   $$('[data-page]').forEach(target => target.classList.toggle('hidden', target.dataset.page !== page));
   checkWeek();
 }

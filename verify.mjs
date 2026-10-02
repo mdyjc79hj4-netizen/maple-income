@@ -1493,7 +1493,7 @@ assert.match(css, /\.sale-entry-grid\{/);
 assert.match(css, /\.sale-result-grid\{/);
 assert.match(css, /@media\(min-width:600px\)\{[\s\S]*\.sale-entry-grid\{grid-template-columns:minmax\(180px,1\.2fr\) minmax\(100px,\.65fr\) minmax\(190px,1fr\)/);
 assert.match(css, /@media\(min-width:1000px\)\{/);
-assert.match(css, /\.top,main\{width:min\(1080px,100%\)/);
+assert.match(css, /\.top,main\{width:min\(1120px,calc\(100% - 64px\)\);margin-left:32px;margin-right:0/);
 assert.match(css, /grid-template-areas:"profile spec" "progress progress" "income income" "details details"/);
 assert.match(css, /\.character\{grid-template-columns:minmax\(0,1fr\) minmax\(220px,280px\);[^}]*padding:11px 18px 12px/);
 assert.match(css, /\.character-spec\{grid-area:spec;[^}]*padding:0;border:0/);
@@ -2044,7 +2044,7 @@ assert.match(source, /credentialMount\.append\(credential\)/);
 assert.equal(new Set([...html.matchAll(/id="([^"]+)"/g)].map(match => match[1])).size, [...html.matchAll(/id="([^"]+)"/g)].length);
 assert.match(html, /data-tab="summary" class="active" aria-current="page"><span aria-hidden="true">⌂<\/span>홈/);
 assert.match(html, /data-tab="boss"/);
-assert.match(html, /data-income-action/);
+assert.match(html, /data-income-action data-navigation-surface="income"/);
 assert.match(html, /data-tab="history"/);
 assert.match(html, /data-tab="settings"/);
 assert.doesNotMatch(html, /data-tab="price"/);
@@ -2056,6 +2056,37 @@ assert.ok(html.indexOf('id="incomeForm"') < html.indexOf('data-page="history"'))
 assert.ok(html.indexOf('data-page="history"') < html.indexOf('id="historyFilters"'));
 assert.match(source, /activatePage\('income', \{updateNavigation: false\}\)/);
 assert.match(source, /returnTabAfterIncome = activeMainTab/);
+assert.equal(run("navigationSurfaceFor('income', 'summary')"), 'income');
+assert.equal(run("navigationSurfaceFor('income', 'boss')"), 'income');
+assert.equal(run("navigationSurfaceFor('price', 'history')"), 'history');
+for (const returnTab of ['summary', 'boss', 'history', 'settings']) {
+  run(`activeMainTab=${JSON.stringify(returnTab)};returnTabAfterIncome=activeMainTab`);
+  assert.equal(run("navigationSurfaceFor('income')"), 'income');
+  assert.equal(run('activeMainTab'), returnTab);
+  assert.equal(run('navigationSurfaceFor(returnTabAfterIncome)'), returnTab);
+}
+const navigationButtons = ['summary', 'boss', 'income', 'history', 'settings'].map(target => {
+  const classes = new Set(target === 'summary' ? ['active'] : []);
+  return {
+    dataset: target === 'income' ? {navigationSurface: target} : {tab: target},
+    classList: {toggle(name, enabled) { enabled ? classes.add(name) : classes.delete(name); }, contains(name) { return classes.has(name); }},
+    attributes: {},
+    setAttribute(name, value) { this.attributes[name] = value; }
+  };
+});
+context.__navigationButtons = navigationButtons;
+run("applyNavigationState(__navigationButtons, 'income')");
+assert.equal(navigationButtons.find(button => button.dataset.navigationSurface === 'income').classList.contains('active'), true);
+assert.equal(navigationButtons.find(button => button.dataset.navigationSurface === 'income').attributes['aria-current'], 'page');
+for (const button of navigationButtons.filter(button => button.dataset.tab)) {
+  assert.equal(button.classList.contains('active'), false);
+  assert.equal(button.attributes['aria-current'], 'false');
+}
+run("applyNavigationState(__navigationButtons, 'boss')");
+assert.equal(navigationButtons.find(button => button.dataset.tab === 'boss').classList.contains('active'), true);
+assert.equal(navigationButtons.find(button => button.dataset.tab === 'boss').attributes['aria-current'], 'page');
+assert.equal(navigationButtons.find(button => button.dataset.navigationSurface === 'income').classList.contains('active'), false);
+assert.equal(navigationButtons.find(button => button.dataset.navigationSurface === 'income').attributes['aria-current'], 'false');
 assert.match(html, /data-settings-route="account"/);
 assert.match(html, /data-settings-route="nexon"/);
 assert.match(html, /data-settings-route="presets"/);
@@ -2077,6 +2108,12 @@ assert.match(source, /class="record-value"/);
 assert.match(source, /class="record-time muted"/);
 assert.match(css, /@media\(min-width:1000px\)\{[\s\S]*body\{padding-left:184px\}/);
 assert.match(css, /@media\(min-width:1000px\)\{[\s\S]*\.tabs\{top:0;bottom:0;left:0;transform:none;width:184px/);
+assert.match(css, /@media\(min-width:1000px\)\{[\s\S]*\.top,main\{width:min\(1120px,calc\(100% - 64px\)\);margin-left:32px;margin-right:0\}/);
+assert.match(css, /\.tabs \.income-action-tab>span\{[^}]*background:transparent/);
+assert.match(css, /\.tabs \.income-action-tab\.active\{color:var\(--mint\)!important\}/);
+assert.match(css, /main>\.week-card\{display:grid;grid-template-columns:auto minmax\(220px,320px\) minmax\(0,1fr\)/);
+assert.match(css, /\.boss-cycle-section \.boss-line\{grid-template-columns:minmax\(180px,1fr\) minmax\(260px,330px\) minmax\(90px,130px\)/);
+assert.match(css, /@media\(max-width:430px\)\{[\s\S]*\.boss-character-tools/);
 assert.match(css, /@media\(min-width:1000px\)\{[\s\S]*\.history-desktop-head\{display:grid/);
 assert.match(css, /#incomeHistory \.compact-record\{grid-template-columns:88px/);
 assert.match(css, /@media\(max-width:430px\)\{[\s\S]*grid-template-areas:"item menu" "detail menu" "value menu" "time menu"/);

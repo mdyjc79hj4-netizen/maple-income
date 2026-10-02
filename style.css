@@ -532,15 +532,32 @@ dialog::backdrop{background:#0009;backdrop-filter:blur(3px)}
 @media(min-width:1000px){
 body{padding-left:184px}
 .app{max-width:none;padding-bottom:0}
-.top,main{width:min(1080px,100%);margin-left:auto;margin-right:auto}
+.top,main{width:min(1120px,calc(100% - 64px));margin-left:32px;margin-right:0}
 .onboarding-shell{margin-left:-184px}
 .tabs{top:0;bottom:0;left:0;transform:none;width:184px;grid-template-columns:1fr;align-content:start;gap:6px;padding:22px 12px;background:#101d27;border-top:0;border-right:1px solid var(--line)}
 .tabs::before{content:"메기";display:block;padding:4px 12px 18px;color:var(--mint);font-size:18px;font-weight:800;letter-spacing:-.5px}
 .tabs button{display:flex;align-items:center;justify-content:flex-start;gap:12px;min-height:48px;padding:8px 12px;text-align:left;font-size:13px}
 .tabs button span{display:inline-grid;place-items:center;width:24px;margin:0;font-size:18px}
-.tabs .income-action-tab>span{width:32px!important;height:32px;margin:0!important;font-size:22px!important;box-shadow:none}.tabs .income-action-tab small{font-size:11px}
-main{padding:24px 30px}
-.top{padding-left:34px;padding-right:34px}
+.tabs button:not(.active):hover{background:#182a34;color:#c8d5de}
+.tabs .income-action-tab{color:var(--muted)!important}
+.tabs .income-action-tab.active{color:var(--mint)!important}
+.tabs .income-action-tab>span{display:inline-grid!important;width:24px!important;height:auto;margin:0!important;border-radius:0;background:transparent;color:inherit;font-size:18px!important;box-shadow:none}
+.tabs .income-action-tab small{margin:0;font-size:13px}
+main{padding:16px 0 24px}
+.top{padding:14px 18px 10px}
+.top h1{font-size:20px}
+.top .brand-mark{width:28px;height:28px;border-radius:9px;font-size:21px}
+.header-stats{gap:14px;margin:9px 0 4px}
+.header-stats small{font-size:10px;margin-bottom:1px}
+.header-stats strong{font-size:21px;line-height:1.25}
+.header-stats>div+div{padding-left:16px}
+.top .sub{font-size:10px}
+main>.week-card{display:grid;grid-template-columns:auto minmax(220px,320px) minmax(0,1fr);align-items:center;gap:10px 12px}
+main>.week-card>label{display:grid;gap:0;margin:0;white-space:nowrap}
+main>.week-card>label span{font-size:9px}
+main>.week-card select{min-height:40px;padding-top:7px;padding-bottom:7px;font-size:13px}
+main>.week-card .week-footer{justify-content:flex-start;margin:0;min-height:40px}
+main>#status{margin:5px 0 10px}
 .character{grid-template-columns:minmax(0,1fr) minmax(220px,280px);grid-template-areas:"profile spec" "progress progress" "income income" "details details";column-gap:24px;row-gap:8px;padding:11px 18px 12px}
 .character-main{grid-area:profile}
 .character-spec{grid-area:spec;grid-template-columns:1fr;align-content:center;gap:5px;padding:0;border:0}
@@ -564,6 +581,35 @@ main{padding:24px 30px}
 #incomeHistory .record-value{grid-area:value;max-width:none}
 #incomeHistory .record-time{grid-area:time;font-size:10px}
 #incomeHistory .record-more{grid-area:menu}
+.panel[data-page="boss"]{padding:17px 18px}
+.boss-page-head{grid-template-columns:minmax(180px,.7fr) minmax(440px,1.3fr);gap:10px 18px;margin-bottom:9px;align-items:center}
+.boss-page-head>div:first-child p{margin-top:1px;font-size:10px}
+.boss-character-tools{gap:6px}
+.boss-character-tools select{min-height:40px;padding-top:7px;padding-bottom:7px;font-size:13px}
+.boss-character-tools .compact{min-height:40px;padding-top:6px;padding-bottom:6px}
+.boss-character-tools .more-menu>summary{width:40px;height:40px}
+.filters{max-width:360px;margin-bottom:8px;padding:3px}
+.filters button{min-height:34px}
+.boss-char{margin-top:10px}
+.boss-profile-head{margin-bottom:7px}
+.boss-profile-identity{gap:8px}
+.boss-profile-identity .boss-art{width:76px;height:72px}
+.boss-profile-identity .muted{margin-top:1px;font-size:10px}
+.boss-cycle-section{margin-top:10px;border-left:0;border-right:0;border-radius:10px}
+.boss-cycle-section+.boss-cycle-section{margin-top:9px}
+.boss-cycle-head{padding:8px 10px}
+.boss-cycle-head p{margin-top:0}
+.boss-cycle-section .boss-line{grid-template-columns:minmax(180px,1fr) minmax(260px,330px) minmax(90px,130px);grid-template-areas:"name controls earned" "detail detail detail";gap:3px 12px;padding:7px 10px}
+.boss-line .boss-name{grid-area:name;min-height:36px}
+.boss-line .boss-controls{grid-area:controls;display:grid;grid-template-columns:minmax(94px,1fr) minmax(82px,.8fr) 36px;gap:6px;padding:0}
+.boss-line .boss-controls select{min-height:36px;padding:5px 8px;font-size:12px}
+.boss-line .boss-controls .icon{min-width:36px;min-height:36px;padding:3px;font-size:18px}
+.boss-line .boss-earned{grid-area:earned;max-width:none;justify-self:end;font-size:13px}
+.boss-line .boss-price-detail{grid-area:detail;padding-left:30px;font-size:10px}
+.boss-line .boss-price-detail summary{min-height:20px;padding:1px 0}
+.boss-cycle-section .boss-actions{padding:7px 10px}
+.boss-actions button{min-height:38px}
+.panel[data-page="boss"]>.footnote{margin-top:10px}
 }
 
 @media(max-width:360px){main{padding:12px}
