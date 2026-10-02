@@ -2381,7 +2381,35 @@ assert.match(source, /Authorization: `Bearer \$\{token\}`/);
 assert.match(source, /const apiKey = input\.value\.trim\(\)/);
 assert.match(source, /'API Key 확인 및 등록'/);
 assert.match(source, /input\.value = ''/);
+assert.deepEqual(json("nexonCredentialViewState({signedIn:true,hasCredential:false,editing:false})"), {
+  showSignedOut: false, showInput: true, showRegistered: false, showInputHelp: true
+});
+assert.deepEqual(json("nexonCredentialViewState({signedIn:true,hasCredential:true,editing:false})"), {
+  showSignedOut: false, showInput: false, showRegistered: true, showInputHelp: false
+});
+assert.deepEqual(json("nexonCredentialViewState({signedIn:true,hasCredential:true,editing:true})"), {
+  showSignedOut: false, showInput: true, showRegistered: false, showInputHelp: true
+});
+assert.deepEqual(json("nexonCredentialViewState({signedIn:true,hasCredential:true,editing:false})"), {
+  showSignedOut: false, showInput: false, showRegistered: true, showInputHelp: false
+});
+const credentialRenderSource = source.slice(source.indexOf('function renderNexonCredentialSettings'), source.indexOf('async function nexonCredentialRequest'));
+assert.match(credentialRenderSource, /intro\?\.classList\.toggle\('hidden', !view\.showInputHelp\)/);
+assert.match(credentialRenderSource, /guide\?\.classList\.toggle\('hidden', !view\.showInputHelp\)/);
+assert.match(credentialRenderSource, /security\?\.classList\.toggle\('hidden', !view\.showInputHelp\)/);
+assert.match(credentialRenderSource, /if \(guide && !view\.showInputHelp\) guide\.open = false/);
+assert.equal((html.match(/id="nexonCredentialForm"/g) || []).length, 1);
+assert.equal((html.match(/class="nexon-credential-guide(?: hidden)?"/g) || []).length, 1);
+assert.equal((html.match(/class="nexon-credential-security(?: hidden)?"/g) || []).length, 1);
+assert.equal((html.match(/class="nexon-credential-input-intro(?: hidden)?"/g) || []).length, 1);
+assert.match(source, /credentialMount\.append\(credential\)/);
+assert.match(html, /class="nexon-credential-security-more"/);
+assert.match(html, /NEXON 계정 비밀번호는 절대 입력하지 마세요\./);
+const cancelCredentialSource = source.slice(source.indexOf("$('#cancelNexonCredentialChange').addEventListener"), source.indexOf("$('#deleteNexonCredential').addEventListener"));
+assert.match(cancelCredentialSource, /editing: false/);
+assert.match(cancelCredentialSource, /renderNexonCredentialSettings\(\)/);
 assert.match(css, /\.nexon-credential-guide>summary\{[^}]*min-height:44px/);
 assert.match(css, /\.nexon-credential-guide-link\{[^}]*min-height:44px/);
+assert.match(css, /\.nexon-credential-security-more>summary\{[^}]*min-height:32px/);
 assert.match(css, /@media\(max-width:430px\)[\s\S]*\.nexon-credential-guide-link\{justify-self:stretch;width:100%\}/);
 console.log('boss roster, preset, migration, backup, reset, rollover, income, NEXON scheduler and multi-device cloud sync regression checks passed');

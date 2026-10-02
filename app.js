@@ -1595,16 +1595,31 @@ function nexonCredentialCheckedLabel(value) {
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
   }).format(date);
 }
+function nexonCredentialViewState({signedIn = false, hasCredential = false, editing = false} = {}) {
+  const showInput = !!signedIn && (!hasCredential || editing);
+  return {
+    showSignedOut: !signedIn,
+    showInput,
+    showRegistered: !!signedIn && !!hasCredential && !editing,
+    showInputHelp: showInput
+  };
+}
 function renderNexonCredentialSettings() {
   const signedOut = $('#nexonCredentialSignedOut'), form = $('#nexonCredentialForm'), registered = $('#nexonCredentialRegistered');
   if (!signedOut || !form || !registered) return;
   const signedIn = !!nexonCredentialAuthBridge?.isSignedIn?.();
   const busy = ['loading', 'saving', 'deleting'].includes(nexonCredentialState.status);
   const hasCredential = signedIn && nexonCredentialState.hasCredential;
-  const editing = signedIn && (!hasCredential || nexonCredentialState.editing);
-  signedOut.classList.toggle('hidden', signedIn);
-  form.classList.toggle('hidden', !editing);
-  registered.classList.toggle('hidden', !hasCredential || nexonCredentialState.editing);
+  const view = nexonCredentialViewState({signedIn, hasCredential, editing: nexonCredentialState.editing});
+  const editing = view.showInput;
+  signedOut.classList.toggle('hidden', !view.showSignedOut);
+  form.classList.toggle('hidden', !view.showInput);
+  registered.classList.toggle('hidden', !view.showRegistered);
+  const intro = $('.nexon-credential-input-intro'), guide = $('.nexon-credential-guide'), security = $('.nexon-credential-security');
+  intro?.classList.toggle('hidden', !view.showInputHelp);
+  guide?.classList.toggle('hidden', !view.showInputHelp);
+  security?.classList.toggle('hidden', !view.showInputHelp);
+  if (guide && !view.showInputHelp) guide.open = false;
   const badge = $('#nexonCredentialBadge');
   const badgeState = !signedIn ? ['로그인 필요', ''] : busy ? ['확인 중', 'pending'] : hasCredential ? ['등록됨', 'registered'] : nexonCredentialState.status === 'error' ? ['확인 필요', 'error'] : ['미등록', ''];
   badge.textContent = badgeState[0];

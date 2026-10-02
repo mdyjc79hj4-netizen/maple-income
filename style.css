@@ -288,6 +288,7 @@ dd{margin:0;font-size:12px}
 .nexon-credential{display:grid;gap:10px;margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:11px;background:#0c1821}
 .nexon-credential-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
 .nexon-credential-head-copy{display:grid;gap:3px;min-width:0}
+.nexon-credential-input-intro{display:grid;gap:3px}
 .nexon-credential-head h4{margin:0;font-size:13px}
 .nexon-credential-head p{font-size:10px;line-height:1.5}
 .nexon-credential-badge{flex:none;padding:3px 7px;border-radius:999px;background:#26343e;color:var(--muted);font-size:9px;font-weight:700}
@@ -321,6 +322,9 @@ dd{margin:0;font-size:12px}
 .nexon-credential-security>b{color:var(--mint);font-size:11px}
 .nexon-credential-security ul{display:grid;gap:3px;margin:0;padding-left:18px;color:var(--muted);font-size:10px;line-height:1.45}
 .nexon-credential-security li{overflow-wrap:anywhere}
+.nexon-credential-security-more{border-top:1px solid var(--line);padding-top:5px}
+.nexon-credential-security-more>summary{min-height:32px;color:var(--blue);font-size:10px;font-weight:650;cursor:pointer}
+.nexon-credential-security-more ul{margin-top:4px}
 .nexon-credential-security strong{color:var(--text);font-size:10px;line-height:1.45}
 #nexonCredentialMessage:empty{display:none}
 #nexonCredentialMessage{font-size:10px;overflow-wrap:anywhere}
