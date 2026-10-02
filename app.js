@@ -911,6 +911,8 @@ let editingIncomeId = '', editSaleState = 'acquired', incomeFeeRateDraft = null;
 const expandedStatCharacterIds = new Set();
 let nexonApiState = {status: 'idle', message: '연동할 캐릭터를 선택해주세요.', diagnostics: null};
 let nexonSchedulerDiagnosticState = {status: 'idle', characterId: '', result: null, message: '진단을 실행하면 두 요청 결과를 비교합니다.'};
+let nexonCredentialAuthBridge = null;
+let nexonCredentialState = {status: 'signed-out', hasCredential: false, editing: false, message: ''};
 const NEXON_CHECK_COOLDOWN_MS = 60_000;
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -1441,6 +1443,92 @@ function renderNexonDiagnostics() {
   const activitySamplesHtml = `<details class="nexon-diagnostic-sample-section"><summary><span>주간 콘텐츠 응답 샘플</span><strong>${activitySamples.length}건</strong></summary>${activitySamples.length ? `<div class="nexon-diagnostic-samples">${activitySamples.map(item => `<article class="nexon-diagnostic-item"><small class="nexon-diagnostic-character">${escapeHtml(item.character || '')}${item.nexonCharacter ? ` → ${escapeHtml(item.nexonCharacter)}` : ''}</small><b>${escapeHtml(item.contentName || '(content_name 없음)')}</b><p>type: ${escapeHtml(item.type || '(없음)')} · ${escapeHtml(String(item.nowCount || 0))}/${escapeHtml(String(item.maxCount || 0))} · quest_state: ${escapeHtml(item.questState || '(없음)')}</p><p>registered: ${escapeHtml(String(item.registered))} · complete: ${escapeHtml(String(item.complete))}</p></article>`).join('')}</div>` : '<p class="muted">주간 콘텐츠 응답 샘플이 없습니다.</p>'}</details>`;
   content.innerHTML = `${schedulerWarningHtml}${completedHtml}${activityCompletedHtml}${summaryHtml}${groupHtml ? `<div class="nexon-diagnostic-groups">${groupHtml}</div>` : '<p class="mint nexon-diagnostic-empty">매칭 실패 분류가 없습니다.</p>'}${samplesHtml}${activitySamplesHtml}`;
 }
+function nexonCredentialErrorMessage(error) {
+  const code = String(error?.code || '');
+  if (code === 'AUTH_REQUIRED') return '로그인 세션을 확인할 수 없습니다. 다시 로그인해주세요.';
+  if (['OPENAPI00005', 'INVALID_API_KEY_FORMAT'].includes(code)) return 'NEXON Open API Key를 확인해주세요.';
+  if (code === 'RATE_LIMITED' || Number(error?.status) === 429) return 'NEXON API 요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요.';
+  if (Number(error?.status) === 403) return 'NEXON Open API Key의 메이플스토리 API 권한을 확인해주세요.';
+  return error?.message || 'NEXON API Key 요청을 처리하지 못했습니다.';
+}
+function nexonCredentialCheckedLabel(value) {
+  const date = new Date(value || '');
+  return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('ko-KR', {
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+  }).format(date);
+}
+function renderNexonCredentialSettings() {
+  const signedOut = $('#nexonCredentialSignedOut'), form = $('#nexonCredentialForm'), registered = $('#nexonCredentialRegistered');
+  if (!signedOut || !form || !registered) return;
+  const signedIn = !!nexonCredentialAuthBridge?.isSignedIn?.();
+  const busy = ['loading', 'saving', 'deleting'].includes(nexonCredentialState.status);
+  const hasCredential = signedIn && nexonCredentialState.hasCredential;
+  const editing = signedIn && (!hasCredential || nexonCredentialState.editing);
+  signedOut.classList.toggle('hidden', signedIn);
+  form.classList.toggle('hidden', !editing);
+  registered.classList.toggle('hidden', !hasCredential || nexonCredentialState.editing);
+  const badge = $('#nexonCredentialBadge');
+  const badgeState = !signedIn ? ['로그인 필요', ''] : busy ? ['확인 중', 'pending'] : hasCredential ? ['등록됨', 'registered'] : nexonCredentialState.status === 'error' ? ['확인 필요', 'error'] : ['미등록', ''];
+  badge.textContent = badgeState[0];
+  badge.className = `nexon-credential-badge ${badgeState[1]}`.trim();
+  $('#saveNexonCredential').disabled = busy;
+  $('#saveNexonCredential').textContent = busy && nexonCredentialState.status === 'saving' ? '확인·저장 중…' : hasCredential ? '새 API Key 저장' : 'API Key 등록';
+  $('#cancelNexonCredentialChange').classList.toggle('hidden', !hasCredential || !nexonCredentialState.editing);
+  $('#changeNexonCredential').disabled = busy;
+  $('#deleteNexonCredential').disabled = busy;
+  $('#nexonCredentialCounts').textContent = hasCredential ? `계정 ${n(nexonCredentialState.accountCount)}개 · 캐릭터 ${n(nexonCredentialState.characterCount)}개` : '';
+  const checked = nexonCredentialCheckedLabel(nexonCredentialState.verifiedAt);
+  $('#nexonCredentialVerifiedAt').textContent = checked ? `확인: ${checked}` : '';
+  const status = $('#nexonCredentialMessage');
+  status.textContent = busy ? nexonCredentialState.message || '처리 중…' : nexonCredentialState.message || '';
+  status.className = nexonCredentialState.status === 'error' ? 'negative' : nexonCredentialState.status === 'saved' ? 'mint' : 'muted';
+}
+async function nexonCredentialRequest(method, body) {
+  const token = await nexonCredentialAuthBridge?.getAccessToken?.();
+  if (!token) throw Object.assign(new Error('NEXON 개인 API Key 등록은 로그인 후 사용할 수 있습니다.'), {status: 401, code: 'AUTH_REQUIRED'});
+  const response = await fetch('/api/nexon-credential', {
+    method,
+    headers: {Authorization: `Bearer ${token}`, ...(body ? {'Content-Type': 'application/json'} : {})},
+    ...(body ? {body: JSON.stringify(body)} : {})
+  });
+  let data = null;
+  try { data = await response.json(); } catch {}
+  if (!response.ok || !data?.ok) throw Object.assign(new Error(data?.message || 'NEXON API Key 요청을 처리하지 못했습니다.'), {
+    status: response.status,
+    code: data?.code || 'CREDENTIAL_REQUEST_FAILED'
+  });
+  return data;
+}
+async function refreshNexonCredentialStatus() {
+  if (!nexonCredentialAuthBridge?.isSignedIn?.()) {
+    nexonCredentialState = {status: 'signed-out', hasCredential: false, editing: false, message: ''};
+    renderNexonCredentialSettings();
+    return;
+  }
+  nexonCredentialState = {...nexonCredentialState, status: 'loading', message: '등록 상태 확인 중…'};
+  renderNexonCredentialSettings();
+  try {
+    const result = await nexonCredentialRequest('GET');
+    nexonCredentialState = {...result, status: 'ready', editing: false, message: ''};
+  } catch (error) {
+    nexonCredentialState = {status: 'error', hasCredential: false, editing: false, message: nexonCredentialErrorMessage(error)};
+  }
+  renderNexonCredentialSettings();
+}
+function setNexonCredentialAuthBridge(bridge) {
+  nexonCredentialAuthBridge = bridge && typeof bridge.getAccessToken === 'function' ? bridge : null;
+  renderNexonCredentialSettings();
+}
+function onNexonCredentialAuthChanged({signedIn = false} = {}) {
+  if (!signedIn) {
+    nexonCredentialState = {status: 'signed-out', hasCredential: false, editing: false, message: ''};
+    const input = $('#nexonCredentialInput');
+    if (input) input.value = '';
+    renderNexonCredentialSettings();
+    return;
+  }
+  refreshNexonCredentialStatus();
+}
 function renderNexonSettings() {
   const list = $('#nexonCharacterList');
   if (!list) return;
@@ -1466,6 +1554,7 @@ function renderNexonSettings() {
   status.className = nexonApiState.status === 'error' ? 'negative' : ['checking', 'warning'].includes(nexonApiState.status) ? 'pending' : nexonApiState.status === 'ok' ? 'mint' : 'muted';
   const button = $('#checkNexonBosses');
   button.disabled = nexonApiState.status === 'checking' || isPast() || storageBlocked || !state.characters.some(character => character.nexonCharacter?.ocid);
+  renderNexonCredentialSettings();
   renderNexonDiagnostics();
 }
 function renderSettings() {
@@ -1917,6 +2006,47 @@ function init() {
   $('#addCharacter').addEventListener('click', openCharacterDialog);
   $('#addCharacterFromBoss').addEventListener('click', openCharacterDialog);
   $('#checkNexonBosses').addEventListener('click', syncAllNexonCharacters);
+  $('#nexonCredentialForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    const input = $('#nexonCredentialInput');
+    if (!event.currentTarget.reportValidity()) return;
+    const apiKey = input.value.trim();
+    const previous = {...nexonCredentialState};
+    nexonCredentialState = {...previous, status: 'saving', editing: true, message: 'NEXON에서 API Key를 확인하고 암호화하여 저장하는 중…'};
+    renderNexonCredentialSettings();
+    try {
+      const result = await nexonCredentialRequest('POST', {apiKey});
+      input.value = '';
+      nexonCredentialState = {...result, status: 'saved', editing: false, message: '개인 NEXON API Key가 안전하게 등록되었습니다.'};
+    } catch (error) {
+      nexonCredentialState = {...previous, status: 'error', editing: true, message: nexonCredentialErrorMessage(error)};
+    }
+    renderNexonCredentialSettings();
+  });
+  $('#changeNexonCredential').addEventListener('click', () => {
+    nexonCredentialState = {...nexonCredentialState, editing: true, message: '새 API Key가 검증된 경우에만 기존 Key를 교체합니다.'};
+    renderNexonCredentialSettings();
+    $('#nexonCredentialInput').focus();
+  });
+  $('#cancelNexonCredentialChange').addEventListener('click', () => {
+    $('#nexonCredentialInput').value = '';
+    nexonCredentialState = {...nexonCredentialState, status: 'ready', editing: false, message: ''};
+    renderNexonCredentialSettings();
+  });
+  $('#deleteNexonCredential').addEventListener('click', async () => {
+    if (!confirm('저장된 NEXON API Key를 삭제할까요?\n캐릭터와 수익 기록은 삭제되지 않습니다.')) return;
+    const previous = {...nexonCredentialState};
+    nexonCredentialState = {...previous, status: 'deleting', message: '저장된 API Key를 삭제하는 중…'};
+    renderNexonCredentialSettings();
+    try {
+      await nexonCredentialRequest('DELETE');
+      $('#nexonCredentialInput').value = '';
+      nexonCredentialState = {status: 'ready', hasCredential: false, editing: true, message: 'NEXON API Key 연결을 해제했습니다.'};
+    } catch (error) {
+      nexonCredentialState = {...previous, status: 'error', editing: false, message: nexonCredentialErrorMessage(error)};
+    }
+    renderNexonCredentialSettings();
+  });
   $('#runNexonSchedulerDiagnostic').addEventListener('click', runNexonSchedulerDiagnosticComparison);
   $('#nexonSchedulerDiagnosticCharacter').addEventListener('change', event => {
     nexonSchedulerDiagnosticState = {status: 'idle', characterId: event.target.value, result: null, message: '진단을 실행하면 두 요청 결과를 비교합니다.'};
@@ -2102,6 +2232,8 @@ if (typeof window !== 'undefined') window.mapleIncomeApp = {
   getMigrationInfo: () => copy(migrationSyncInfo),
   completeMigrationSync: () => { migrationSyncInfo = null; localStorage.removeItem(MIGRATION_SYNC_KEY); },
   normalizeCloudState: raw => migrateState(raw),
-  applyCloudState
+  applyCloudState,
+  setCloudAuthBridge: setNexonCredentialAuthBridge,
+  onCloudAuthChanged: onNexonCredentialAuthChanged
 };
 if (typeof document !== 'undefined') init();

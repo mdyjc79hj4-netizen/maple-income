@@ -6,6 +6,8 @@ import {cloudSyncInternals} from './cloud-sync.js';
 import nexonSchedulerHandler, {nexonProxyInternals} from './api/nexon-scheduler.js';
 import nexonCharacterHandler, {nexonCharacterInternals} from './api/nexon-character.js';
 import nexonAccountOwnershipHandler, {nexonAccountOwnershipInternals} from './api/nexon-account-ownership.js';
+import {nexonCredentialStoreInternals} from './api/_nexon-credential-store.js';
+import {nexonCredentialInternals} from './api/nexon-credential.js';
 
 const statKeys = Object.keys(nexonCharacterInternals.statDefinitions);
 const emptyDetailStats = Object.fromEntries(statKeys.map(key => [key, null]));
@@ -24,6 +26,8 @@ const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
 const nexonApiSource = readFileSync(new URL('./api/nexon-scheduler.js', import.meta.url), 'utf8');
 const nexonCharacterApiSource = readFileSync(new URL('./api/nexon-character.js', import.meta.url), 'utf8');
 const nexonAccountOwnershipApiSource = readFileSync(new URL('./api/nexon-account-ownership.js', import.meta.url), 'utf8');
+const nexonCredentialApiSource = readFileSync(new URL('./api/nexon-credential.js', import.meta.url), 'utf8');
+const nexonCredentialStoreSource = readFileSync(new URL('./api/_nexon-credential-store.js', import.meta.url), 'utf8');
 const envExample = readFileSync(new URL('./.env.example', import.meta.url), 'utf8');
 const context = vm.createContext({console, crypto: webcrypto, document: undefined, structuredClone, setTimeout, clearTimeout, URL, URLSearchParams});
 vm.runInContext(source, context);
@@ -1506,8 +1510,8 @@ const nexonSettingsHtml = html.slice(nexonSettingsStart, html.indexOf('</section
 assert.match(nexonSettingsHtml, /상세 진단에서 NEXON 오류 코드를 확인할 수 있습니다/);
 assert.match(nexonSettingsHtml, /자동 확인 요청이 실패해도 캐릭터 연동과 수동 보스 체크는 계속 사용할 수 있습니다/);
 assert.doesNotMatch(nexonSettingsHtml, /서버 API Key와 연결된 NEXON 계정|일부 계정에서 사용할 수 없습니다/);
-assert.doesNotMatch(nexonSettingsHtml, /type="password"|nexonApiKey|nexon-key/i);
-assert.doesNotMatch(source, /nexonApiKey|nexon-key/i);
+assert.match(nexonSettingsHtml, /id="nexonCredentialInput"[^>]+type="password"/);
+assert.doesNotMatch(nexonSettingsHtml, /value="[^\"]+"[^>]*id="nexonCredentialInput"/);
 const originalNexonKey = process.env.NEXON_OPEN_API_KEY;
 delete process.env.NEXON_OPEN_API_KEY;
 let missingKeyStatus = 0, missingKeyBody = null;
@@ -1909,4 +1913,139 @@ assert.match(css, /\.cloud-choice\{[^}]*min-height:66px/);
 assert.match(schema, /alter table public\.maple_income_sync enable row level security/i);
 assert.equal((schema.match(/create policy/gi) || []).length, 3);
 assert.match(schema, /auth\.uid\(\)\) = user_id/);
+
+const credentialEncryptionKey = Buffer.alloc(32, 7);
+const firstEncryptedCredential = nexonCredentialStoreInternals.encryptCredential('personal-test-api-key-value', 'user-one', credentialEncryptionKey);
+const secondEncryptedCredential = nexonCredentialStoreInternals.encryptCredential('personal-test-api-key-value', 'user-one', credentialEncryptionKey);
+assert.equal(nexonCredentialStoreInternals.decryptCredential(firstEncryptedCredential, 'user-one', credentialEncryptionKey), 'personal-test-api-key-value');
+assert.notEqual(firstEncryptedCredential.iv, secondEncryptedCredential.iv);
+assert.notEqual(firstEncryptedCredential.ciphertext, secondEncryptedCredential.ciphertext);
+assert.throws(() => nexonCredentialStoreInternals.decryptCredential(firstEncryptedCredential, 'user-two', credentialEncryptionKey));
+assert.equal(nexonCredentialStoreInternals.encryptionKey(Buffer.alloc(32, 1).toString('base64')).length, 32);
+assert.throws(() => nexonCredentialStoreInternals.encryptionKey('short'), /암호화 키/);
+
+function credentialResponse() {
+  return {
+    statusCode: 0, body: null, headers: {},
+    setHeader(name, value) { this.headers[name] = value; },
+    status(code) { this.statusCode = code; return this; },
+    json(value) { this.body = value; return this; }
+  };
+}
+const authenticatedAdmin = {
+  auth: {getUser: async token => token === 'valid-session-token'
+    ? {data: {user: {id: 'verified-user-id', email: 'user@example.com'}}, error: null}
+    : {data: {user: null}, error: {message: 'invalid token'}}}
+};
+const createCredentialTestHandler = overrides => nexonCredentialInternals.createCredentialHandler({
+  createAdminClient: () => authenticatedAdmin,
+  encryptionKey: () => credentialEncryptionKey,
+  encryptCredential: (apiKey, userId, key) => nexonCredentialStoreInternals.encryptCredential(apiKey, userId, key),
+  verifyNexonApiKey: async () => ({verifiedAt: '2026-10-02T05:00:00.000Z', accountCount: 1, characterCount: 70}),
+  loadCredentialStatus: async () => ({ok: true, hasCredential: false}),
+  storeCredential: async (_client, _userId, _encrypted, verification) => ({ok: true, hasCredential: true, ...verification}),
+  deleteCredential: async () => ({ok: true, hasCredential: false}),
+  ...overrides
+});
+for (const method of ['GET', 'POST', 'DELETE']) {
+  const response = credentialResponse();
+  await createCredentialTestHandler()({method, headers: {}, body: method === 'POST' ? {apiKey: 'personal-test-api-key-value'} : undefined}, response);
+  assert.equal(response.statusCode, 401);
+  assert.equal(response.body.code, 'AUTH_REQUIRED');
+}
+
+let verifiedPersonalKey = '', storedCredential = null;
+const validCredentialHandler = createCredentialTestHandler({
+  verifyNexonApiKey: async apiKey => {
+    verifiedPersonalKey = apiKey;
+    return {verifiedAt: '2026-10-02T05:00:00.000Z', accountCount: 2, characterCount: 35};
+  },
+  storeCredential: async (_client, userId, encrypted, verification) => {
+    storedCredential = {userId, encrypted, verification};
+    return {ok: true, hasCredential: true, ...verification};
+  }
+});
+const validCredentialResponse = credentialResponse();
+await validCredentialHandler({
+  method: 'POST', headers: {authorization: 'Bearer valid-session-token'},
+  body: {apiKey: 'personal-test-api-key-value', userId: 'attacker-selected-user-id'}
+}, validCredentialResponse);
+assert.equal(validCredentialResponse.statusCode, 200);
+assert.equal(validCredentialResponse.body.hasCredential, true);
+assert.equal(verifiedPersonalKey, 'personal-test-api-key-value');
+assert.equal(storedCredential.userId, 'verified-user-id');
+assert.equal(nexonCredentialStoreInternals.decryptCredential(storedCredential.encrypted, 'verified-user-id', credentialEncryptionKey), 'personal-test-api-key-value');
+assert.doesNotMatch(JSON.stringify(validCredentialResponse.body), /personal-test-api-key-value|ciphertext|auth_tag|\biv\b|attacker-selected-user-id/);
+
+let invalidCredentialWriteCount = 0;
+const invalidCredentialHandler = createCredentialTestHandler({
+  verifyNexonApiKey: async () => { throw Object.assign(new Error('invalid'), {
+    status: 403,
+    publicError: {ok: false, code: 'OPENAPI00005', message: 'NEXON Open API Key를 확인해주세요.'}
+  }); },
+  storeCredential: async () => { invalidCredentialWriteCount++; }
+});
+const originalConsoleErrorForCredential = console.error;
+const credentialLogs = [];
+console.error = (...args) => credentialLogs.push(args);
+try {
+  const invalidCredentialResponse = credentialResponse();
+  await invalidCredentialHandler({method: 'POST', headers: {authorization: 'Bearer valid-session-token'}, body: {apiKey: 'personal-test-api-key-value'}}, invalidCredentialResponse);
+  assert.equal(invalidCredentialResponse.statusCode, 403);
+  assert.equal(invalidCredentialResponse.body.code, 'OPENAPI00005');
+} finally {
+  console.error = originalConsoleErrorForCredential;
+}
+assert.equal(invalidCredentialWriteCount, 0);
+assert.doesNotMatch(JSON.stringify(credentialLogs), /personal-test-api-key-value/);
+
+let deletedCredentialUser = '';
+const credentialStatusHandler = createCredentialTestHandler({
+  loadCredentialStatus: async (_client, userId) => ({ok: true, hasCredential: true, verifiedAt: '2026-10-02T05:00:00.000Z', accountCount: 1, characterCount: 70, userId}),
+  deleteCredential: async (_client, userId) => { deletedCredentialUser = userId; return {ok: true, hasCredential: false}; }
+});
+const credentialGetResponse = credentialResponse();
+await credentialStatusHandler({method: 'GET', headers: {authorization: 'Bearer valid-session-token'}}, credentialGetResponse);
+assert.equal(credentialGetResponse.statusCode, 200);
+assert.equal(credentialGetResponse.body.hasCredential, true);
+assert.doesNotMatch(JSON.stringify(credentialGetResponse.body), /apiKey|ciphertext|auth_tag|\biv\b/);
+const credentialDeleteResponse = credentialResponse();
+await credentialStatusHandler({method: 'DELETE', headers: {authorization: 'Bearer valid-session-token'}}, credentialDeleteResponse);
+assert.equal(credentialDeleteResponse.body.hasCredential, false);
+assert.equal(deletedCredentialUser, 'verified-user-id');
+
+let verificationRequest = null;
+const personalVerification = await nexonCredentialInternals.verifyNexonApiKey('personal-test-api-key-value', async (url, options) => {
+  verificationRequest = {url, options};
+  return {ok: true, status: 200, json: async () => ({account_list: [{account_id: 'must-not-return', character_list: [{ocid: 'must-not-return'}]}, {character_list: []}]})};
+});
+assert.equal(verificationRequest.url, 'https://open.api.nexon.com/maplestory/v1/character/list');
+assert.equal(verificationRequest.options.headers['x-nxopen-api-key'], 'personal-test-api-key-value');
+assert.deepEqual(personalVerification.accountCount, 2);
+assert.deepEqual(personalVerification.characterCount, 1);
+assert.doesNotMatch(JSON.stringify(personalVerification), /personal-test-api-key-value|must-not-return/);
+
+assert.match(schema, /create table if not exists public\.nexon_api_credentials/i);
+assert.match(schema, /user_id uuid primary key references auth\.users\(id\) on delete cascade/i);
+assert.match(schema, /ciphertext text not null[\s\S]*iv text not null[\s\S]*auth_tag text not null/i);
+assert.match(schema, /revoke all on public\.nexon_api_credentials from authenticated/i);
+assert.doesNotMatch(schema, /create policy[^;]+nexon_api_credentials/is);
+assert.match(envExample, /^SUPABASE_SECRET_KEY=/m);
+assert.match(envExample, /^NEXON_CREDENTIAL_ENCRYPTION_KEY=/m);
+assert.doesNotMatch(envExample, /^VITE_(?:SUPABASE_SECRET_KEY|SUPABASE_SERVICE_ROLE_KEY|NEXON_CREDENTIAL_ENCRYPTION_KEY)=/m);
+assert.match(nexonCredentialStoreSource, /createCipheriv\('aes-256-gcm'/);
+assert.match(nexonCredentialStoreSource, /cipher\.setAAD\(Buffer\.from\(String\(userId\)/);
+assert.match(nexonCredentialApiSource, /const verification = await verifyKey\(apiKey\);[\s\S]*const encrypted = encrypt/);
+assert.doesNotMatch(nexonCredentialApiSource, /NEXON_OPEN_API_KEY/);
+assert.doesNotMatch(nexonApiSource, /nexon_api_credentials|NEXON_CREDENTIAL_ENCRYPTION_KEY/);
+assert.match(cloudSource, /getAccessToken: async \(\) =>/);
+assert.match(cloudSource, /app\.onCloudAuthChanged\?\.\(\{signedIn: !!user/);
+assert.match(html, /id="nexonCredentialInput"[^>]+type="password"[^>]+autocomplete="new-password"/);
+assert.match(html, /API Key는 서버에서 암호화하여 저장하며/);
+const credentialClientSource = source.slice(source.indexOf('function nexonCredentialErrorMessage'), source.indexOf('function renderNexonSettings'));
+assert.doesNotMatch(credentialClientSource, /localStorage|sessionStorage|transaction\(|applyCloudState|weeklyHistory/);
+assert.doesNotMatch(JSON.stringify(json('emptyState()')), /apiKey|credential|ciphertext|auth_tag/);
+assert.match(source, /fetch\('\/api\/nexon-credential'/);
+assert.match(source, /Authorization: `Bearer \$\{token\}`/);
+assert.match(source, /input\.value = ''/);
 console.log('boss roster, preset, migration, backup, reset, rollover, income, NEXON scheduler and multi-device cloud sync regression checks passed');
