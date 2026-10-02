@@ -919,6 +919,10 @@ let nexonApiState = {status: 'idle', message: '연동할 캐릭터를 선택해�
 let nexonSchedulerDiagnosticState = {status: 'idle', characterId: '', result: null, message: '진단을 실행하면 두 요청 결과를 비교합니다.'};
 let nexonCredentialAuthBridge = null;
 let nexonCredentialState = {status: 'signed-out', hasCredential: false, editing: false, message: ''};
+let cloudAuthUiState = {initialized: false, signedIn: false, ready: false};
+let onboardingWasActive = false, onboardingDismissed = false;
+let onboardingCharacterCandidate = null;
+let activeMainTab = 'summary', returnTabAfterIncome = 'summary';
 const NEXON_CHECK_COOLDOWN_MS = 60_000;
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -948,6 +952,80 @@ function watchSyncBadge() {
   normalizeSyncBadge();
   const observer = new MutationObserver(normalizeSyncBadge);
   observer.observe(label, {childList: true, characterData: true, subtree: true});
+}
+function resolveAppExperience({initialized = false, signedIn = false, cloudReady = false, credentialStatus = '', hasCredential = false, linkedCharacterCount = 0} = {}, {wasOnboarding = false, dismissed = false} = {}) {
+  if (!initialized) return 'sync';
+  if (!signedIn) return 'login';
+  if (!cloudReady || credentialStatus === 'loading') return 'sync';
+  if (!hasCredential) return 'credential';
+  if (linkedCharacterCount < 1) return 'character';
+  return wasOnboarding && !dismissed ? 'complete' : 'app';
+}
+function moveSharedOnboardingUi(stage) {
+  const cloud = $('.cloud-section');
+  const cloudMount = stage === 'login' ? $('#onboardingAuthMount') : $('#settingsAccountMount');
+  if (cloud && cloudMount && cloud.parentElement !== cloudMount) cloudMount.append(cloud);
+  const credential = $('.nexon-credential');
+  const credentialMount = stage === 'credential' ? $('#onboardingCredentialMount') : $('#settingsCredentialMount');
+  if (credential && credentialMount && credential.parentElement !== credentialMount) credentialMount.append(credential);
+  const diagnostics = $('#nexonDiagnostics'), diagnosticMount = $('#settingsDiagnosticsMount');
+  if (diagnostics && diagnosticMount && diagnostics.parentElement !== diagnosticMount) diagnosticMount.append(diagnostics);
+}
+function renderOnboardingCharacters() {
+  const select = $('#onboardingLocalCharacter');
+  if (!select || !state) return;
+  const unlinked = state.characters.filter(character => !character.nexonCharacter?.ocid);
+  const choices = unlinked.length ? unlinked : state.characters;
+  select.innerHTML = choices.map(character => option(character.id, character.name)).join('');
+  select.disabled = !choices.length;
+  $('#onboardingCharacterSubmit').disabled = !choices.length || nexonApiState.status === 'checking';
+  if (!choices.length) $('#onboardingCharacterResult').textContent = '먼저 메기 캐릭터를 추가해야 합니다. 설정에서 캐릭터를 추가한 뒤 다시 연결해주세요.';
+}
+function resetOnboardingCharacterCandidate() {
+  onboardingCharacterCandidate = null;
+  const button = $('#onboardingCharacterSubmit'), result = $('#onboardingCharacterResult');
+  if (button) button.textContent = '캐릭터 확인';
+  if (result) { result.className = 'onboarding-character-result muted'; result.textContent = '캐릭터명을 입력하면 연결 전에 프로필을 확인합니다.'; }
+}
+function renderAppExperience() {
+  if (!state || !$('#onboardingShell')) return;
+  const input = {
+    initialized: cloudAuthUiState.initialized,
+    signedIn: cloudAuthUiState.signedIn,
+    cloudReady: cloudAuthUiState.ready,
+    credentialStatus: nexonCredentialState.status,
+    hasCredential: nexonCredentialState.hasCredential === true,
+    linkedCharacterCount: state.characters.filter(character => character.nexonCharacter?.ocid).length
+  };
+  let stage = resolveAppExperience(input, {wasOnboarding: onboardingWasActive, dismissed: onboardingDismissed});
+  if (['login', 'credential', 'character'].includes(stage)) onboardingWasActive = true;
+  if (stage === 'app') onboardingDismissed = true;
+  moveSharedOnboardingUi(stage);
+  $('#onboardingShell').classList.toggle('hidden', stage === 'app');
+  $('#appShell').classList.toggle('hidden', stage !== 'app');
+  $$('#onboardingShell [data-onboarding-stage]').forEach(section => section.classList.toggle('hidden', section.dataset.onboardingStage !== stage));
+  $('#onboardingIntro').classList.toggle('hidden', !['login', 'sync'].includes(stage));
+  $('#onboardingSteps').classList.toggle('hidden', !['credential', 'character', 'complete'].includes(stage));
+  const rank = {account: 1, credential: 2, character: 3};
+  const current = stage === 'credential' ? 2 : stage === 'character' ? 3 : stage === 'complete' || stage === 'app' ? 4 : 1;
+  $$('[data-onboarding-indicator]').forEach(item => {
+    const value = rank[item.dataset.onboardingIndicator];
+    item.classList.toggle('active', value === current);
+    item.classList.toggle('done', value < current);
+    item.querySelector('i').textContent = value < current ? '✓' : String(value);
+  });
+  if (stage === 'character') renderOnboardingCharacters();
+}
+function activatePage(page, {updateNavigation = true} = {}) {
+  if (!document.querySelector(`[data-page="${page}"]`)) return;
+  if (updateNavigation && ['summary', 'boss', 'history', 'settings'].includes(page)) activeMainTab = page;
+  $$('[data-tab]').forEach(button => {
+    const active = button.dataset.tab === activeMainTab;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-current', active ? 'page' : 'false');
+  });
+  $$('[data-page]').forEach(target => target.classList.toggle('hidden', target.dataset.page !== page));
+  checkWeek();
 }
 function nextUpdatedAt(previous) {
   const prior = Date.parse(previous || '');
@@ -1101,6 +1179,12 @@ function render() {
   $('#returnCurrent').classList.toggle('hidden', !isPast());
   $('#summaryTitle').textContent = isPast() ? '조회 주차 수익' : '이번 주 수익';
   $('#totalIncome').textContent = koreanMeso(totals.total); $('#totalIncomeText').textContent = `${won(totals.total)} 메소`;
+  const bossProgress = (data.characters || []).reduce((result, character) => {
+    const stats = characterStats(character); result.done += stats.done; result.total += stats.count; return result;
+  }, {done: 0, total: 0});
+  const activityRows = [...(data.accountWeeklyActivities || []), ...(data.characters || []).flatMap(character => character.weeklyActivities || [])];
+  const activityProgress = {done: activityRows.filter(activity => activity.done).length, total: activityRows.length};
+  $('#homeProgress').innerHTML = `<span><small>보스</small><b>${bossProgress.done} / ${bossProgress.total}</b></span><span><small>주간 콘텐츠</small><b>${activityProgress.done} / ${activityProgress.total}</b></span>`;
   $('#metrics').innerHTML = Object.entries(labels).map(([key, label]) => `<div class="metric${key === 'hunt' ? ' metric-hunt' : ''}"><small>${label}</small><b>${money(totals[key])}</b>${key === 'hunt' ? `<dl class="hunt-resource-summary"><div><dt>메소 획득</dt><dd title="${won(huntSummary.mesoAcquired)} 메소">${koreanMeso(huntSummary.mesoAcquired)} 메소</dd></div><div><dt>솔 에르다 조각</dt><dd>${won(huntSummary.solErdaPieces)}개 획득</dd></div></dl>` : ''}</div>`).join('');
   $('#characterList').innerHTML = (data.characters || []).map(c => {
     const s = characterStats(c), percent = s.count ? Math.round(s.done / s.count * 100) : 0;
@@ -1109,12 +1193,20 @@ function render() {
   }).join('') || '<p class="empty">저장된 캐릭터가 없습니다.</p>';
   $('#addCharacter').disabled = !!isPast() || storageBlocked; $('#incomeFields').disabled = !!isPast() || storageBlocked;
   $('#incomeReadOnly').classList.toggle('hidden', !isPast()); $('#resetAll').disabled = !!isPast(); $('#resetWeek').disabled = !!isPast();
-  renderWeeklyActivities(data); renderBosses(data); renderHistory(data); renderPrices(); renderSettings();
+  renderWeeklyActivities(data); renderBosses(data); renderHistory(data); renderHomeRecent(data); renderPrices(); renderSettings();
+  const homeNexon = $('#homeNexonStatus');
+  if (homeNexon) {
+    const summary = nexonConnectionStatusSummary(state.characters, nexonCredentialState, cloudAuthUiState.signedIn, nexonApiState);
+    const normal = summary.character.tone === 'success' && summary.credential.tone === 'success' && !['warning', 'error'].includes(nexonApiState.status);
+    homeNexon.textContent = normal ? 'NEXON ● 정상' : 'NEXON 확인 필요';
+    homeNexon.classList.toggle('warning', !normal);
+  }
   $('#migrationNote').textContent = state.migrationNote || '기존 기록과 캐릭터 설정을 이 기기에 보관합니다.';
   const recovery = (state.unassignedIncomes?.length || 0) + (state.recoveredWeeks?.length || 0);
   $('#recoveryNote').textContent = recovery ? `마감 기록과 겹칠 수 있는 이전 데이터 ${recovery}건은 중복 합산 없이 백업에 별도 보관했습니다.` : '';
   if (!$('#characterDialog').open) $('#characterPreset').innerHTML = presetOptions();
   if (!$('#presetDialog').open) $('#presetSelect').innerHTML = presetOptions();
+  renderAppExperience();
 }
 function bossDoneForView(boss, data) {
   if (!isMonthlyBoss(boss)) return !!boss.done;
@@ -1184,6 +1276,16 @@ function historyMatches(row) {
   if (historyFilter === 'sold') return kind === 'sold';
   if (historyFilter === 'unsold') return kind === 'acquired';
   return row.category === historyFilter;
+}
+function renderHomeRecent(data) {
+  const target = $('#homeRecentRecords');
+  if (!target) return;
+  const rows = (data.incomes || []).map((row, index) => ({row, index})).sort((a, b) => n(b.row.createdAt) - n(a.row.createdAt) || b.index - a.index).slice(0, 3);
+  target.innerHTML = rows.map(({row}) => {
+    const value = incomeValue(row), kind = recordKind(row);
+    const detail = kind === 'income' ? '직접 획득' : kind === 'acquired' ? `${won(row.qty ?? row.quantity)}개 · 미판매` : `${won(row.qty ?? row.quantity)}개 판매`;
+    return `<div class="home-recent-row"><span><b>${escapeHtml(labels[row.category] || row.categoryLabel || '기타')} · ${escapeHtml(row.item)}</b><small>${escapeHtml(detail)} · ${escapeHtml(historyDate(row))}</small></span><strong class="${kind === 'acquired' ? 'muted' : value < 0 ? 'negative' : 'mint'}">${kind === 'acquired' ? '—' : `${value >= 0 ? '+' : ''}${koreanMeso(value)}`}</strong></div>`;
+  }).join('') || '<p class="empty compact-empty">아직 저장된 수익 기록이 없습니다.</p>';
 }
 function renderHistory(data) {
   const rows = (data.incomes || []).map((row, index) => ({row, index})).filter(({row}) => historyMatches(row)).sort((a, b) => n(b.row.createdAt) - n(a.row.createdAt) || b.index - a.index);
@@ -1529,32 +1631,39 @@ async function nexonCredentialRequest(method, body) {
 async function refreshNexonCredentialStatus() {
   if (!nexonCredentialAuthBridge?.isSignedIn?.()) {
     nexonCredentialState = {status: 'signed-out', hasCredential: false, editing: false, message: ''};
-    renderNexonCredentialSettings();
+    renderNexonCredentialSettings(); renderAppExperience();
     return;
   }
   nexonCredentialState = {...nexonCredentialState, status: 'loading', message: '등록 상태 확인 중…'};
-  renderNexonCredentialSettings();
+  renderNexonCredentialSettings(); renderAppExperience();
   try {
     const result = await nexonCredentialRequest('GET');
     nexonCredentialState = {...result, status: 'ready', editing: false, message: ''};
   } catch (error) {
     nexonCredentialState = {status: 'error', hasCredential: false, editing: false, message: nexonCredentialErrorMessage(error)};
   }
-  renderNexonCredentialSettings();
+  renderNexonCredentialSettings(); renderAppExperience();
 }
 function setNexonCredentialAuthBridge(bridge) {
   nexonCredentialAuthBridge = bridge && typeof bridge.getAccessToken === 'function' ? bridge : null;
-  renderNexonCredentialSettings();
+  renderNexonCredentialSettings(); renderAppExperience();
 }
 function onNexonCredentialAuthChanged({signedIn = false} = {}) {
+  cloudAuthUiState = {initialized: true, signedIn: !!signedIn, ready: !signedIn};
   if (!signedIn) {
+    onboardingCharacterCandidate = null;
     nexonCredentialState = {status: 'signed-out', hasCredential: false, editing: false, message: ''};
     const input = $('#nexonCredentialInput');
     if (input) input.value = '';
-    renderNexonCredentialSettings();
+    renderNexonCredentialSettings(); renderAppExperience();
     return;
   }
+  renderAppExperience();
   refreshNexonCredentialStatus();
+}
+function onCloudSyncReady({signedIn = false} = {}) {
+  cloudAuthUiState = {...cloudAuthUiState, initialized: true, signedIn: !!signedIn, ready: true};
+  renderAppExperience();
 }
 function nexonConnectionStatusSummary(characters, credentialState, signedIn, apiState) {
   const linked = characters.some(character => character.nexonCharacter?.ocid);
@@ -1634,6 +1743,13 @@ function renderSettings() {
   $('#defaultSaleFeeRate').value = String(normalizeSaleFeeRate(state.settings.defaultSaleFeeRate));
   $('#presetManager').innerHTML = state.presets.map(preset => `<div class="preset-row" data-preset-id="${escapeHtml(preset.id)}"><div><b>${escapeHtml(preset.name)}</b><small class="muted">보스 ${preset.bosses.length}개</small></div><div><button class="ghost" type="button" data-preset-action="rename">이름 변경</button><button class="ghost danger-text" type="button" data-preset-action="delete">삭제</button></div></div>`).join('') || '<p class="empty">저장한 사용자 프리셋이 없습니다.</p>';
   renderNexonSettings();
+  const accountSummary = $('#settingsAccountSummary');
+  if (accountSummary) accountSummary.textContent = cloudAuthUiState.signedIn ? ($('#cloudEmail')?.textContent || '로그인됨') + ' · 동기화' : '로그인 필요';
+  const nexonSummary = $('#settingsNexonSummary');
+  if (nexonSummary) {
+    const linked = state.characters.filter(character => character.nexonCharacter?.ocid);
+    nexonSummary.textContent = linked.length ? `${linked[0].nexonCharacter?.characterName || linked[0].name}${linked.length > 1 ? ` 외 ${linked.length - 1}` : ''} · ${nexonApiState.status === 'ok' ? '자동 확인 정상' : '연결됨'}` : '캐릭터 연결 필요';
+  }
 }
 
 async function nexonAuthenticatedFetch(url) {
@@ -2054,6 +2170,21 @@ function saveIncomeEdit() {
     }
   });
 }
+async function linkNexonCharacter(character, characterName) {
+  if (!character || !characterName || nexonApiState.status === 'checking') return null;
+  nexonApiState = {status: 'checking', message: `${character.name} 연동 확인 중…`, diagnostics: null};
+  renderNexonSettings(); renderAppExperience();
+  try {
+    const result = await syncNexonCharacter(character.id, {characterName});
+    nexonApiState = nexonLinkUiState(result, character.id);
+    return result;
+  } catch (error) {
+    nexonApiState = {status: 'error', message: error.message, diagnostics: null, errorCharacterId: character.id};
+    throw error;
+  } finally {
+    renderNexonSettings(); renderAppExperience();
+  }
+}
 function init() {
   validatePresetIntegrity();
   document.addEventListener('error', event => {
@@ -2078,11 +2209,16 @@ function init() {
     if (e.target.closest('.character-stat-details')) return;
     selectedBossCharacterId = card.dataset.character; $('[data-tab="boss"]').click(); renderBosses(viewData());
   });
-  $$('[data-tab]').forEach(button => button.addEventListener('click', () => {
-    $$('[data-tab]').forEach(b => { b.classList.toggle('active', b === button); b.setAttribute('aria-current', b === button ? 'page' : 'false'); });
-    $$('[data-page]').forEach(page => page.classList.toggle('hidden', page.dataset.page !== button.dataset.tab)); checkWeek();
+  $$('[data-tab]').forEach(button => button.addEventListener('click', () => activatePage(button.dataset.tab)));
+  const openIncomeEntry = () => { returnTabAfterIncome = activeMainTab; activatePage('income', {updateNavigation: false}); };
+  $$('[data-open-income], [data-income-action]').forEach(button => button.addEventListener('click', openIncomeEntry));
+  $('#closeIncomeEntry').addEventListener('click', () => activatePage(returnTabAfterIncome || activeMainTab));
+  $$('[data-open-page]').forEach(button => button.addEventListener('click', () => activatePage(button.dataset.openPage)));
+  $$('[data-open-settings]').forEach(button => button.addEventListener('click', () => {
+    activatePage('settings');
+    const route = $(`[data-settings-route="${button.dataset.openSettings}"]`);
+    if (route?.tagName === 'DETAILS') route.open = true;
   }));
-  $$('[data-open-income]').forEach(b => b.addEventListener('click', () => $('[data-tab="income"]').click()));
   $$('[data-filter]').forEach(button => button.addEventListener('click', () => {
     bossFilter = button.dataset.filter; $$('[data-filter]').forEach(b => { b.classList.toggle('active', b === button); b.setAttribute('aria-pressed', b === button); }); renderBosses(viewData());
   }));
@@ -2109,17 +2245,17 @@ function init() {
     } catch (error) {
       nexonCredentialState = {...previous, status: 'error', editing: true, message: nexonCredentialErrorMessage(error)};
     }
-    renderNexonCredentialSettings();
+    renderNexonCredentialSettings(); renderAppExperience();
   });
   $('#changeNexonCredential').addEventListener('click', () => {
     nexonCredentialState = {...nexonCredentialState, editing: true, message: '새 API Key가 검증된 경우에만 기존 Key를 교체합니다.'};
-    renderNexonCredentialSettings();
+    renderNexonCredentialSettings(); renderAppExperience();
     $('#nexonCredentialInput').focus();
   });
   $('#cancelNexonCredentialChange').addEventListener('click', () => {
     $('#nexonCredentialInput').value = '';
     nexonCredentialState = {...nexonCredentialState, status: 'ready', editing: false, message: ''};
-    renderNexonCredentialSettings();
+    renderNexonCredentialSettings(); renderAppExperience();
   });
   $('#deleteNexonCredential').addEventListener('click', async () => {
     if (!confirm('저장된 NEXON API Key를 삭제할까요?\n캐릭터와 수익 기록은 삭제되지 않습니다.')) return;
@@ -2129,11 +2265,12 @@ function init() {
     try {
       await nexonCredentialRequest('DELETE');
       $('#nexonCredentialInput').value = '';
+      onboardingCharacterCandidate = null;
       nexonCredentialState = {status: 'ready', hasCredential: false, editing: true, message: 'NEXON API Key 연결을 해제했습니다.'};
     } catch (error) {
       nexonCredentialState = {...previous, status: 'error', editing: false, message: nexonCredentialErrorMessage(error)};
     }
-    renderNexonCredentialSettings();
+    renderNexonCredentialSettings(); renderAppExperience();
   });
   $('#runNexonSchedulerDiagnostic').addEventListener('click', runNexonSchedulerDiagnosticComparison);
   $('#nexonSchedulerDiagnosticCharacter').addEventListener('change', event => {
@@ -2150,15 +2287,47 @@ function init() {
     }
     const characterName = prompt('연동할 NEXON 메이플스토리 캐릭터명', character.nexonCharacter?.characterName || character.name)?.trim();
     if (!characterName) return;
-    nexonApiState = {status: 'checking', message: `${character.name} 연동 확인 중…`, diagnostics: null}; renderNexonSettings();
-    try {
-      const result = await syncNexonCharacter(character.id, {characterName});
-      nexonApiState = nexonLinkUiState(result, character.id);
-    } catch (error) {
-      nexonApiState = {status: 'error', message: error.message, diagnostics: null, errorCharacterId: character.id};
-    }
-    renderNexonSettings();
+    try { await linkNexonCharacter(character, characterName); } catch {}
   });
+  $('#onboardingCharacterForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    const character = state.characters.find(item => item.id === $('#onboardingLocalCharacter').value);
+    const characterName = $('#onboardingCharacterName').value.trim();
+    if (!character || !characterName) return;
+    const result = $('#onboardingCharacterResult'), button = $('#onboardingCharacterSubmit');
+    if (!onboardingCharacterCandidate || onboardingCharacterCandidate.characterId !== character.id || onboardingCharacterCandidate.characterName !== characterName) {
+      result.className = 'onboarding-character-result pending'; result.textContent = `${characterName} 캐릭터 정보를 확인하고 있습니다…`;
+      button.disabled = true;
+      try {
+        const response = await fetchNexonProfile('', characterName), profile = response?.character || {};
+        if (!response?.ocid || !profile.name) throw new Error('NEXON 캐릭터 정보를 확인하지 못했습니다.');
+        onboardingCharacterCandidate = {characterId: character.id, characterName, response};
+        result.className = 'onboarding-character-result mint';
+        const preview = {nexonCharacter: {ocid: response.ocid, characterName: profile.name, world: profile.world, className: profile.className, level: profile.level, image: profile.image}};
+        result.innerHTML = `${nexonProfileAvatar(preview, 'settings-avatar')}<span><b>${escapeHtml(profile.name)}</b><small>${escapeHtml([[Number.isInteger(profile.level) ? `Lv. ${profile.level}` : '', profile.className || ''].filter(Boolean).join(' '), profile.world || ''].filter(Boolean).join(' · '))}</small></span>`;
+        button.textContent = '이 캐릭터 연결';
+      } catch (error) {
+        onboardingCharacterCandidate = null;
+        result.className = 'onboarding-character-result negative'; result.textContent = error.message || '캐릭터 정보를 확인하지 못했습니다.';
+      } finally { button.disabled = false; }
+      return;
+    }
+    result.className = 'onboarding-character-result pending'; result.textContent = `${characterName} 캐릭터를 연결하고 있습니다…`;
+    try {
+      await linkNexonCharacter(character, characterName);
+      const linked = state.characters.find(item => item.id === character.id);
+      const profile = linked?.nexonCharacter || {};
+      result.className = 'onboarding-character-result mint';
+      result.innerHTML = `${nexonProfileAvatar(linked, 'settings-avatar')}<span><b>${escapeHtml(profile.characterName || characterName)}</b><small>${escapeHtml([[Number.isInteger(profile.level) ? `Lv. ${profile.level}` : '', profile.className || ''].filter(Boolean).join(' '), profile.world || ''].filter(Boolean).join(' · '))}</small></span>`;
+      onboardingCharacterCandidate = null;
+      renderAppExperience();
+    } catch (error) {
+      result.className = 'onboarding-character-result negative'; result.textContent = error.message || '캐릭터 정보를 확인하지 못했습니다.';
+    }
+  });
+  $('#onboardingCharacterName').addEventListener('input', resetOnboardingCharacterCandidate);
+  $('#onboardingLocalCharacter').addEventListener('change', resetOnboardingCharacterCandidate);
+  $('#finishOnboarding').addEventListener('click', () => { onboardingDismissed = true; activeMainTab = 'summary'; activatePage('summary'); renderAppExperience(); });
   $('#bossCharacterSelect').addEventListener('change', e => { selectedBossCharacterId = e.target.value; renderBosses(viewData()); });
   $$('[data-character-mode]').forEach(button => button.addEventListener('click', () => { characterMode = button.dataset.characterMode; updateCharacterCreateUI(); }));
   $('#characterPreset').addEventListener('change', updateCharacterCreateUI);
@@ -2322,6 +2491,7 @@ if (typeof window !== 'undefined') window.mapleIncomeApp = {
   normalizeCloudState: raw => migrateState(raw),
   applyCloudState,
   setCloudAuthBridge: setNexonCredentialAuthBridge,
-  onCloudAuthChanged: onNexonCredentialAuthChanged
+  onCloudAuthChanged: onNexonCredentialAuthChanged,
+  onCloudSyncReady
 };
 if (typeof document !== 'undefined') init();

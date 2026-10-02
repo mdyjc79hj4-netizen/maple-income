@@ -516,6 +516,8 @@ export function startCloudSync(app) {
     elements.unavailable?.classList.remove('hidden');
     elements.form.classList.add('hidden');
     setMessage('Vercel에 Supabase URL과 publishable key를 설정하면 로그인이 활성화됩니다.');
+    notifyCloudAuthChanged(app, null);
+    app.onCloudSyncReady?.({signedIn: false});
     return;
   }
 
@@ -526,6 +528,7 @@ export function startCloudSync(app) {
     getSession: () => supabase.auth.getSession()
   }));
   let syncQueue = Promise.resolve();
+  let initializedUserId = '', initializingUserId = '';
   let pushTimer = 0;
   let resendTimer = 0;
   let choiceResolver = null;
@@ -773,7 +776,27 @@ export function startCloudSync(app) {
   const activate = session => {
     const changedUser = session?.user?.id !== user?.id;
     showSession(session);
-    if (session && changedUser) enqueue(() => reconcile({initial: true}));
+    if (!session) {
+      initializedUserId = ''; initializingUserId = '';
+      app.onCloudSyncReady?.({signedIn: false});
+      return;
+    }
+    if (changedUser || initializedUserId !== session.user.id) {
+      if (initializingUserId === session.user.id) return;
+      initializingUserId = session.user.id;
+      enqueue(async () => {
+        try { await reconcile({initial: true}); }
+        finally {
+          if (user?.id === session.user.id) {
+            initializedUserId = session.user.id;
+            initializingUserId = '';
+            app.onCloudSyncReady?.({signedIn: true});
+          }
+        }
+      });
+      return;
+    }
+    app.onCloudSyncReady?.({signedIn: true});
   };
 
   elements.choiceDialog?.addEventListener('click', event => {

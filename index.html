@@ -9,7 +9,23 @@
   <script type="module" src="./main.js"></script>
 </head>
 <body>
-<div class="app">
+<section id="onboardingShell" class="onboarding-shell hidden" aria-labelledby="onboardingTitle">
+  <div class="onboarding-card">
+    <header class="onboarding-brand"><span class="brand-mark" aria-hidden="true">m.</span><b>메기</b></header>
+    <div id="onboardingIntro" class="onboarding-intro"><p class="eyebrow">메이플 수익 관리</p><h1 id="onboardingTitle">메이플 수익을<br>더 간단하게 관리하세요.</h1><p>보스와 주간 콘텐츠를 자동으로 확인하고, 수익 기록을 여러 기기에서 이어서 관리합니다.</p></div>
+    <ol id="onboardingSteps" class="onboarding-steps" aria-label="설정 진행 단계">
+      <li data-onboarding-indicator="account"><i>1</i><span>계정</span></li>
+      <li data-onboarding-indicator="credential"><i>2</i><span>NEXON API</span></li>
+      <li data-onboarding-indicator="character"><i>3</i><span>캐릭터</span></li>
+    </ol>
+    <section data-onboarding-stage="login" class="onboarding-stage hidden"><div id="onboardingAuthMount"></div><ul class="onboarding-benefits"><li>여러 기기 동기화</li><li>NEXON 캐릭터 연동</li><li>보스·주간 콘텐츠 자동 확인</li></ul></section>
+    <section data-onboarding-stage="sync" class="onboarding-stage" aria-live="polite"><div class="onboarding-wait"><i></i><h2>클라우드 기록을 확인하고 있습니다</h2><p>기존 기록과 이 기기의 데이터를 안전하게 확인한 뒤 다음 단계로 이동합니다.</p></div></section>
+    <section data-onboarding-stage="credential" class="onboarding-stage hidden"><div class="onboarding-stage-head"><small>2 / 3</small><h2>NEXON Open API 연결</h2><p>보스와 주간 콘텐츠를 자동으로 확인하려면 본인의 NEXON Open API Key가 필요합니다.</p></div><div id="onboardingCredentialMount"></div></section>
+    <section data-onboarding-stage="character" class="onboarding-stage hidden"><div class="onboarding-stage-head"><small>3 / 3</small><h2>내 캐릭터 연결</h2><p>메기의 캐릭터에 NEXON 캐릭터 정보를 연결합니다. 기존 보스와 수익 기록은 바뀌지 않습니다.</p></div><form id="onboardingCharacterForm" class="onboarding-character-form"><label>메기 캐릭터<select id="onboardingLocalCharacter" aria-label="연결할 메기 캐릭터"></select></label><label>캐릭터명<input id="onboardingCharacterName" maxlength="40" autocomplete="off" placeholder="메이플 캐릭터명" required></label><button id="onboardingCharacterSubmit" class="primary" type="submit">캐릭터 확인</button></form><div id="onboardingCharacterResult" class="onboarding-character-result muted" role="status" aria-live="polite">캐릭터명을 입력하면 연결 전에 프로필을 확인합니다.</div></section>
+    <section data-onboarding-stage="complete" class="onboarding-stage hidden"><div class="onboarding-complete"><span aria-hidden="true">✓</span><h2>설정 완료</h2><ul><li>계정 연결</li><li>개인 API Key</li><li>NEXON 캐릭터</li></ul><p>이제 자동 확인과 수익 관리를 시작할 수 있습니다.</p><button id="finishOnboarding" class="primary" type="button">메기 시작하기</button></div></section>
+  </div>
+</section>
+<div class="app hidden" id="appShell">
   <header class="top">
     <div class="brand-row"><h1><span class="brand-mark" aria-hidden="true">m.</span>메기</h1><span class="device-save" id="syncBadge" data-sync-state="local"><i></i><span>이 기기에 저장 중</span></span></div>
     <div class="header-stats"><div><small>총수익</small><strong id="headerTotal">0</strong></div><div><small>이번 주</small><strong id="headerWeek">0</strong></div></div>
@@ -24,8 +40,10 @@
     <p id="status" role="status" aria-live="polite"></p>
     <div data-page="summary" id="summaryTab">
       <section class="summary-main">
-        <div class="eyebrow" id="summaryTitle">이번 주 수익</div>
+        <div class="summary-main-head"><div class="eyebrow" id="summaryTitle">이번 주 수익</div><button id="homeNexonStatus" class="status-link" type="button" data-open-settings="nexon">NEXON 확인 중</button></div>
         <div class="big" id="totalIncome">0</div><div class="muted" id="totalIncomeText">0 메소</div>
+        <div id="homeProgress" class="home-progress"></div>
+        <button class="green home-income-action" type="button" data-open-income>+ 수익 입력</button>
         <div class="metric-grid" id="metrics"></div>
       </section>
       <section class="panel">
@@ -36,6 +54,7 @@
         <div class="weekly-activities-head"><div><h2 id="weeklyActivitiesTitle">주간 콘텐츠</h2><p class="muted">계정 공용 콘텐츠와 선택한 캐릭터의 콘텐츠를 확인합니다.</p></div><small class="api-badge">NEXON 연동</small></div>
         <div id="weeklyActivityList"></div>
       </section>
+      <section class="panel home-recent-panel" aria-labelledby="homeRecentTitle"><div class="panel-head"><div><h2 id="homeRecentTitle">최근 기록</h2><p class="muted">가장 최근에 저장한 수익 기록입니다.</p></div><button class="ghost compact" type="button" data-open-page="history">전체 보기</button></div><div id="homeRecentRecords" class="home-recent-records"></div></section>
     </div>
     <section class="panel hidden" data-page="boss" id="bossTab">
       <div class="boss-page-head"><div><h2>보스</h2><p class="muted">주간·월간 보스를 초기화 주기에 맞게 관리해요.</p></div><div class="boss-character-tools"><label class="sr-only" for="bossCharacterSelect">캐릭터 선택</label><select id="bossCharacterSelect" aria-label="캐릭터 선택"></select><button class="ghost compact" id="addCharacterFromBoss" type="button">+ 캐릭터 추가</button><details class="more-menu" id="characterMenu"><summary aria-label="캐릭터 메뉴">⋯</summary><div class="more-menu-popover"><button type="button" data-character-action="rename">캐릭터 이름 변경</button><button type="button" data-character-action="apply-preset">프리셋 적용</button><button type="button" data-character-action="save-preset">현재 구성을 프리셋으로 저장</button><button type="button" class="danger-text" data-character-action="delete">캐릭터 삭제</button></div></details></div></div>
@@ -44,7 +63,7 @@
       <p class="footnote">주간 보스는 목요일 00:00, 월간 보스는 매월 1일 00:00 기준으로 관리합니다. 난이도·인원·가격을 바꾸면 해당 주기의 완료 기록이 해제됩니다.</p>
     </section>
     <section class="panel hidden" data-page="income" id="incomeTab">
-      <div class="panel-head"><div><h2>수익 입력</h2><p class="muted">메소는 바로, 아이템은 판매했을 때.</p></div></div>
+      <div class="panel-head"><div><h2>수익 입력</h2><p class="muted">메소는 바로, 아이템은 판매했을 때.</p></div><button id="closeIncomeEntry" class="ghost compact" type="button">닫기</button></div>
       <p id="incomeReadOnly" class="notice hidden">과거 주차 기록은 읽기 전용입니다.</p>
       <form id="incomeForm"><fieldset id="incomeFields" class="form">
         <div class="form-pair"><label>카테고리<select id="incomeCategory"><option value="hunt">재획</option><option value="gather">채집</option><option value="drop">드랍·기타</option></select></label><label>항목<select id="incomeItem"></select></label></div>
@@ -57,20 +76,24 @@
         <div class="income-result" id="incomeResult" aria-live="polite"><div id="incomeResultSimple"><span id="incomeResultLabel">즉시 반영할 수익</span><strong id="incomeResultValue">0 메소</strong><small id="incomeResultDetail"></small></div><div id="saleResult" class="sale-result-grid hidden"><span><small>판매 총액</small><b id="saleGrossValue">0 메소</b></span><span><small id="saleFeeLabel">수수료 5%</small><b id="saleFeeValue">-0 메소</b></span><span><small>실수령액</small><strong id="saleNetValue">0 메소</strong></span></div></div>
         <button class="primary" id="incomeSubmit" type="submit">메소 수익 기록</button>
       </fieldset></form>
-      <div class="section-divider"><h3>저장내역</h3><span class="muted">최근 기록부터</span></div>
+    </section>
+    <section class="panel hidden" data-page="history" id="historyTab">
+      <div class="panel-head"><div><h2>최근 기록</h2><p class="muted">저장된 획득·판매 기록을 확인하고 수정합니다.</p></div><button class="ghost compact" type="button" data-open-page="price">가격표 ›</button></div>
       <div class="chip-scroll" id="historyFilters" role="group" aria-label="저장내역 필터"><button class="chip active" data-history-filter="all" aria-pressed="true">전체</button><button class="chip" data-history-filter="hunt" aria-pressed="false">재획</button><button class="chip" data-history-filter="gather" aria-pressed="false">채집</button><button class="chip" data-history-filter="drop" aria-pressed="false">드랍·기타</button><button class="chip" data-history-filter="sold" aria-pressed="false">판매완료</button><button class="chip" data-history-filter="unsold" aria-pressed="false">미판매</button></div>
       <div class="history-desktop-head" aria-hidden="true"><span>유형</span><span>항목</span><span>내용</span><span>결과 금액</span><span>기록시간</span><span></span></div>
       <div id="incomeHistory" class="history compact-history"></div>
     </section>
     <section class="panel hidden" data-page="price" id="priceTab">
-      <h2>가격표</h2><p class="muted">이 기기에서 기록한 최근 판매 단가</p><div id="priceList" class="history"></div>
+      <div class="panel-head"><div><h2>가격표</h2><p class="muted">이 기기에서 기록한 최근 판매 단가</p></div><button class="ghost compact" type="button" data-open-page="settings">설정으로</button></div><div id="priceList" class="history"></div>
       <div class="section-divider"><h3>보스 결정석 기준</h3></div><p class="muted">2026년 9월 17일 공식 업데이트 기준입니다. 기존에 입력한 가격은 유지하며, 보스 목록에서 직접 수정할 수 있습니다.</p>
       <a href="https://gi.maplestory.nexon.com/Update/813" target="_blank" rel="noopener noreferrer">공식 가격 변경 안내 ↗</a>
       <p class="footnote">검은 마법사 변경 가격은 10월 1일부터 새 등록·난이도 변경 시 적용됩니다.</p>
     </section>
     <section class="panel hidden" data-page="settings" id="settingsTab">
-      <h2>설정</h2><p class="muted">기록과 프리셋을 이 기기에서 관리합니다.</p>
+      <h2>설정</h2><p class="muted settings-intro">연결 상태와 기록 관리 기능을 필요한 때만 펼쳐보세요.</p>
+      <details class="settings-route" data-settings-route="account"><summary><span><b>계정</b><small id="settingsAccountSummary">로그인 상태와 동기화</small></span><i aria-hidden="true">›</i></summary><div id="settingsAccountMount" class="settings-route-body"></div></details>
       <section class="settings-section cloud-section"><div class="settings-title"><div><h3>계정 및 클라우드 동기화</h3><p class="muted">같은 계정으로 로그인한 기기에서 기록을 함께 사용합니다.</p></div></div><div id="cloudUnavailable" class="notice hidden">클라우드 환경변수가 설정되지 않아 로컬 저장만 사용합니다.</div><form id="authForm" class="cloud-auth"><label>이메일<input id="authEmail" type="email" autocomplete="email" maxlength="254" required placeholder="maple@example.com"></label><label>비밀번호<input id="authPassword" type="password" autocomplete="current-password" minlength="6" required placeholder="6자 이상"></label><div class="cloud-actions"><button class="primary" type="submit">로그인</button><button class="ghost" id="signUp" type="button">회원가입</button><button class="text-button resend-confirmation" id="resendConfirmation" type="button">인증 메일 다시 보내기</button></div></form><div id="cloudAccount" class="cloud-account hidden"><div><b id="cloudEmail"></b><p class="muted" id="cloudStatus">동기화 대기</p></div><div class="cloud-actions"><button class="ghost" id="syncNow" type="button">지금 동기화</button><button class="text-button" id="signOut" type="button">로그아웃</button></div></div><p id="authMessage" class="muted" role="status" aria-live="polite"></p></section>
+      <details class="settings-route" data-settings-route="nexon"><summary><span><b>NEXON 연동</b><small id="settingsNexonSummary">연결 상태 확인</small></span><i aria-hidden="true">›</i></summary><div class="settings-route-body"><div id="settingsCredentialMount"></div>
       <section class="settings-section nexon-section">
         <div class="settings-title"><div><h3>NEXON Open API</h3><p class="muted">Data based on NEXON Open API</p></div></div>
         <p class="muted nexon-help">캐릭터 정보를 불러오고 보스·주간 콘텐츠 자동 확인을 요청합니다. 문제가 생기면 고급 진단 정보에서 자세한 내용을 확인할 수 있습니다.</p>
@@ -118,15 +141,17 @@
         <div class="nexon-sync-summary"><small id="nexonLastChecked" class="muted">마지막 확인 없음</small><p id="nexonApiStatus" class="muted" role="status" aria-live="polite">연동할 캐릭터를 선택해주세요.</p></div>
         <div id="nexonAutomationNotice" class="nexon-automation-notice hidden"><b>주간 자동 확인 확인 필요</b><p>캐릭터 연동과 개인 API Key 등록은 정상입니다. 자동 확인 요청 결과는 고급 진단 정보에서 확인할 수 있습니다.</p></div>
         <button id="checkNexonBosses" class="primary nexon-check" type="button">보스·주간 콘텐츠 지금 확인</button>
-        <details id="nexonDiagnostics" class="nexon-diagnostics hidden"><summary><span>문제가 있나요?</span><b>고급 진단 정보 보기</b></summary><section class="nexon-scheduler-comparison" aria-labelledby="nexonSchedulerDiagnosticTitle"><div class="nexon-scheduler-comparison-head"><div><b id="nexonSchedulerDiagnosticTitle">Scheduler 요청 진단</b><small>LIVE·KST 어제 조회와 등록한 개인 API Key 계정의 캐릭터 포함 여부를 확인합니다.</small></div><select id="nexonSchedulerDiagnosticCharacter" aria-label="Scheduler 진단 캐릭터"></select></div><button id="runNexonSchedulerDiagnostic" class="ghost" type="button">Scheduler 진단 실행</button><p id="nexonSchedulerDiagnosticStatus" class="muted" role="status" aria-live="polite">진단을 실행하면 두 요청 결과와 계정 포함 여부를 확인합니다.</p><div id="nexonSchedulerDiagnosticResults" class="nexon-scheduler-diagnostic-results"></div></section><div id="nexonDiagnosticsContent" class="nexon-diagnostics-content"></div></details>
       </section>
-      <section class="settings-section"><div class="settings-title"><div><h3>판매 설정</h3><p class="muted">새 판매 기록에 적용할 기본 수수료입니다.</p></div></div><label class="setting-field">기본 판매 수수료<select id="defaultSaleFeeRate"><option value="0.05">일반 5%</option><option value="0.03">우대 3%</option></select><small class="muted">우대 3%: MVP 실버 이상 / 프리미엄 PC방</small></label></section>
-      <section class="settings-section"><div class="settings-title"><div><h3>데이터</h3><p class="save-state"><i></i>이 기기에 자동 저장 중</p></div></div><p class="muted" id="migrationNote"></p><p class="pending" id="recoveryNote"></p><div class="settings-actions"><button id="exportData" class="ghost">JSON 백업 내보내기</button><button id="importData" class="ghost">JSON 백업 가져오기</button><button id="exportOriginal" class="text-button">이전 버전 원본 내려받기</button></div><input id="importFile" class="sr-only" type="file" accept="application/json,.json"></section>
-      <section class="settings-section"><div class="settings-title"><div><h3>프리셋</h3><p class="muted">사용자 저장 프리셋의 이름을 바꾸거나 삭제합니다.</p></div></div><div id="presetManager" class="preset-manager"></div></section>
-      <section class="settings-section danger-zone"><div class="settings-title"><div><h3>위험 작업</h3><p class="muted">초기화한 기록은 백업 없이 복구할 수 없습니다.</p></div></div><div class="danger-action"><div><b>이번 주 기록 초기화</b><p>완료 체크와 이번 주 수익 기록만 삭제합니다.</p></div><button class="danger" id="resetWeek">이번 주 초기화</button></div><div class="danger-action total-reset"><div><b>전체 데이터 초기화</b><p>캐릭터, 프리셋, 과거 기록까지 모두 삭제합니다.</p></div><button class="danger" id="resetAll">전체 초기화</button></div></section>
+      </div></details>
+      <details class="settings-route" data-settings-route="presets"><summary><span><b>프리셋</b><small>보스 구성 관리</small></span><i aria-hidden="true">›</i></summary><div class="settings-route-body"><section class="settings-section"><div class="settings-title"><div><h3>프리셋</h3><p class="muted">사용자 저장 프리셋의 이름을 바꾸거나 삭제합니다.</p></div></div><div id="presetManager" class="preset-manager"></div></section></div></details>
+      <button class="settings-route settings-route-button" type="button" data-open-page="price"><span><b>가격표</b><small>최근 판매 단가와 결정석 기준</small></span><i aria-hidden="true">›</i></button>
+      <details class="settings-route" data-settings-route="data"><summary><span><b>데이터 및 백업</b><small>내보내기·가져오기</small></span><i aria-hidden="true">›</i></summary><div class="settings-route-body"><section class="settings-section"><div class="settings-title"><div><h3>데이터</h3><p class="save-state"><i></i>이 기기에 자동 저장 중</p></div></div><p class="muted" id="migrationNote"></p><p class="pending" id="recoveryNote"></p><div class="settings-actions"><button id="exportData" class="ghost">JSON 백업 내보내기</button><button id="importData" class="ghost">JSON 백업 가져오기</button><button id="exportOriginal" class="text-button">이전 버전 원본 내려받기</button></div><input id="importFile" class="sr-only" type="file" accept="application/json,.json"></section></div></details>
+      <details class="settings-route" data-settings-route="advanced"><summary><span><b>고급 설정</b><small>판매 수수료·NEXON 진단</small></span><i aria-hidden="true">›</i></summary><div class="settings-route-body"><section class="settings-section"><div class="settings-title"><div><h3>판매 설정</h3><p class="muted">새 판매 기록에 적용할 기본 수수료입니다.</p></div></div><label class="setting-field">기본 판매 수수료<select id="defaultSaleFeeRate"><option value="0.05">일반 5%</option><option value="0.03">우대 3%</option></select><small class="muted">우대 3%: MVP 실버 이상 / 프리미엄 PC방</small></label></section><div id="settingsDiagnosticsMount"></div></div></details>
+      <details class="settings-route danger-route" data-settings-route="danger"><summary><span><b>위험 영역</b><small>주간·전체 데이터 초기화</small></span><i aria-hidden="true">›</i></summary><div class="settings-route-body"><section class="settings-section danger-zone"><div class="settings-title"><div><h3>위험 작업</h3><p class="muted">초기화한 기록은 백업 없이 복구할 수 없습니다.</p></div></div><div class="danger-action"><div><b>이번 주 기록 초기화</b><p>완료 체크와 이번 주 수익 기록만 삭제합니다.</p></div><button class="danger" id="resetWeek">이번 주 초기화</button></div><div class="danger-action total-reset"><div><b>전체 데이터 초기화</b><p>캐릭터, 프리셋, 과거 기록까지 모두 삭제합니다.</p></div><button class="danger" id="resetAll">전체 초기화</button></div></section></div></details>
+      <details id="nexonDiagnostics" class="nexon-diagnostics hidden"><summary><span>문제가 있나요?</span><b>고급 진단 정보 보기</b></summary><section class="nexon-scheduler-comparison" aria-labelledby="nexonSchedulerDiagnosticTitle"><div class="nexon-scheduler-comparison-head"><div><b id="nexonSchedulerDiagnosticTitle">Scheduler 요청 진단</b><small>LIVE·KST 어제 조회와 등록한 개인 API Key 계정의 캐릭터 포함 여부를 확인합니다.</small></div><select id="nexonSchedulerDiagnosticCharacter" aria-label="Scheduler 진단 캐릭터"></select></div><button id="runNexonSchedulerDiagnostic" class="ghost" type="button">Scheduler 진단 실행</button><p id="nexonSchedulerDiagnosticStatus" class="muted" role="status" aria-live="polite">진단을 실행하면 두 요청 결과와 계정 포함 여부를 확인합니다.</p><div id="nexonSchedulerDiagnosticResults" class="nexon-scheduler-diagnostic-results"></div></section><div id="nexonDiagnosticsContent" class="nexon-diagnostics-content"></div></details>
     </section>
   </main>
-  <nav class="tabs" aria-label="메인 메뉴"><button data-tab="summary" class="active" aria-current="page"><span aria-hidden="true">⌂</span>요약</button><button data-tab="boss"><span aria-hidden="true">✓</span>보스</button><button data-tab="income"><span aria-hidden="true">＋</span>수익입력</button><button data-tab="price"><span aria-hidden="true">₩</span>가격표</button><button data-tab="settings"><span aria-hidden="true">⚙</span>설정</button></nav>
+  <nav class="tabs" aria-label="메인 메뉴"><button data-tab="summary" class="active" aria-current="page"><span aria-hidden="true">⌂</span>홈</button><button data-tab="boss"><span aria-hidden="true">✓</span>보스</button><button class="income-action-tab" data-income-action type="button" aria-label="수익 입력 열기"><span aria-hidden="true">＋</span><small>입력</small></button><button data-tab="history"><span aria-hidden="true">≡</span>기록</button><button data-tab="settings"><span aria-hidden="true">⚙</span>설정</button></nav>
 </div>
 <dialog id="characterDialog" aria-labelledby="characterTitle"><form id="characterForm" class="dialog-card"><h2 id="characterTitle">캐릭터 추가</h2><label>캐릭터 이름<input id="characterName" required maxlength="40" placeholder="본캐"></label><div><span class="field-title">보스 구성 방식</span><div class="seg" id="characterMode" role="group" aria-label="보스 구성 방식"><button type="button" data-character-mode="preset" class="active" aria-pressed="true">프리셋 사용</button><button type="button" data-character-mode="direct" aria-pressed="false">직접 선택</button></div></div><label id="characterPresetWrap">프리셋 선택<select id="characterPreset"></select></label><div id="customBosses" class="direct-boss-list hidden"></div><p id="characterBossCount" class="muted">포함 보스 0개</p><div class="dialog-actions"><button type="button" data-close="characterDialog" class="ghost">취소</button><button type="submit" class="primary">추가</button></div></form></dialog>
 <dialog id="presetDialog" aria-labelledby="presetDialogTitle"><form id="presetForm" class="dialog-card"><h2 id="presetDialogTitle">프리셋 적용</h2><label>프리셋 선택<select id="presetSelect"></select></label><div><span class="field-title">적용 방식</span><div class="seg" id="presetApplyMode" role="group" aria-label="프리셋 적용 방식"><button type="button" data-preset-mode="add" class="active" aria-pressed="true">현재 구성에 추가</button><button type="button" data-preset-mode="replace" aria-pressed="false">현재 구성 교체</button></div></div><p id="presetReplaceWarning" class="notice hidden">교체하면 현재 보스 구성과 완료 체크가 선택한 프리셋으로 바뀝니다.</p><div class="dialog-actions"><button type="button" data-close="presetDialog" class="ghost">취소</button><button type="submit" class="primary">적용</button></div></form></dialog>
