@@ -501,7 +501,7 @@ function applyNexonSchedulerState(data, characterId, response, checkedAt = new D
     fetched: response.bosses.length,
     apiCompleted: response.bosses.filter(entry => nexonFlag(entry?.complete ?? entry?.complete_flag)).length,
     matched: 0, matchedCompleted: 0, autoCompleted: 0, monthlyAutoCompleted: 0,
-    unknown: [], difficultyMismatch: [], ambiguous: [], notConfigured: [], localNotFound: [], ignoredCycle: [],
+    unknown: [], difficultyMismatch: [], unselectedDifficulty: [], ambiguous: [], notConfigured: [], localNotFound: [], ignoredCycle: [],
     completedItems: [], blockedByManualOverride: [],
     activitiesFetched: Array.isArray(response.activities) ? response.activities.length : 0,
     apiActivitiesCompleted: Array.isArray(response.activities) ? response.activities.filter(entry => nexonFlag(entry?.complete)).length : 0,
@@ -531,21 +531,27 @@ function applyNexonSchedulerState(data, characterId, response, checkedAt = new D
       continue;
     }
     seenApiBossIds.add(value.bossId);
+    const validDifficulties = Object.keys(bossDB[bossNameFor(value.bossId)] || {});
+    if (!value.difficulty || !validDifficulties.includes(value.difficulty)) {
+      diagnostics.difficultyMismatch.push({...diagnosticCharacter, bossId: value.bossId, contentName: value.contentName, apiDifficulty: value.difficulty, cycle: value.cycle, validDifficulties, localDifficulties: localBosses.filter(item => item.boss.bossId === value.bossId).map(item => item.boss.difficulty), complete: value.complete});
+      if (value.complete) addCompletedItem(value, 'difficulty-mismatch');
+      continue;
+    }
     const candidates = localBosses.filter(item => item.boss.bossId === value.bossId);
     if (!candidates.length) {
       diagnostics.notConfigured.push({...diagnosticCharacter, contentName: value.contentName, difficulty: value.difficulty, cycle: value.cycle, complete: value.complete});
       if (value.complete) addCompletedItem(value, 'not-configured');
       continue;
     }
-    let target = null;
-    if (value.difficulty) {
-      const exact = candidates.filter(item => normalizeNexonDifficulty(item.boss.difficulty) === value.difficulty);
-      if (exact.length === 1) target = exact[0];
-      else diagnostics.difficultyMismatch.push({...diagnosticCharacter, bossId: value.bossId, contentName: value.contentName, apiDifficulty: value.difficulty, cycle: value.cycle, localDifficulties: candidates.map(item => item.boss.difficulty), complete: value.complete});
-    } else if (candidates.length === 1) target = candidates[0];
-    else diagnostics.ambiguous.push({...diagnosticCharacter, contentName: value.contentName, difficulty: value.difficulty, cycle: value.cycle, localDifficulties: candidates.map(item => item.boss.difficulty), complete: value.complete});
+    let target = null, unmatchedResult = 'unselected-difficulty';
+    const exact = candidates.filter(item => normalizeNexonDifficulty(item.boss.difficulty) === value.difficulty);
+    if (exact.length === 1) target = exact[0];
+    else if (exact.length > 1) {
+      unmatchedResult = 'ambiguous';
+      diagnostics.ambiguous.push({...diagnosticCharacter, bossId: value.bossId, contentName: value.contentName, difficulty: value.difficulty, cycle: value.cycle, localDifficulties: exact.map(item => item.boss.difficulty), complete: value.complete});
+    } else diagnostics.unselectedDifficulty.push({...diagnosticCharacter, bossId: value.bossId, contentName: value.contentName, difficulty: value.difficulty, cycle: value.cycle, localDifficulties: candidates.map(item => item.boss.difficulty), complete: value.complete});
     if (!target) {
-      if (value.complete) addCompletedItem(value, 'difficulty-mismatch');
+      if (value.complete) addCompletedItem(value, unmatchedResult);
       continue;
     }
     const previous = matches.get(target.index);
@@ -1295,6 +1301,7 @@ function nexonDiagnosticGroups(result) {
   return {
     unknownName: result?.unknown || [],
     difficultyMismatch: result?.difficultyMismatch || [],
+    unselectedDifficulty: result?.unselectedDifficulty || [],
     ambiguous: result?.ambiguous || [],
     localMissing: result?.notConfigured || [],
     apiMissing: result?.localNotFound || [],
@@ -1308,15 +1315,21 @@ function nexonDiagnosticGroups(result) {
 const nexonDiagnosticGroupLabels = {
   unknownName: '지원하지 않는 보스',
   difficultyMismatch: '난이도 불일치',
+  unselectedDifficulty: '선택하지 않은 난이도',
   ambiguous: '매칭 모호',
   localMissing: '로컬 미등록',
   apiMissing: 'API에 없음',
   ignoredCycle: '일일 보스 제외',
   blockedByManualOverride: '수동 해제 보호',
-  unsupportedActivity: '지원하지 않는 주간 콘텐츠',
+  unsupportedActivity: '지원 대상 외 콘텐츠',
   activityBlockedByManualOverride: '콘텐츠 수동 해제 보호',
   profileFailures: '프로필 갱신 실패'
 };
+function nexonDiagnosticGroupTone(key) {
+  if (['unknownName', 'difficultyMismatch', 'ambiguous', 'profileFailures'].includes(key)) return 'error';
+  if (['blockedByManualOverride', 'activityBlockedByManualOverride'].includes(key)) return 'protected';
+  return 'info';
+}
 function groupNexonDiagnosticItems(key, items = []) {
   const grouped = new Map();
   for (const item of items) {
@@ -1335,7 +1348,7 @@ function groupNexonDiagnosticItems(key, items = []) {
 }
 function appendNexonDiagnostics(total, result) {
   for (const key of ['fetched', 'apiCompleted', 'matched', 'matchedCompleted', 'autoCompleted', 'monthlyAutoCompleted', 'activitiesFetched', 'apiActivitiesCompleted', 'activityMatched', 'activityMatchedCompleted', 'activityAutoCompleted']) total[key] = (total[key] || 0) + (result[key] || 0);
-  for (const key of ['unknown', 'difficultyMismatch', 'ambiguous', 'notConfigured', 'localNotFound', 'ignoredCycle', 'completedItems', 'blockedByManualOverride', 'diagnosticSamples', 'unsupportedActivity', 'activityCompletedItems', 'activityBlockedByManualOverride', 'diagnosticActivitySamples']) (total[key] ||= []).push(...(result[key] || []));
+  for (const key of ['unknown', 'difficultyMismatch', 'unselectedDifficulty', 'ambiguous', 'notConfigured', 'localNotFound', 'ignoredCycle', 'completedItems', 'blockedByManualOverride', 'diagnosticSamples', 'unsupportedActivity', 'activityCompletedItems', 'activityBlockedByManualOverride', 'diagnosticActivitySamples']) (total[key] ||= []).push(...(result[key] || []));
   return total;
 }
 function prioritizeNexonDiagnosticSamples(samples, limit = 30) {
@@ -1347,9 +1360,12 @@ function diagnosticRawLabel(value, type) {
 }
 function diagnosticEntryLabel(key, item) {
   const name = item.contentName || item.name || item.bossId || '(이름 없음)';
+  const cycle = item.cycle || '(cycle 없음)';
   if (key === 'profileFailures') return `${item.character || '(메기 캐릭터 없음)'}${item.nexonCharacter ? ` → ${item.nexonCharacter}` : ''} · HTTP ${item.status || '-'} · ${item.code || 'PROFILE_ERROR'} · ${item.message || '프로필 갱신 실패'}`;
-  if (key === 'difficultyMismatch') return `${name} · API ${item.apiDifficulty || '(없음)'} · 로컬 ${(item.localDifficulties || []).join(', ') || '(없음)'}`;
-  if (key === 'ambiguous') return `${name} · 로컬 ${(item.localDifficulties || []).join(', ') || '(없음)'}`;
+  if (key === 'unknownName') return `${name} · ${item.difficulty || '(난이도 없음)'} · ${cycle}`;
+  if (key === 'difficultyMismatch') return `${name} · API ${item.apiDifficulty || '(없음)'} · 유효 ${(item.validDifficulties || []).join(', ') || '(없음)'} · 선택 ${(item.localDifficulties || []).join(', ') || '(없음)'} · ${cycle}`;
+  if (key === 'unselectedDifficulty') return `${name} · API ${item.difficulty || '(없음)'} · 선택 ${(item.localDifficulties || []).join(', ') || '(없음)'} · ${cycle}`;
+  if (key === 'ambiguous') return `${name} · API ${item.difficulty || '(없음)'} · 로컬 ${(item.localDifficulties || []).join(', ') || '(없음)'} · ${cycle}`;
   if (key === 'ignoredCycle') return `${name} · ${item.difficulty || '(난이도 없음)'} · ${item.cycle || '(cycle 없음)'}`;
   return `${name}${item.difficulty ? ` · ${item.difficulty}` : ''}`;
 }
@@ -1363,6 +1379,8 @@ function nexonCompletionResultLabel(result) {
     'matched-already-done': '이미 완료',
     'blocked-manual-override': '수동 해제 보호',
     'difficulty-mismatch': '난이도 불일치',
+    'unselected-difficulty': '선택하지 않은 난이도',
+    'ambiguous': '매칭 모호',
     'not-configured': '로컬 미등록',
     'ignored-cycle': '일일 보스 제외',
     'unknown-name': '이름 미지원'
@@ -1434,18 +1452,23 @@ function renderNexonDiagnostics() {
   const samples = (result.diagnosticSamples || []).slice(0, 30), completedItems = result.completedItems || [];
   const activitySamples = (result.diagnosticActivitySamples || []).slice(0, 30), completedActivities = result.activityCompletedItems || [];
   const schedulerWarningHtml = result.schedulerWarning ? `<section class="nexon-completed-items"><b>주간 기록 조회 경고</b><p>${escapeHtml(result.schedulerWarning.message || '')}</p><small>HTTP ${escapeHtml(String(result.schedulerWarning.status || '-'))} · ${escapeHtml(result.schedulerWarning.code || 'SCHEDULER_ERROR')}${result.schedulerWarning.category ? ` · ${escapeHtml(result.schedulerWarning.category)}` : ''}${result.schedulerWarning.source ? ` · ${escapeHtml(result.schedulerWarning.source)}` : ''}</small>${result.schedulerWarning.upstreamMessage ? `<p class="muted">NEXON 응답: ${escapeHtml(result.schedulerWarning.upstreamMessage)}</p>` : ''}</section>` : '';
-  const summary = [['보스 조회', result.fetched], ['보스 완료', result.apiCompleted], ['메기 매칭', result.matched], ['보스 자동 완료', result.autoCompleted], ['콘텐츠 조회', result.activitiesFetched], ['콘텐츠 완료', result.apiActivitiesCompleted], ['콘텐츠 자동 완료', result.activityAutoCompleted], ['매칭 실패', nexonDiagnosticFailureCount(result)], ['프로필 실패', result.profileFailures?.length || 0]];
+  const summary = [
+    ['보스 조회', result.fetched], ['보스 완료', result.apiCompleted], ['보스 매칭', result.matched], ['보스 자동 완료', result.autoCompleted],
+    ['콘텐츠 조회', result.activitiesFetched], ['콘텐츠 완료', result.apiActivitiesCompleted], ['콘텐츠 자동 완료', result.activityAutoCompleted],
+    ['실제 매칭 오류', nexonDiagnosticFailureCount(result), 'error'], ['선택하지 않은 난이도', groups.unselectedDifficulty.length, 'info'], ['로컬 미등록', groups.localMissing.length, 'info'],
+    ['지원 대상 외', groups.unsupportedActivity.length, 'info'], ['프로필 실패', result.profileFailures?.length || 0]
+  ];
   const completedHtml = `<section class="nexon-completed-items"><b>완료 항목 ${completedItems.length}</b>${completedItems.length ? completedItems.map(item => `<article class="nexon-completed-item"><small>${escapeHtml(item.character || '(메기 캐릭터 없음)')}${item.nexonCharacter ? ` → ${escapeHtml(item.nexonCharacter)}` : ''}</small><p>${escapeHtml(item.contentName || '(이름 없음)')} · ${escapeHtml(item.difficulty || '(난이도 없음)')} · ${escapeHtml(item.cycle || '(cycle 없음)')}</p><strong>→ ${escapeHtml(nexonCompletionResultLabel(item.result))}</strong></article>`).join('') : '<p class="muted">완료로 반환된 항목이 없습니다.</p>'}</section>`;
   const activityCompletedHtml = `<section class="nexon-completed-items"><b>완료 콘텐츠 ${completedActivities.length}</b>${completedActivities.length ? completedActivities.map(item => `<article class="nexon-completed-item"><small>${escapeHtml(item.character || '(메기 캐릭터 없음)')}${item.nexonCharacter ? ` → ${escapeHtml(item.nexonCharacter)}` : ''}</small><p>${escapeHtml(item.contentName || '(이름 없음)')} · ${escapeHtml(item.activityType || '(유형 없음)')}</p><strong>→ ${escapeHtml(nexonCompletionResultLabel(item.result))}</strong></article>`).join('') : '<p class="muted">완료로 확인된 지원 콘텐츠가 없습니다.</p>'}</section>`;
   const sampleHtml = samples.map(item => `<article class="nexon-diagnostic-item">${item.character || item.nexonCharacter ? `<small class="nexon-diagnostic-character">${escapeHtml(item.character || '(메기 캐릭터 없음)')}${item.nexonCharacter ? ` → ${escapeHtml(item.nexonCharacter)}` : ''}</small>` : ''}<b>${escapeHtml(item.contentName || '(content_name 없음)')}</b><p>difficulty: ${escapeHtml(item.difficulty || '(없음)')} · cycle: ${escapeHtml(item.cycle || '(없음)')}</p><p>registered: ${escapeHtml(String(item.registered))} <small>(${escapeHtml(diagnosticRawLabel(item.rawRegistrationValue, item.rawRegistrationType))})</small></p><p>complete: ${escapeHtml(String(item.complete))} <small>(${escapeHtml(diagnosticRawLabel(item.rawCompleteValue, item.rawCompleteType))})</small></p></article>`).join('');
   const groupHtml = Object.entries(groups).filter(([, items]) => items.length).map(([key, items]) => {
     const grouped = groupNexonDiagnosticItems(key, items);
-    return `<details class="nexon-diagnostic-group"><summary><span>${escapeHtml(nexonDiagnosticGroupLabels[key] || key)}</span><strong>${items.length}건</strong></summary><ul>${grouped.map(group => `<li><span>${escapeHtml(groupedDiagnosticEntryLabel(key, group))}</span>${group.characters.length ? `<small>대상: ${escapeHtml(group.characters.join(', '))}</small>` : ''}</li>`).join('')}</ul></details>`;
+    return `<details class="nexon-diagnostic-group tone-${nexonDiagnosticGroupTone(key)}"><summary><span>${escapeHtml(nexonDiagnosticGroupLabels[key] || key)}</span><strong>${items.length}건</strong></summary><ul>${grouped.map(group => `<li><span>${escapeHtml(groupedDiagnosticEntryLabel(key, group))}</span>${group.characters.length ? `<small>대상: ${escapeHtml(group.characters.join(', '))}</small>` : ''}</li>`).join('')}</ul></details>`;
   }).join('');
-  const summaryHtml = `<div class="nexon-diagnostic-summary">${summary.map(([label, value]) => `<span>${escapeHtml(label)} <b>${n(value)}</b></span>`).join('')}</div>`;
+  const summaryHtml = `<div class="nexon-diagnostic-summary">${summary.map(([label, value, tone = 'default']) => `<span class="tone-${tone}">${escapeHtml(label)} <b>${n(value)}</b></span>`).join('')}</div>`;
   const samplesHtml = `<details class="nexon-diagnostic-sample-section"><summary><span>응답 샘플</span><strong>${samples.length}건</strong></summary>${sampleHtml ? `<div class="nexon-diagnostic-samples">${sampleHtml}</div>` : '<p class="muted">응답 샘플이 없습니다.</p>'}</details>`;
   const activitySamplesHtml = `<details class="nexon-diagnostic-sample-section"><summary><span>주간 콘텐츠 응답 샘플</span><strong>${activitySamples.length}건</strong></summary>${activitySamples.length ? `<div class="nexon-diagnostic-samples">${activitySamples.map(item => `<article class="nexon-diagnostic-item"><small class="nexon-diagnostic-character">${escapeHtml(item.character || '')}${item.nexonCharacter ? ` → ${escapeHtml(item.nexonCharacter)}` : ''}</small><b>${escapeHtml(item.contentName || '(content_name 없음)')}</b><p>type: ${escapeHtml(item.type || '(없음)')} · ${escapeHtml(String(item.nowCount || 0))}/${escapeHtml(String(item.maxCount || 0))} · quest_state: ${escapeHtml(item.questState || '(없음)')}</p><p>registered: ${escapeHtml(String(item.registered))} · complete: ${escapeHtml(String(item.complete))}</p></article>`).join('')}</div>` : '<p class="muted">주간 콘텐츠 응답 샘플이 없습니다.</p>'}</details>`;
-  content.innerHTML = `${schedulerWarningHtml}${completedHtml}${activityCompletedHtml}${summaryHtml}${groupHtml ? `<div class="nexon-diagnostic-groups">${groupHtml}</div>` : '<p class="mint nexon-diagnostic-empty">매칭 실패 분류가 없습니다.</p>'}${samplesHtml}${activitySamplesHtml}`;
+  content.innerHTML = `${schedulerWarningHtml}${completedHtml}${activityCompletedHtml}${summaryHtml}${groupHtml ? `<div class="nexon-diagnostic-groups">${groupHtml}</div>` : '<p class="mint nexon-diagnostic-empty">확인할 진단 항목이 없습니다.</p>'}${samplesHtml}${activitySamplesHtml}`;
 }
 function nexonCredentialErrorMessage(error) {
   const code = String(error?.code || '');
@@ -1713,14 +1736,18 @@ async function fetchNexonProfile(ocid = '', characterName = '') {
 }
 function nexonDiagnosticFailureCount(result) {
   const groups = nexonDiagnosticGroups(result);
-  return ['unknownName', 'difficultyMismatch', 'ambiguous', 'localMissing', 'unsupportedActivity'].reduce((sum, key) => sum + groups[key].length, 0);
+  return ['unknownName', 'difficultyMismatch', 'ambiguous'].reduce((sum, key) => sum + groups[key].length, 0);
 }
 function nexonDiagnosticMessage(result) {
   const parts = [`NEXON 조회 ${result.fetched || 0}개`, `완료 ${result.apiCompleted || 0}개`, `메기 매칭 ${result.matched || 0}개`, `완료 매칭 ${result.matchedCompleted || 0}개`, `자동 완료 ${result.autoCompleted || 0}개`];
   if (result.activitiesFetched) parts.push(`주간 콘텐츠 ${result.activitiesFetched}개`, `콘텐츠 자동 완료 ${result.activityAutoCompleted || 0}개`);
   if (result.blockedByManualOverride?.length) parts.push(`수동 해제 보호로 자동 완료 차단 ${result.blockedByManualOverride.length}개`);
   const failures = nexonDiagnosticFailureCount(result);
-  if (failures) parts.push(`매칭 실패 ${failures}개`);
+  const groups = nexonDiagnosticGroups(result);
+  if (failures) parts.push(`실제 매칭 오류 ${failures}개`);
+  if (groups.unselectedDifficulty.length) parts.push(`선택하지 않은 난이도 ${groups.unselectedDifficulty.length}개`);
+  if (groups.localMissing.length) parts.push(`로컬 미등록 ${groups.localMissing.length}개`);
+  if (groups.unsupportedActivity.length) parts.push(`지원 대상 외 ${groups.unsupportedActivity.length}개`);
   return parts.join(' · ');
 }
 function nexonUserStatusMessage(result, cooldown = false) {
@@ -1810,7 +1837,7 @@ async function syncAllNexonCharacters() {
   nexonApiState = {status: 'checking', message: '보스·주간 콘텐츠 확인 중…', diagnostics: null}; renderNexonSettings();
   let checked = 0, cooldown = 0, checkingCharacterId = '';
   const profileFailureIds = [];
-  const total = {fetched: 0, apiCompleted: 0, matched: 0, matchedCompleted: 0, autoCompleted: 0, monthlyAutoCompleted: 0, activitiesFetched: 0, apiActivitiesCompleted: 0, activityMatched: 0, activityMatchedCompleted: 0, activityAutoCompleted: 0, profileUpdated: 0, unknown: [], difficultyMismatch: [], ambiguous: [], notConfigured: [], localNotFound: [], ignoredCycle: [], completedItems: [], blockedByManualOverride: [], diagnosticSamples: [], unsupportedActivity: [], activityCompletedItems: [], activityBlockedByManualOverride: [], diagnosticActivitySamples: [], profileFailures: []};
+  const total = {fetched: 0, apiCompleted: 0, matched: 0, matchedCompleted: 0, autoCompleted: 0, monthlyAutoCompleted: 0, activitiesFetched: 0, apiActivitiesCompleted: 0, activityMatched: 0, activityMatchedCompleted: 0, activityAutoCompleted: 0, profileUpdated: 0, unknown: [], difficultyMismatch: [], unselectedDifficulty: [], ambiguous: [], notConfigured: [], localNotFound: [], ignoredCycle: [], completedItems: [], blockedByManualOverride: [], diagnosticSamples: [], unsupportedActivity: [], activityCompletedItems: [], activityBlockedByManualOverride: [], diagnosticActivitySamples: [], profileFailures: []};
   try {
     for (const character of linked) {
       checkingCharacterId = character.id;

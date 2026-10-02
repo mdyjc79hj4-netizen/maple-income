@@ -319,8 +319,9 @@ assert.equal(context.__schedulerState.characters[0].bosses[1].done, true);
 assert.equal(context.__schedulerState.characters[0].bosses[1].completionSource, 'manual');
 assert.equal(JSON.stringify(context.__schedulerState).includes('completedItems'), false);
 context.__appliedDiagnostics = appliedScheduler;
-assert.equal(run('nexonDiagnosticMessage(__appliedDiagnostics)'), 'NEXON 조회 4개 · 완료 2개 · 메기 매칭 2개 · 완료 매칭 1개 · 자동 완료 1개 · 매칭 실패 1개');
-assert.deepEqual(json('Object.keys(nexonDiagnosticGroups(__appliedDiagnostics))'), ['unknownName', 'difficultyMismatch', 'ambiguous', 'localMissing', 'apiMissing', 'ignoredCycle', 'blockedByManualOverride', 'unsupportedActivity', 'activityBlockedByManualOverride', 'profileFailures']);
+assert.equal(run('nexonDiagnosticMessage(__appliedDiagnostics)'), 'NEXON 조회 4개 · 완료 2개 · 메기 매칭 2개 · 완료 매칭 1개 · 자동 완료 1개 · 실제 매칭 오류 1개');
+assert.equal(run('nexonDiagnosticFailureCount(__appliedDiagnostics)'), 1);
+assert.deepEqual(json('Object.keys(nexonDiagnosticGroups(__appliedDiagnostics))'), ['unknownName', 'difficultyMismatch', 'unselectedDifficulty', 'ambiguous', 'localMissing', 'apiMissing', 'ignoredCycle', 'blockedByManualOverride', 'unsupportedActivity', 'activityBlockedByManualOverride', 'profileFailures']);
 assert.equal(run('nexonDiagnosticGroups(__appliedDiagnostics).unknownName.length'), 1);
 assert.deepEqual(appliedScheduler.completedItems.map(item => item.result).sort(), ['matched-auto-completed', 'unknown-name'].sort());
 assert.equal(run('nexonUserStatusMessage(__appliedDiagnostics)'), '주간 보스 1개를 자동 확인했습니다.');
@@ -389,10 +390,12 @@ context.__activityResponse = {
   ]
 };
 const activityApplied = json("applyNexonSchedulerState(__activityState, 'c1', __activityResponse, '2026-09-23T02:10:00.000Z')");
+context.__activityAppliedForCount = activityApplied;
 assert.equal(activityApplied.activitiesFetched, 4);
 assert.equal(activityApplied.activityMatched, 3);
 assert.equal(activityApplied.activityAutoCompleted, 2);
 assert.equal(activityApplied.unsupportedActivity[0].contentName, '새 주간 콘텐츠');
+assert.equal(run('nexonDiagnosticFailureCount(__activityAppliedForCount)'), 0);
 assert.deepEqual(JSON.parse(JSON.stringify(context.__activityState.characters[0].weeklyActivities.map(item => [item.type, item.done]))), [
   ['guild', false], ['mu-lung-dojo', true]
 ]);
@@ -420,14 +423,14 @@ const groupedUnknown = json("groupNexonDiagnosticItems('unknownName', __duplicat
 assert.equal(groupedUnknown.length, 1);
 assert.equal(groupedUnknown[0].count, 4);
 assert.deepEqual(groupedUnknown[0].characters, ['본캐', '부캐1', '부캐2', '부캐3']);
-assert.equal(run("groupedDiagnosticEntryLabel('unknownName', groupNexonDiagnosticItems('unknownName', __duplicateUnknown)[0])"), '힐라 · 노멀 · 4개 캐릭터');
+assert.equal(run("groupedDiagnosticEntryLabel('unknownName', groupNexonDiagnosticItems('unknownName', __duplicateUnknown)[0])"), '힐라 · 노멀 · bossWeekly · 4개 캐릭터');
 assert.equal(run("nexonDiagnosticGroupLabels.unknownName"), '지원하지 않는 보스');
 assert.equal(run("nexonDiagnosticGroupLabels.blockedByManualOverride"), '수동 해제 보호');
 
 // Multi-character aggregation collects every sample before completion-first limiting.
 context.__diagnosticTotal = {
   fetched: 0, apiCompleted: 0, matched: 0, matchedCompleted: 0, autoCompleted: 0,
-  unknown: [], difficultyMismatch: [], ambiguous: [], notConfigured: [], localNotFound: [], ignoredCycle: [], completedItems: [], blockedByManualOverride: [], diagnosticSamples: []
+  unknown: [], difficultyMismatch: [], unselectedDifficulty: [], ambiguous: [], notConfigured: [], localNotFound: [], ignoredCycle: [], completedItems: [], blockedByManualOverride: [], diagnosticSamples: []
 };
 context.__diagnosticA = {
   fetched: 20, apiCompleted: 0, matched: 4, matchedCompleted: 0, autoCompleted: 0,
@@ -483,10 +486,15 @@ context.__multiDifficultyResponse = {...structuredClone(schedulerResponse), boss
   {contentName: '스우', difficulty: 'extreme', cycle: 'bossWeekly', complete: 'true'}
 ]};
 const multiDifficultyResult = json("applyNexonSchedulerState(__multiDifficultyState, 'c1', __multiDifficultyResponse, '2026-09-23T01:01:30.000Z')");
+context.__multiDifficultyResultForCount = multiDifficultyResult;
 assert.equal(multiDifficultyResult.matched, 1);
 assert.equal(multiDifficultyResult.matchedCompleted, 1);
-assert.equal(multiDifficultyResult.difficultyMismatch.length, 2);
-assert.deepEqual(multiDifficultyResult.completedItems.map(item => item.result).sort(), ['matched-auto-completed', 'difficulty-mismatch'].sort());
+assert.equal(multiDifficultyResult.difficultyMismatch.length, 0);
+assert.equal(multiDifficultyResult.unselectedDifficulty.length, 2);
+assert.equal(multiDifficultyResult.notConfigured.length, 0);
+assert.equal(run('nexonDiagnosticFailureCount(__multiDifficultyResultForCount)'), 0);
+assert.deepEqual(multiDifficultyResult.completedItems.map(item => item.result).sort(), ['matched-auto-completed', 'unselected-difficulty'].sort());
+assert.equal(run("diagnosticEntryLabel('unselectedDifficulty', __multiDifficultyResultForCount.unselectedDifficulty[0])"), '스우 · API 노멀 · 선택 하드 · bossWeekly');
 assert.equal(context.__multiDifficultyState.characters[0].bosses[0].done, true);
 assert.equal(context.__multiDifficultyState.characters[0].bosses[0].completionSource, 'nexon-api');
 assert.equal(context.__multiDifficultyState.characters[0].bosses[0].completedIncome, 24450000);
@@ -506,8 +514,10 @@ context.__unknownOnlyState = structuredClone(schedulerState);
 const unknownBossesBefore = JSON.stringify(context.__unknownOnlyState.characters[0].bosses);
 context.__unknownOnlyResponse = {...structuredClone(schedulerResponse), bosses: [{contentName: '시즌 보스 메이린', difficulty: 'hard', cycle: 'bossWeekly', complete: 'true'}]};
 const unknownOnlyResult = json("applyNexonSchedulerState(__unknownOnlyState, 'c1', __unknownOnlyResponse, '2026-09-23T01:01:50.000Z')");
+context.__unknownOnlyResultForCount = unknownOnlyResult;
 assert.equal(unknownOnlyResult.unknown.length, 1);
 assert.equal(unknownOnlyResult.matched, 0);
+assert.equal(run('nexonDiagnosticFailureCount(__unknownOnlyResultForCount)'), 1);
 assert.equal(unknownOnlyResult.completedItems[0].result, 'unknown-name');
 assert.equal(JSON.stringify(context.__unknownOnlyState.characters[0].bosses), unknownBossesBefore);
 
@@ -516,36 +526,66 @@ context.__notConfiguredState = structuredClone(schedulerState);
 context.__notConfiguredState.characters[0].bosses = [structuredClone(schedulerState.characters[0].bosses[0])];
 context.__notConfiguredResponse = {...structuredClone(schedulerResponse), bosses: [{contentName: '루시드', difficulty: 'hard', cycle: 'bossWeekly', complete: 'true'}]};
 const notConfiguredResult = json("applyNexonSchedulerState(__notConfiguredState, 'c1', __notConfiguredResponse, '2026-09-23T01:01:55.000Z')");
+context.__notConfiguredResultForCount = notConfiguredResult;
 assert.equal(notConfiguredResult.completedItems[0].result, 'not-configured');
+assert.equal(notConfiguredResult.notConfigured.length, 1);
+assert.equal(run('nexonDiagnosticFailureCount(__notConfiguredResultForCount)'), 0);
 
-// Missing difficulty is safe only when the local bossId has one candidate.
+// Missing difficulty is invalid even when the local bossId has one candidate.
 context.__missingDifficultyState = structuredClone(schedulerState);
 context.__missingDifficultyState.characters[0].bosses = [structuredClone(schedulerState.characters[0].bosses[0])];
 context.__missingDifficultyResponse = {...structuredClone(schedulerResponse), bosses: [{contentName: '스우', difficulty: '', cycle: '주간', registered: false, complete: true}]};
 const missingDifficulty = json("applyNexonSchedulerState(__missingDifficultyState, 'c1', __missingDifficultyResponse, '2026-09-23T01:02:00.000Z')");
-assert.equal(missingDifficulty.matched, 1);
-assert.equal(missingDifficulty.autoCompleted, 1);
-assert.equal(context.__missingDifficultyState.characters[0].bosses[0].done, true);
+assert.equal(missingDifficulty.matched, 0);
+assert.equal(missingDifficulty.difficultyMismatch.length, 1);
+assert.equal(missingDifficulty.autoCompleted, 0);
+assert.equal(context.__missingDifficultyState.characters[0].bosses[0].done, false);
 
-// The same bossId with multiple local difficulties is ambiguous when the API omits difficulty.
+// Duplicate exact local rows are ambiguous and never auto-completed.
 context.__ambiguousState = structuredClone(schedulerState);
 context.__ambiguousState.characters[0].bosses = [
-  {...structuredClone(schedulerState.characters[0].bosses[0]), difficulty: '노멀', price: 8350000},
+  {...structuredClone(schedulerState.characters[0].bosses[0]), difficulty: '하드', price: 48900000},
   {...structuredClone(schedulerState.characters[0].bosses[0]), difficulty: '하드', price: 48900000}
 ];
-context.__ambiguousResponse = {...structuredClone(schedulerResponse), bosses: [{contentName: '스우', difficulty: '', cycle: '주간', registered: true, complete: true}]};
+context.__ambiguousResponse = {...structuredClone(schedulerResponse), bosses: [{contentName: '스우', difficulty: '하드', cycle: '주간', registered: true, complete: true}]};
 const ambiguousResult = json("applyNexonSchedulerState(__ambiguousState, 'c1', __ambiguousResponse, '2026-09-23T01:03:00.000Z')");
+context.__ambiguousResultForCount = ambiguousResult;
 assert.equal(ambiguousResult.matched, 0);
 assert.equal(ambiguousResult.ambiguous.length, 1);
+assert.equal(run('nexonDiagnosticFailureCount(__ambiguousResultForCount)'), 1);
 assert.equal(context.__ambiguousState.characters[0].bosses.some(boss => boss.done), false);
 
-// A known name with a different difficulty is diagnosed and never applied to the wrong local row.
+// A known name with an invalid master difficulty is diagnosed and never applied.
 context.__difficultyMismatchState = structuredClone(schedulerState);
-context.__difficultyMismatchResponse = {...structuredClone(schedulerResponse), bosses: [{contentName: '스우', difficulty: '노멀', cycle: '주간', registered: true, complete: true}]};
+context.__difficultyMismatchResponse = {...structuredClone(schedulerResponse), bosses: [{contentName: '스우', difficulty: '울트라', cycle: '주간', registered: true, complete: true}]};
 const difficultyMismatch = json("applyNexonSchedulerState(__difficultyMismatchState, 'c1', __difficultyMismatchResponse, '2026-09-23T01:04:00.000Z')");
+context.__difficultyMismatchForCount = difficultyMismatch;
 assert.equal(difficultyMismatch.matched, 0);
 assert.equal(difficultyMismatch.difficultyMismatch.length, 1);
+assert.equal(run('nexonDiagnosticFailureCount(__difficultyMismatchForCount)'), 1);
 assert.equal(context.__difficultyMismatchState.characters[0].bosses[0].done, false);
+assert.equal(run("diagnosticEntryLabel('difficultyMismatch', __difficultyMismatchForCount.difficultyMismatch[0])"), '스우 · API 울트라 · 유효 노멀, 하드, 익스트림 · 선택 하드 · 주간');
+assert.equal(run("diagnosticEntryLabel('ambiguous', __ambiguousResultForCount.ambiguous[0])"), '스우 · API 하드 · 로컬 하드, 하드 · 주간');
+
+// A valid master difficulty not selected locally is information, not a match error.
+context.__unselectedDifficultyState = structuredClone(schedulerState);
+context.__unselectedDifficultyResponse = {...structuredClone(schedulerResponse), bosses: [{contentName: '스우', difficulty: '노멀', cycle: '주간', registered: true, complete: true}]};
+const unselectedDifficultyResult = json("applyNexonSchedulerState(__unselectedDifficultyState, 'c1', __unselectedDifficultyResponse, '2026-09-23T01:04:10.000Z')");
+context.__unselectedDifficultyResultForCount = unselectedDifficultyResult;
+assert.equal(unselectedDifficultyResult.matched, 0);
+assert.equal(unselectedDifficultyResult.unselectedDifficulty.length, 1);
+assert.equal(unselectedDifficultyResult.difficultyMismatch.length, 0);
+assert.equal(run('nexonDiagnosticFailureCount(__unselectedDifficultyResultForCount)'), 0);
+assert.equal(unselectedDifficultyResult.completedItems[0].result, 'unselected-difficulty');
+assert.equal(context.__unselectedDifficultyState.characters[0].bosses[0].done, false);
+
+context.__informationOnlyDiagnostics = {
+  unselectedDifficulty: Array.from({length: 2}, () => ({contentName: '선택하지 않은 난이도'})),
+  notConfigured: Array.from({length: 51}, () => ({contentName: '로컬 미등록'})),
+  unsupportedActivity: Array.from({length: 15}, () => ({contentName: '지원 대상 외'}))
+};
+assert.equal(run('nexonDiagnosticFailureCount(__informationOnlyDiagnostics)'), 0);
+assert.equal(run('nexonDiagnosticMessage(__informationOnlyDiagnostics)'), 'NEXON 조회 0개 · 완료 0개 · 메기 매칭 0개 · 완료 매칭 0개 · 자동 완료 0개 · 선택하지 않은 난이도 2개 · 로컬 미등록 51개 · 지원 대상 외 15개');
 
 // The existing Korean spelling alias matches the app's canonical 노멀 difficulty.
 context.__difficultyAliasState = structuredClone(schedulerState);
@@ -1504,11 +1544,19 @@ run("expandedStatCharacterIds.delete('c1')");
 assert.match(source, /nexonProfileAvatar\(c, 'boss-art'\)/);
 assert.match(source, /nexonProfileAvatar\(character, 'settings-avatar'\)/);
 assert.match(source, /delete next\.characters\.find\(item => item\.id === character\.id\)\.nexonCharacter/);
-assert.match(source, /<details class="nexon-diagnostic-group"><summary>/);
-assert.doesNotMatch(source, /<details class="nexon-diagnostic-group" open/);
+assert.match(source, /<details class="nexon-diagnostic-group tone-\$\{nexonDiagnosticGroupTone\(key\)\}"><summary>/);
+assert.doesNotMatch(source, /<details class="nexon-diagnostic-group[^\"]*" open/);
 const diagnosticsRenderSource = source.slice(source.indexOf('function renderNexonDiagnostics'), source.indexOf('function renderNexonSettings'));
 assert.ok(diagnosticsRenderSource.indexOf('${completedHtml}') < diagnosticsRenderSource.indexOf('${summaryHtml}'));
 assert.ok(diagnosticsRenderSource.indexOf('${samplesHtml}') > diagnosticsRenderSource.indexOf('${groupHtml'));
+assert.match(diagnosticsRenderSource, /'실제 매칭 오류'/);
+assert.match(diagnosticsRenderSource, /'선택하지 않은 난이도'/);
+assert.match(diagnosticsRenderSource, /'로컬 미등록'/);
+assert.match(diagnosticsRenderSource, /'지원 대상 외'/);
+assert.doesNotMatch(diagnosticsRenderSource, /\['매칭 실패'/);
+assert.match(css, /\.nexon-diagnostic-group\.tone-error>summary strong/);
+assert.match(css, /\.nexon-diagnostic-group\.tone-info>summary strong/);
+assert.match(css, /\.nexon-diagnostic-group\.tone-protected>summary strong/);
 assert.match(diagnosticsRenderSource, /result\.schedulerWarning\.code/);
 assert.match(diagnosticsRenderSource, /result\.schedulerWarning\.category/);
 assert.match(diagnosticsRenderSource, /result\.schedulerWarning\.source/);
