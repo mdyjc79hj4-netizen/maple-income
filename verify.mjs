@@ -2038,8 +2038,39 @@ assert.match(nexonCredentialStoreSource, /cipher\.setAAD\(Buffer\.from\(String\(
 assert.match(nexonCredentialApiSource, /const verification = await verifyKey\(apiKey\);[\s\S]*const encrypted = encrypt/);
 assert.doesNotMatch(nexonCredentialApiSource, /NEXON_OPEN_API_KEY/);
 assert.doesNotMatch(nexonApiSource, /nexon_api_credentials|NEXON_CREDENTIAL_ENCRYPTION_KEY/);
-assert.match(cloudSource, /getAccessToken: async \(\) =>/);
-assert.match(cloudSource, /app\.onCloudAuthChanged\?\.\(\{signedIn: !!user/);
+assert.match(cloudSource, /app\.setCloudAuthBridge\?\.\(createCloudAuthBridge\(/);
+assert.match(cloudSource, /getSession: \(\) => supabase\.auth\.getSession\(\)/);
+assert.match(cloudSource, /const showSession = session => \{\s*user = session\?\.user \|\| null;\s*notifyCloudAuthChanged\(app, user\);/);
+assert.match(cloudSource, /onAuthStateChange\([^)]*\) => window\.setTimeout\(\(\) => activate\(session\), 0\)\)/);
+assert.match(cloudSource, /supabase\.auth\.getSession\(\)\.then\(\(\{data, error\}\) => \{[\s\S]*else activate\(data\.session\)/);
+
+let bridgeUser = {id: 'signed-in-user'};
+let bridgeSession = {access_token: 'supabase-access-token'};
+const authBridge = cloudSyncInternals.createCloudAuthBridge({
+  getUser: () => bridgeUser,
+  getSession: async () => ({data: {session: bridgeSession}, error: null})
+});
+assert.equal(authBridge.isSignedIn(), true);
+assert.equal(await authBridge.getAccessToken(), 'supabase-access-token');
+bridgeUser = null;
+bridgeSession = null;
+assert.equal(authBridge.isSignedIn(), false);
+assert.equal(await authBridge.getAccessToken(), '');
+const sessionError = new Error('session failed');
+const failingAuthBridge = cloudSyncInternals.createCloudAuthBridge({
+  getUser: () => ({id: 'signed-in-user'}),
+  getSession: async () => ({data: null, error: sessionError})
+});
+await assert.rejects(() => failingAuthBridge.getAccessToken(), error => error === sessionError);
+
+const authChanges = [];
+const credentialAuthApp = {onCloudAuthChanged: value => authChanges.push(value)};
+cloudSyncInternals.notifyCloudAuthChanged(credentialAuthApp, {id: 'restored-user'});
+cloudSyncInternals.notifyCloudAuthChanged(credentialAuthApp, {id: 'login-event-user'});
+cloudSyncInternals.notifyCloudAuthChanged(credentialAuthApp, null);
+assert.deepEqual(authChanges, [{signedIn: true}, {signedIn: true}, {signedIn: false}]);
+const authBridgeSource = cloudSource.slice(cloudSource.indexOf('function createCloudAuthBridge'), cloudSource.indexOf('export function startCloudSync'));
+assert.doesNotMatch(authBridgeSource, /localStorage|sessionStorage|payload|app\.getState|app\.applyCloudState/);
 assert.match(html, /id="nexonCredentialInput"[^>]+type="password"[^>]+autocomplete="new-password"/);
 assert.match(html, /API Key는 서버에서 암호화하여 저장하며/);
 const credentialClientSource = source.slice(source.indexOf('function nexonCredentialErrorMessage'), source.indexOf('function renderNexonSettings'));

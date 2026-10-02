@@ -455,6 +455,21 @@ function signupResult(data) {
   return {kind: 'invalid', message: '회원가입 응답을 확인하지 못했습니다. 잠시 후 다시 시도해주세요.', error: true};
 }
 
+function createCloudAuthBridge({getUser, getSession}) {
+  return {
+    isSignedIn: () => !!getUser(),
+    getAccessToken: async () => {
+      const {data, error} = await getSession();
+      if (error) throw error;
+      return data?.session?.access_token || '';
+    }
+  };
+}
+
+function notifyCloudAuthChanged(app, user) {
+  app.onCloudAuthChanged?.({signedIn: !!user});
+}
+
 export function startCloudSync(app) {
   const elements = {
     badge: document.querySelector('#syncBadge'), unavailable: document.querySelector('#cloudUnavailable'),
@@ -506,6 +521,10 @@ export function startCloudSync(app) {
 
   const supabase = createClient(url, publishableKey, {auth: {persistSession: true, autoRefreshToken: true, detectSessionInUrl: true}});
   let user = null;
+  app.setCloudAuthBridge?.(createCloudAuthBridge({
+    getUser: () => user,
+    getSession: () => supabase.auth.getSession()
+  }));
   let syncQueue = Promise.resolve();
   let pushTimer = 0;
   let resendTimer = 0;
@@ -561,6 +580,7 @@ export function startCloudSync(app) {
   });
   const showSession = session => {
     user = session?.user || null;
+    notifyCloudAuthChanged(app, user);
     if (!user && choiceResolver) finishChoice(null);
     elements.form.classList.toggle('hidden', !!user);
     elements.account.classList.toggle('hidden', !user);
@@ -865,6 +885,7 @@ export function startCloudSync(app) {
 }
 
 export const cloudSyncInternals = {
-  authErrorMessage, chooseSyncAction, contentHash, meaningfulLocalData, mergeStates,
+  authErrorMessage, chooseSyncAction, contentHash, createCloudAuthBridge, meaningfulLocalData, mergeStates,
+  notifyCloudAuthChanged,
   normalizeMeta, prepareStateForMerge, signupResult, syncError, syncErrorMessage, timestamp
 };
