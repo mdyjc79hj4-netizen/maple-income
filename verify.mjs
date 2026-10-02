@@ -1633,6 +1633,66 @@ try {
   globalThis.fetch = identityFetchBeforeTest;
   console.error = consoleErrorBeforeIdentityTest;
 }
+assert.equal(nexonProxyInternals.kstDateOffset(-1, new Date('2026-10-01T15:30:00.000Z')), '2026-10-01');
+assert.equal(nexonProxyInternals.validDate(nexonProxyInternals.kstDateOffset(-1)), true);
+async function invokeSchedulerComparison({liveOk = false, historicalOk = true} = {}) {
+  const previousFetch = globalThis.fetch, previousConsoleError = console.error;
+  const targets = [];
+  let status = 0, body = null;
+  try {
+    console.error = () => {};
+    globalThis.fetch = async value => {
+      const target = new URL(String(value));
+      targets.push(target);
+      const historical = target.searchParams.has('date');
+      const ok = historical ? historicalOk : liveOk;
+      if (ok) return {ok: true, status: 200, json: async () => ({date: historical ? target.searchParams.get('date') : '2026-10-02', boss_contents: [{content_name: '스우'}], weekly_contents: [{content_name: '에픽 던전'}]})};
+      return {ok: false, status: 400, json: async () => ({
+        error: {name: 'OPENAPI00004', message: `Please input valid parameter ${schedulerResponse.character.ocid}`},
+        apiKey: 'must-not-escape'
+      })};
+    };
+    await nexonSchedulerHandler(
+      {method: 'GET', query: {ocid: schedulerResponse.character.ocid, diagnostic: 'compare'}},
+      {status(code) { status = code; return this; }, json(value) { body = value; return this; }, setHeader() {}}
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+    console.error = previousConsoleError;
+  }
+  return {targets, status, body};
+}
+const liveFailureComparison = await invokeSchedulerComparison({liveOk: false, historicalOk: true});
+assert.equal(liveFailureComparison.status, 200);
+assert.equal(liveFailureComparison.targets.length, 2);
+assert.equal(liveFailureComparison.targets[0].searchParams.has('date'), false);
+assert.equal(liveFailureComparison.targets[1].searchParams.get('date'), nexonProxyInternals.kstDateOffset(-1));
+assert.match(liveFailureComparison.targets[1].searchParams.get('date'), /^\d{4}-\d{2}-\d{2}$/);
+assert.equal(liveFailureComparison.body.live.ok, false);
+assert.equal(liveFailureComparison.body.live.code, 'OPENAPI00004');
+assert.equal(liveFailureComparison.body.live.category, 'invalid_parameter');
+assert.equal(liveFailureComparison.body.live.source, 'nexon_upstream');
+assert.equal(liveFailureComparison.body.yesterday.ok, true);
+assert.equal(liveFailureComparison.body.yesterday.mode, 'historical');
+assert.equal(liveFailureComparison.body.yesterday.bossCount, 1);
+assert.equal(liveFailureComparison.body.yesterday.weeklyContentCount, 1);
+assert.doesNotMatch(JSON.stringify(liveFailureComparison.body), /test-only-key|must-not-escape|0123456789abcdef/);
+assert.equal(run("nexonSchedulerDiagnosticSummary({live:{ok:false},yesterday:{ok:true}})"), '실시간 조회에서만 오류가 발생했습니다.');
+const historicalFailureComparison = await invokeSchedulerComparison({liveOk: true, historicalOk: false});
+assert.equal(historicalFailureComparison.body.live.ok, true);
+assert.equal(historicalFailureComparison.body.yesterday.ok, false);
+assert.equal(run("nexonSchedulerDiagnosticSummary({live:{ok:true},yesterday:{ok:false}})"), '과거 날짜 조회에서만 오류가 발생했습니다.');
+const bothFailureComparison = await invokeSchedulerComparison({liveOk: false, historicalOk: false});
+assert.equal(bothFailureComparison.body.live.code, 'OPENAPI00004');
+assert.equal(bothFailureComparison.body.yesterday.code, 'OPENAPI00004');
+assert.equal(run("nexonSchedulerDiagnosticSummary({live:{ok:false},yesterday:{ok:false}})"), '실시간 및 과거 날짜 조회 모두 오류가 발생했습니다.');
+assert.equal(run("nexonSchedulerDiagnosticSummary({live:{ok:true},yesterday:{ok:true}})"), '두 Scheduler 조회가 모두 정상입니다.');
+const diagnosticRunnerSource = source.slice(source.indexOf('async function runNexonSchedulerDiagnosticComparison'), source.indexOf('async function fetchNexonProfile'));
+assert.doesNotMatch(diagnosticRunnerSource, /transaction\(|lastCheckedAt|applyNexonSchedulerState|saveState|cloud/i);
+assert.match(diagnosticRunnerSource, /fetchNexonSchedulerComparison/);
+assert.match(html, /id="runNexonSchedulerDiagnostic"/);
+assert.match(html, /id="nexonSchedulerDiagnosticResults"/);
+assert.match(css, /\.nexon-scheduler-diagnostic-results\{display:grid/);
 let proxyValidationStatus = 0, proxyValidationBody = null;
 await nexonSchedulerHandler(
   {method: 'GET', query: {ocid: 'invalid ocid'}},

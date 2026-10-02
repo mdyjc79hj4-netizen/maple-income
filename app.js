@@ -910,6 +910,7 @@ let selectedWeek = '', bossFilter = 'pending', historyFilter = 'all', selectedBo
 let editingIncomeId = '', editSaleState = 'acquired', incomeFeeRateDraft = null;
 const expandedStatCharacterIds = new Set();
 let nexonApiState = {status: 'idle', message: '연동할 캐릭터를 선택해주세요.', diagnostics: null};
+let nexonSchedulerDiagnosticState = {status: 'idle', characterId: '', result: null, message: '진단을 실행하면 두 요청 결과를 비교합니다.'};
 const NEXON_CHECK_COOLDOWN_MS = 60_000;
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -1361,12 +1362,53 @@ function nexonCompletionResultLabel(result) {
     'unknown-name': '이름 미지원'
   })[result] || result;
 }
+function nexonSchedulerDiagnosticSummary(result) {
+  const liveOk = result?.live?.ok === true, yesterdayOk = result?.yesterday?.ok === true;
+  if (liveOk && yesterdayOk) return '두 Scheduler 조회가 모두 정상입니다.';
+  if (!liveOk && yesterdayOk) return '실시간 조회에서만 오류가 발생했습니다.';
+  if (liveOk && !yesterdayOk) return '과거 날짜 조회에서만 오류가 발생했습니다.';
+  return '실시간 및 과거 날짜 조회 모두 오류가 발생했습니다.';
+}
+function nexonSchedulerDiagnosticCard(title, item) {
+  if (!item) return '';
+  const statusClass = item.ok ? 'success' : 'warning';
+  const rows = [
+    ['상태', item.ok ? '정상' : '오류'],
+    ['HTTP', String(item.status || '-')],
+    ['Code', item.code || '-'],
+    ['Category', item.category || '-'],
+    ['Source', item.source || '-']
+  ];
+  if (item.requestedDate) rows.push(['조회일', item.requestedDate]);
+  if (item.ok) {
+    rows.push(['응답일', item.responseDate || '-'], ['보스', `${n(item.bossCount)}개`], ['주간 콘텐츠', `${n(item.weeklyContentCount)}개`]);
+  } else rows.push(['Message', item.upstreamMessage || item.message || '-']);
+  return `<article class="nexon-scheduler-diagnostic-card ${statusClass}"><div><b>${escapeHtml(title)}</b><span>${item.ok ? '성공' : '실패'}</span></div><dl>${rows.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl></article>`;
+}
+function renderNexonSchedulerComparison() {
+  const select = $('#nexonSchedulerDiagnosticCharacter'), button = $('#runNexonSchedulerDiagnostic');
+  const status = $('#nexonSchedulerDiagnosticStatus'), results = $('#nexonSchedulerDiagnosticResults');
+  if (!select || !button || !status || !results) return;
+  const linked = state.characters.filter(character => character.nexonCharacter?.ocid);
+  if (!linked.some(character => character.id === nexonSchedulerDiagnosticState.characterId)) {
+    nexonSchedulerDiagnosticState.characterId = linked[0]?.id || '';
+  }
+  select.innerHTML = linked.map(character => `<option value="${escapeHtml(character.id)}" ${character.id === nexonSchedulerDiagnosticState.characterId ? 'selected' : ''}>${escapeHtml(character.name)}${character.nexonCharacter?.characterName && character.nexonCharacter.characterName !== character.name ? ` · ${escapeHtml(character.nexonCharacter.characterName)}` : ''}</option>`).join('');
+  select.disabled = !linked.length || nexonSchedulerDiagnosticState.status === 'checking';
+  button.disabled = !linked.length || nexonSchedulerDiagnosticState.status === 'checking';
+  status.textContent = linked.length ? nexonSchedulerDiagnosticState.message : '연동된 NEXON 캐릭터가 없습니다.';
+  status.className = nexonSchedulerDiagnosticState.status === 'error' ? 'negative' : nexonSchedulerDiagnosticState.status === 'checking' ? 'pending' : nexonSchedulerDiagnosticState.status === 'done' ? 'mint' : 'muted';
+  const result = nexonSchedulerDiagnosticState.result;
+  results.innerHTML = result ? `${nexonSchedulerDiagnosticCard('LIVE', result.live)}${nexonSchedulerDiagnosticCard('어제 날짜', result.yesterday)}` : '';
+}
 function renderNexonDiagnostics() {
   const details = $('#nexonDiagnostics'), content = $('#nexonDiagnosticsContent');
   if (!details || !content) return;
   const result = nexonApiState.diagnostics;
-  details.classList.toggle('hidden', !result);
-  if (!result) { details.open = false; content.innerHTML = ''; return; }
+  const hasLinkedCharacter = state.characters.some(character => character.nexonCharacter?.ocid);
+  details.classList.toggle('hidden', !result && !hasLinkedCharacter);
+  renderNexonSchedulerComparison();
+  if (!result) { content.innerHTML = ''; return; }
   const groups = nexonDiagnosticGroups(result);
   const samples = (result.diagnosticSamples || []).slice(0, 30), completedItems = result.completedItems || [];
   const activitySamples = (result.diagnosticActivitySamples || []).slice(0, 30), completedActivities = result.activityCompletedItems || [];
@@ -1435,6 +1477,32 @@ async function fetchNexonScheduler(character, characterName = '', requestDate = 
     throw error;
   }
   return data;
+}
+async function fetchNexonSchedulerComparison(character) {
+  const params = new URLSearchParams({ocid: character.nexonCharacter.ocid, diagnostic: 'compare'});
+  const response = await fetch('/api/nexon-scheduler?' + params);
+  let data;
+  try { data = await response.json(); } catch { throw new Error('NEXON Scheduler 진단 응답을 읽지 못했습니다.'); }
+  if (!response.ok || !data?.ok || !data?.diagnostic) throw new Error(data?.message || 'NEXON Scheduler 진단을 실행하지 못했습니다.');
+  return data;
+}
+async function runNexonSchedulerDiagnosticComparison() {
+  if (nexonSchedulerDiagnosticState.status === 'checking') return;
+  const character = state.characters.find(item => item.id === nexonSchedulerDiagnosticState.characterId && item.nexonCharacter?.ocid);
+  if (!character) {
+    nexonSchedulerDiagnosticState = {...nexonSchedulerDiagnosticState, status: 'error', result: null, message: '진단할 연동 캐릭터를 선택해주세요.'};
+    renderNexonSchedulerComparison();
+    return;
+  }
+  nexonSchedulerDiagnosticState = {status: 'checking', characterId: character.id, result: null, message: 'LIVE와 어제 날짜 Scheduler 요청을 확인 중…'};
+  renderNexonSchedulerComparison();
+  try {
+    const result = await fetchNexonSchedulerComparison(character);
+    nexonSchedulerDiagnosticState = {status: 'done', characterId: character.id, result, message: nexonSchedulerDiagnosticSummary(result)};
+  } catch (error) {
+    nexonSchedulerDiagnosticState = {status: 'error', characterId: character.id, result: null, message: error.message || 'NEXON Scheduler 진단을 실행하지 못했습니다.'};
+  }
+  renderNexonSchedulerComparison();
 }
 async function fetchNexonProfile(ocid = '', characterName = '') {
   const params = new URLSearchParams();
@@ -1809,6 +1877,11 @@ function init() {
   $('#addCharacter').addEventListener('click', openCharacterDialog);
   $('#addCharacterFromBoss').addEventListener('click', openCharacterDialog);
   $('#checkNexonBosses').addEventListener('click', syncAllNexonCharacters);
+  $('#runNexonSchedulerDiagnostic').addEventListener('click', runNexonSchedulerDiagnosticComparison);
+  $('#nexonSchedulerDiagnosticCharacter').addEventListener('change', event => {
+    nexonSchedulerDiagnosticState = {status: 'idle', characterId: event.target.value, result: null, message: '진단을 실행하면 두 요청 결과를 비교합니다.'};
+    renderNexonSchedulerComparison();
+  });
   $('#nexonCharacterList').addEventListener('click', async e => {
     const button = e.target.closest('[data-nexon-action]'); if (!button || nexonApiState.status === 'checking') return;
     const row = button.closest('[data-nexon-character]'), character = state.characters.find(item => item.id === row?.dataset.nexonCharacter);

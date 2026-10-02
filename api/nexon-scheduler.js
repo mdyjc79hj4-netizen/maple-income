@@ -33,6 +33,14 @@ function validOcid(value) {
   return /^[A-Za-z0-9_-]{16,80}$/.test(value);
 }
 
+function kstDateOffset(offsetDays = 0, now = new Date()) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en', {
+    timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(now).map(part => [part.type, part.value]));
+  const date = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day) + offsetDays));
+  return date.toISOString().slice(0, 10);
+}
+
 function publicError(status) {
   return {
     code: status === 429 ? 'RATE_LIMITED' : status === 403 ? 'FORBIDDEN' : status === 400 ? 'BAD_REQUEST' : 'UPSTREAM_ERROR',
@@ -216,6 +224,54 @@ function sanitizeScheduler(payload, ocid, requestedDate = '') {
   };
 }
 
+function schedulerDiagnosticResult(payload, mode, requestedDate = '') {
+  const bossContents = Array.isArray(payload?.boss_contents) ? payload.boss_contents : [];
+  const weeklyContents = Array.isArray(payload?.weekly_contents) ? payload.weekly_contents : [];
+  return {
+    mode,
+    requestedDate: requestedDate || null,
+    ok: true,
+    status: 200,
+    code: '',
+    category: '',
+    source: 'nexon_upstream',
+    upstreamMessage: '',
+    fetchedAt: new Date().toISOString(),
+    responseDate: typeof payload?.date === 'string' ? payload.date : '',
+    bossCount: bossContents.length,
+    weeklyContentCount: weeklyContents.length
+  };
+}
+
+function schedulerDiagnosticError(error, mode, requestedDate = '') {
+  const status = Number(error?.status) || 502;
+  const fallback = publicError(status);
+  return {
+    mode,
+    requestedDate: requestedDate || null,
+    ok: false,
+    status,
+    code: error?.code || fallback.code,
+    category: error?.category || (status >= 500 ? 'upstream_unavailable' : 'unknown_upstream_error'),
+    source: error?.source || 'proxy_runtime',
+    upstreamMessage: sanitizeUpstreamText(error?.upstreamMessage),
+    message: sanitizeUpstreamText(error?.message || fallback.message)
+  };
+}
+
+async function compareSchedulerRequests(ocid, apiKey) {
+  const yesterday = kstDateOffset(-1);
+  const requests = [
+    {mode: 'live', requestedDate: '', params: {ocid}},
+    {mode: 'historical', requestedDate: yesterday, params: {ocid, date: yesterday}}
+  ];
+  const settled = await Promise.allSettled(requests.map(item => requestNexon('/maplestory/v1/scheduler/character-state', item.params, apiKey)));
+  const results = settled.map((entry, index) => entry.status === 'fulfilled'
+    ? schedulerDiagnosticResult(entry.value, requests[index].mode, requests[index].requestedDate)
+    : schedulerDiagnosticError(entry.reason, requests[index].mode, requests[index].requestedDate));
+  return {ok: true, diagnostic: true, fetchedAt: new Date().toISOString(), live: results[0], yesterday: results[1]};
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'GET') return send(res, 405, {ok: false, code: 'METHOD_NOT_ALLOWED', message: 'GET 요청만 사용할 수 있습니다.'});
   const apiKey = process.env.NEXON_OPEN_API_KEY;
@@ -223,6 +279,13 @@ export default async function handler(req, res) {
   const characterName = String(req.query.characterName || '').trim();
   let ocid = String(req.query.ocid || '').trim();
   const date = String(req.query.date || '').trim();
+  const diagnostic = String(req.query.diagnostic || '').trim();
+  if (diagnostic) {
+    if (diagnostic !== 'compare' || characterName || date || !validOcid(ocid)) {
+      return send(res, 400, {ok: false, ...publicError(400), category: 'invalid_request', source: 'proxy_validation'});
+    }
+    return send(res, 200, await compareSchedulerRequests(ocid, apiKey));
+  }
   if ((!characterName && !ocid) || characterName.length > 40 || (ocid && !validOcid(ocid)) || !validDate(date)) {
     return send(res, 400, {ok: false, ...publicError(400), category: 'invalid_request', source: 'proxy_validation'});
   }
@@ -254,4 +317,4 @@ export default async function handler(req, res) {
   }
 }
 
-export const nexonProxyInternals = {buildNexonUrl, diagnosticRaw, diagnosticSample, parseFlag, publicError, requestLogContext, sanitizeScheduler, sanitizeUpstreamText, sanitizeWeeklyContent, schedulerErrorMessage, upstreamErrorDetails, validDate, validOcid};
+export const nexonProxyInternals = {buildNexonUrl, compareSchedulerRequests, diagnosticRaw, diagnosticSample, kstDateOffset, parseFlag, publicError, requestLogContext, sanitizeScheduler, sanitizeUpstreamText, sanitizeWeeklyContent, schedulerDiagnosticError, schedulerDiagnosticResult, schedulerErrorMessage, upstreamErrorDetails, validDate, validOcid};
