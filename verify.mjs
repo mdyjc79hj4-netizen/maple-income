@@ -3,9 +3,9 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import {webcrypto} from 'node:crypto';
 import {cloudSyncInternals} from './cloud-sync.js';
-import nexonSchedulerHandler, {nexonProxyInternals} from './api/nexon-scheduler.js';
+import {nexonProxyInternals} from './api/nexon-scheduler.js';
 import nexonCharacterHandler, {nexonCharacterInternals} from './api/nexon-character.js';
-import nexonAccountOwnershipHandler, {nexonAccountOwnershipInternals} from './api/nexon-account-ownership.js';
+import {nexonAccountOwnershipInternals} from './api/nexon-account-ownership.js';
 import {nexonCredentialStoreInternals} from './api/_nexon-credential-store.js';
 import {nexonCredentialInternals} from './api/nexon-credential.js';
 
@@ -1189,7 +1189,9 @@ assert.deepEqual(nexonProxyInternals.upstreamErrorDetails({error: {name: 'OPENAP
   upstreamCode: 'OPENAPI00009', upstreamMessage: 'data preparing', category: 'data_preparing'
 });
 assert.equal(nexonProxyInternals.schedulerErrorMessage(400, parsedUpstream400), 'NEXON Scheduler에서 캐릭터 식별자를 확인하지 못했습니다.');
-assert.match(nexonApiSource, /process\.env\.NEXON_OPEN_API_KEY/);
+assert.doesNotMatch(nexonApiSource, /process\.env\.NEXON_OPEN_API_KEY/);
+assert.doesNotMatch(nexonAccountOwnershipApiSource, /process\.env\.NEXON_OPEN_API_KEY/);
+assert.match(nexonCharacterApiSource, /process\.env\.NEXON_OPEN_API_KEY/);
 assert.doesNotMatch(nexonApiSource, /VITE_NEXON/);
 assert.match(nexonApiSource, /'x-nxopen-api-key': apiKey/);
 assert.match(nexonApiSource, /\/maplestory\/v1\/scheduler\/character-state/);
@@ -1296,6 +1298,10 @@ const invalidSchedulerKeyWarning = json('nexonSchedulerWarning(__linkState.chara
 assert.equal(invalidSchedulerKeyWarning.applicationCategory, '');
 assert.equal(invalidSchedulerKeyWarning.code, 'OPENAPI00005');
 assert.match(invalidSchedulerKeyWarning.message, /API Key 설정을 확인/);
+context.__schedulerAuthError = {status: 401, code: 'AUTH_REQUIRED'};
+context.__schedulerCredentialError = {status: 409, code: 'NEXON_CREDENTIAL_REQUIRED', category: 'credential_required', source: 'credential_store'};
+assert.match(run("nexonSchedulerWarning(__linkState.characters[0],__schedulerAuthError).message"), /로그인 후/);
+assert.match(run("nexonSchedulerWarning(__linkState.characters[0],__schedulerCredentialError).message"), /개인 API Key를 등록/);
 context.__invalidLinkState = {characters: [{id: 'c1', name: '본캐', bosses: [], weeklyActivities: []}]};
 context.__invalidLinkProfile = {ocid: '0123456789abcdef0123456789abcdef', resources: {basic: {ok: false}}, character: {name: ''}};
 assert.throws(() => run("applyNexonLinkProfileState(__invalidLinkState, 'c1', __invalidLinkProfile)"), /기본정보/);
@@ -1313,6 +1319,7 @@ context.localStorage = {
   removeItem(key) { localMemory.delete(key); }
 };
 run('render = () => {}; message = () => {}');
+run("nexonCredentialAuthBridge = {isSignedIn:()=>true,getAccessToken:async()=>'test-supabase-session-token'}");
 const prepareNexonLinkState = () => {
   localMemory.clear();
   run("state = emptyState(new Date('2026-09-25T12:00:00')); state.characters = [{id:'c1',name:'본캐',bosses:[],weeklyActivities:[]}]; selectedWeek=''; storageBlocked=false; savedRaw=JSON.stringify(state)");
@@ -1525,13 +1532,6 @@ assert.match(nexonSettingsHtml, /메기 계정에 로그인하면[\s\S]*NEXON Op
 assert.doesNotMatch(nexonSettingsHtml, /NEXON 계정 비밀번호[^<]*(?:input|입력란)/);
 const originalNexonKey = process.env.NEXON_OPEN_API_KEY;
 delete process.env.NEXON_OPEN_API_KEY;
-let missingKeyStatus = 0, missingKeyBody = null;
-await nexonSchedulerHandler(
-  {method: 'GET', query: {characterName: '넥슨본캐'}},
-  {status(code) { missingKeyStatus = code; return this; }, json(body) { missingKeyBody = body; return this; }, setHeader() {}}
-);
-assert.equal(missingKeyStatus, 503);
-assert.equal(missingKeyBody.code, 'NOT_CONFIGURED');
 let missingProfileKeyStatus = 0, missingProfileKeyBody = null;
 await nexonCharacterHandler(
   {method: 'GET', query: {ocid: schedulerResponse.character.ocid}},
@@ -1539,29 +1539,85 @@ await nexonCharacterHandler(
 );
 assert.equal(missingProfileKeyStatus, 503);
 assert.equal(missingProfileKeyBody.code, 'NOT_CONFIGURED');
-let missingOwnershipKeyStatus = 0, missingOwnershipKeyBody = null;
-await nexonAccountOwnershipHandler(
-  {method: 'GET', query: {ocid: schedulerResponse.character.ocid}},
-  {status(code) { missingOwnershipKeyStatus = code; return this; }, json(body) { missingOwnershipKeyBody = body; return this; }, setHeader() {}}
-);
-assert.equal(missingOwnershipKeyStatus, 503);
-assert.equal(missingOwnershipKeyBody.code, 'NOT_CONFIGURED');
-process.env.NEXON_OPEN_API_KEY = 'test-only-key';
+const schedulerPersonalKey = 'personal-scheduler-key-value';
+const schedulerTestHandler = nexonProxyInternals.createSchedulerHandler({
+  createAdminClient: () => ({}),
+  authenticateRequest: async () => ({id: 'scheduler-user-one'}),
+  loadUserNexonCredential: async () => ({apiKey: schedulerPersonalKey, credentialRevision: 'revision-one'})
+});
+const ownershipTestHandler = nexonAccountOwnershipInternals.createAccountOwnershipHandler({
+  createAdminClient: () => ({}),
+  authenticateRequest: async () => ({id: 'scheduler-user-one'}),
+  loadUserNexonCredential: async () => ({apiKey: schedulerPersonalKey, credentialRevision: 'revision-one'})
+});
+function nexonApiTestResponse() {
+  return {
+    statusCode: 0, body: null, headers: {},
+    setHeader(name, value) { this.headers[name] = value; },
+    status(code) { this.statusCode = code; return this; },
+    json(value) { this.body = value; return this; }
+  };
+}
+const schedulerAuthAdmin = {
+  auth: {getUser: async token => token === 'valid-scheduler-session'
+    ? {data: {user: {id: 'scheduler-user-one'}}, error: null}
+    : {data: {user: null}, error: {message: 'invalid token'}}}
+};
+const authenticatedSchedulerHandler = nexonProxyInternals.createSchedulerHandler({
+  createAdminClient: () => schedulerAuthAdmin,
+  loadUserNexonCredential: async () => ({apiKey: schedulerPersonalKey, credentialRevision: 'revision-one'})
+});
+const schedulerSignedOutResponse = nexonApiTestResponse();
+await authenticatedSchedulerHandler({method: 'GET', headers: {}, query: {ocid: schedulerResponse.character.ocid}}, schedulerSignedOutResponse);
+assert.equal(schedulerSignedOutResponse.statusCode, 401);
+assert.equal(schedulerSignedOutResponse.body.code, 'AUTH_REQUIRED');
+assert.equal(schedulerSignedOutResponse.body.category, 'auth_required');
+
+let publicFallbackUsed = false;
+process.env.NEXON_OPEN_API_KEY = 'must-not-be-used-as-scheduler-fallback';
+const missingCredentialHandler = nexonProxyInternals.createSchedulerHandler({
+  createAdminClient: () => schedulerAuthAdmin,
+  loadUserNexonCredential: async () => { throw Object.assign(new Error('주간 자동 확인을 사용하려면 NEXON 개인 API Key를 등록해주세요.'), {
+    status: 409, code: 'NEXON_CREDENTIAL_REQUIRED', category: 'credential_required', source: 'credential_store'
+  }); }
+});
+const fetchBeforeMissingCredential = globalThis.fetch;
+globalThis.fetch = async () => { publicFallbackUsed = true; throw new Error('upstream must not run'); };
+try {
+  const missingCredentialResponse = nexonApiTestResponse();
+  await missingCredentialHandler({method: 'GET', headers: {authorization: 'Bearer valid-scheduler-session'}, query: {ocid: schedulerResponse.character.ocid}}, missingCredentialResponse);
+  assert.equal(missingCredentialResponse.statusCode, 409);
+  assert.equal(missingCredentialResponse.body.code, 'NEXON_CREDENTIAL_REQUIRED');
+  assert.equal(missingCredentialResponse.body.category, 'credential_required');
+  assert.equal(publicFallbackUsed, false);
+} finally {
+  globalThis.fetch = fetchBeforeMissingCredential;
+}
+const authenticatedOwnershipHandler = nexonAccountOwnershipInternals.createAccountOwnershipHandler({
+  createAdminClient: () => schedulerAuthAdmin,
+  loadUserNexonCredential: async () => ({apiKey: schedulerPersonalKey, credentialRevision: 'revision-one'})
+});
+const ownershipSignedOutResponse = nexonApiTestResponse();
+await authenticatedOwnershipHandler({method: 'GET', headers: {}, query: {ocid: schedulerResponse.character.ocid}}, ownershipSignedOutResponse);
+assert.equal(ownershipSignedOutResponse.statusCode, 401);
+assert.equal(ownershipSignedOutResponse.body.code, 'AUTH_REQUIRED');
 const schedulerFetchBeforeDiagnosticTest = globalThis.fetch;
 const consoleErrorBeforeDiagnosticTest = console.error;
 let capturedSchedulerTarget = '';
+let capturedSchedulerOptions = null;
 let capturedSchedulerLog = null;
 try {
   console.error = (label, metadata) => { capturedSchedulerLog = {label, metadata}; };
-  globalThis.fetch = async target => {
+  globalThis.fetch = async (target, options) => {
     capturedSchedulerTarget = String(target);
+    capturedSchedulerOptions = options;
     return {ok: false, status: 400, json: async () => ({
       error: {name: 'OPENAPI00003', message: `invalid identifier ${schedulerResponse.character.ocid}`},
       apiKey: 'must-not-escape', headers: {authorization: 'must-not-escape'}
     })};
   };
   let diagnosticStatus = 0, diagnosticBody = null;
-  await nexonSchedulerHandler(
+  await schedulerTestHandler(
     {method: 'GET', query: {ocid: schedulerResponse.character.ocid}},
     {status(code) { diagnosticStatus = code; return this; }, json(body) { diagnosticBody = body; return this; }, setHeader() {}}
   );
@@ -1574,12 +1630,13 @@ try {
   const capturedUrl = new URL(capturedSchedulerTarget);
   assert.equal(capturedUrl.searchParams.get('ocid'), schedulerResponse.character.ocid);
   assert.equal(capturedUrl.searchParams.has('date'), false);
+  assert.equal(capturedSchedulerOptions.headers['x-nxopen-api-key'], schedulerPersonalKey);
   assert.equal(capturedSchedulerLog.label, 'NEXON scheduler upstream request failed');
   assert.deepEqual(capturedSchedulerLog.metadata, {
     endpoint: 'scheduler/character-state', mode: 'live', hasOcid: true, hasDate: false,
     status: 400, upstreamCode: 'OPENAPI00003', upstreamMessage: 'invalid identifier [식별자 숨김]', category: 'invalid_identifier'
   });
-  assert.doesNotMatch(JSON.stringify(capturedSchedulerLog), /test-only-key|0123456789abcdef|must-not-escape/);
+  assert.doesNotMatch(JSON.stringify(capturedSchedulerLog), /personal-scheduler-key-value|0123456789abcdef|must-not-escape/);
 } finally {
   globalThis.fetch = schedulerFetchBeforeDiagnosticTest;
   console.error = consoleErrorBeforeDiagnosticTest;
@@ -1593,7 +1650,7 @@ async function invokeSchedulerUpstreamError(query, upstreamError, status = 400) 
       target = String(value);
       return {ok: false, status, json: async () => ({error: upstreamError})};
     };
-    await nexonSchedulerHandler(
+    await schedulerTestHandler(
       {method: 'GET', query},
       {status(code) { responseStatus = code; return this; }, json(value) { body = value; return this; }, setHeader() {}}
     );
@@ -1634,16 +1691,18 @@ assert.equal(historicalErrorResult.log.metadata.mode, 'historical');
 assert.equal(historicalErrorResult.log.metadata.hasDate, true);
 const identityFetchBeforeTest = globalThis.fetch, consoleErrorBeforeIdentityTest = console.error;
 const identityTargets = [];
+const identityOptions = [];
 try {
   console.error = () => {};
-  globalThis.fetch = async value => {
+  globalThis.fetch = async (value, options) => {
     const target = new URL(String(value));
     identityTargets.push(target);
+    identityOptions.push(options);
     if (target.pathname.endsWith('/maplestory/v1/id')) return {ok: true, status: 200, json: async () => ({ocid: schedulerResponse.character.ocid})};
     return {ok: false, status: 400, json: async () => ({error: {name: 'OPENAPI00004', message: 'Please input valid parameter'}})};
   };
   let identityStatus = 0;
-  await nexonSchedulerHandler(
+  await schedulerTestHandler(
     {method: 'GET', query: {characterName: '넥슨본캐'}},
     {status(code) { identityStatus = code; return this; }, json() { return this; }, setHeader() {}}
   );
@@ -1653,6 +1712,8 @@ try {
   assert.equal(identityTargets[1].pathname, '/maplestory/v1/scheduler/character-state');
   assert.equal(identityTargets[1].searchParams.get('ocid'), schedulerResponse.character.ocid);
   assert.equal(identityTargets[1].searchParams.has('date'), false);
+  assert.equal(identityOptions[0].headers['x-nxopen-api-key'], schedulerPersonalKey);
+  assert.equal(identityOptions[1].headers['x-nxopen-api-key'], schedulerPersonalKey);
 } finally {
   globalThis.fetch = identityFetchBeforeTest;
   console.error = consoleErrorBeforeIdentityTest;
@@ -1676,7 +1737,7 @@ async function invokeSchedulerComparison({liveOk = false, historicalOk = true} =
         apiKey: 'must-not-escape'
       })};
     };
-    await nexonSchedulerHandler(
+    await schedulerTestHandler(
       {method: 'GET', query: {ocid: schedulerResponse.character.ocid, diagnostic: 'compare'}},
       {status(code) { status = code; return this; }, json(value) { body = value; return this; }, setHeader() {}}
     );
@@ -1700,7 +1761,7 @@ assert.equal(liveFailureComparison.body.yesterday.ok, true);
 assert.equal(liveFailureComparison.body.yesterday.mode, 'historical');
 assert.equal(liveFailureComparison.body.yesterday.bossCount, 1);
 assert.equal(liveFailureComparison.body.yesterday.weeklyContentCount, 1);
-assert.doesNotMatch(JSON.stringify(liveFailureComparison.body), /test-only-key|must-not-escape|0123456789abcdef/);
+assert.doesNotMatch(JSON.stringify(liveFailureComparison.body), /personal-scheduler-key-value|must-not-escape|0123456789abcdef/);
 assert.equal(run("nexonSchedulerDiagnosticSummary({live:{ok:false},yesterday:{ok:true}})"), '실시간 조회에서만 오류가 발생했습니다.');
 const historicalFailureComparison = await invokeSchedulerComparison({liveOk: true, historicalOk: false});
 assert.equal(historicalFailureComparison.body.live.ok, true);
@@ -1711,6 +1772,38 @@ assert.equal(bothFailureComparison.body.live.code, 'OPENAPI00004');
 assert.equal(bothFailureComparison.body.yesterday.code, 'OPENAPI00004');
 assert.equal(run("nexonSchedulerDiagnosticSummary({live:{ok:false},yesterday:{ok:false}})"), '실시간 및 과거 날짜 조회 모두 오류가 발생했습니다.');
 assert.equal(run("nexonSchedulerDiagnosticSummary({live:{ok:true},yesterday:{ok:true}})"), '두 Scheduler 조회가 모두 정상입니다.');
+assert.notEqual(
+  nexonProxyInternals.schedulerCacheKey('user-one', 'revision-one', schedulerResponse.character.ocid, ''),
+  nexonProxyInternals.schedulerCacheKey('user-two', 'revision-one', schedulerResponse.character.ocid, '')
+);
+assert.notEqual(
+  nexonProxyInternals.schedulerCacheKey('user-one', 'revision-one', schedulerResponse.character.ocid, ''),
+  nexonProxyInternals.schedulerCacheKey('user-one', 'revision-two', schedulerResponse.character.ocid, '')
+);
+nexonProxyInternals.clearSchedulerCache();
+const isolatedCacheKeys = [];
+const isolatedCacheHandler = nexonProxyInternals.createSchedulerHandler({
+  createAdminClient: () => ({}),
+  authenticateRequest: async req => ({id: req.headers.authorization.endsWith('one') ? 'cache-user-one' : 'cache-user-two'}),
+  loadUserNexonCredential: async (_client, userId) => ({apiKey: `personal-key-${userId}`, credentialRevision: `revision-${userId}`})
+});
+const fetchBeforeCacheIsolation = globalThis.fetch;
+globalThis.fetch = async (_target, options) => {
+  isolatedCacheKeys.push(options.headers['x-nxopen-api-key']);
+  return {ok: true, status: 200, json: async () => ({date: '2026-10-02', character_name: '선택캐릭터', world_name: '루나', boss_contents: [], weekly_contents: []})};
+};
+try {
+  for (const token of ['one', 'one', 'two']) {
+    const response = nexonApiTestResponse();
+    await isolatedCacheHandler({method: 'GET', headers: {authorization: `Bearer ${token}`}, query: {ocid: schedulerResponse.character.ocid}}, response);
+    assert.equal(response.statusCode, 200);
+    assert.doesNotMatch(JSON.stringify(response.body), /personal-key-cache-user/);
+  }
+} finally {
+  globalThis.fetch = fetchBeforeCacheIsolation;
+  nexonProxyInternals.clearSchedulerCache();
+}
+assert.deepEqual(isolatedCacheKeys, ['personal-key-cache-user-one', 'personal-key-cache-user-two']);
 const diagnosticRunnerSource = source.slice(source.indexOf('async function runNexonSchedulerDiagnosticComparison'), source.indexOf('async function fetchNexonProfile'));
 assert.doesNotMatch(diagnosticRunnerSource, /transaction\(|lastCheckedAt|applyNexonSchedulerState|saveState|cloud/i);
 assert.match(diagnosticRunnerSource, /fetchNexonSchedulerComparison/);
@@ -1748,7 +1841,7 @@ async function invokeAccountOwnership(payload, {ok = true, status = 200} = {}) {
       requestOptions = options;
       return {ok, status, json: async () => payload};
     };
-    await nexonAccountOwnershipHandler(
+    await ownershipTestHandler(
       {method: 'GET', query: {ocid: selectedOcid}},
       {status(code) { responseStatus = code; return this; }, json(value) { body = value; return this; }, setHeader() {}}
     );
@@ -1760,20 +1853,19 @@ async function invokeAccountOwnership(payload, {ok = true, status = 200} = {}) {
 }
 const ownedAccountResult = await invokeAccountOwnership(nestedOwnershipPayload);
 assert.equal(ownedAccountResult.target, 'https://open.api.nexon.com/maplestory/v1/character/list');
-assert.equal(ownedAccountResult.requestOptions.headers['x-nxopen-api-key'], 'test-only-key');
+assert.equal(ownedAccountResult.requestOptions.headers['x-nxopen-api-key'], schedulerPersonalKey);
 assert.equal(ownedAccountResult.status, 200);
 assert.equal(ownedAccountResult.body.characterOwnedByServerKey, true);
 assert.equal(ownedAccountResult.body.accountCount, 2);
 assert.equal(ownedAccountResult.body.characterCount, 3);
-assert.doesNotMatch(JSON.stringify(ownedAccountResult.body), /test-only-key|account-one-secret|account-two-secret|선택캐릭터|0123456789abcdef/);
+assert.doesNotMatch(JSON.stringify(ownedAccountResult.body), /personal-scheduler-key-value|account-one-secret|account-two-secret|선택캐릭터|0123456789abcdef/);
 const missingAccountResult = await invokeAccountOwnership({account_list: [{account_id: 'secret-account', character_list: [{ocid: 'dddddddddddddddd'}]}]});
 assert.equal(missingAccountResult.body.characterOwnedByServerKey, false);
 assert.equal(missingAccountResult.body.applicationCategory, 'scheduler_account_restriction');
 assert.match(run("nexonAccountOwnershipCard({ok:true,characterOwnedByServerKey:true,accountCount:2,characterCount:3})"), /확인됨/);
 assert.doesNotMatch(run("nexonAccountOwnershipCard({ok:true,characterOwnedByServerKey:true,accountCount:2,characterCount:3})"), /불일치/);
-assert.match(run("nexonAccountOwnershipCard({ok:true,characterOwnedByServerKey:false,accountCount:1,characterCount:15,applicationCategory:'scheduler_account_restriction'})"), /서버 진단용 API Key 확인/);
-assert.match(run("nexonAccountOwnershipCard({ok:true,characterOwnedByServerKey:false,accountCount:1,characterCount:15,applicationCategory:'scheduler_account_restriction'})"), /서버 진단용 API Key와 선택한 캐릭터의 계정이 일치하지 않습니다/);
-assert.match(run("nexonAccountOwnershipCard({ok:true,characterOwnedByServerKey:false,accountCount:1,characterCount:15,applicationCategory:'scheduler_account_restriction'})"), /등록한 개인 NEXON API Key의 오류를 의미하지 않습니다/);
+assert.match(run("nexonAccountOwnershipCard({ok:true,characterOwnedByServerKey:false,accountCount:1,characterCount:15,applicationCategory:'scheduler_account_restriction'})"), /개인 API Key 계정 확인/);
+assert.match(run("nexonAccountOwnershipCard({ok:true,characterOwnedByServerKey:false,accountCount:1,characterCount:15,applicationCategory:'scheduler_account_restriction'})"), /선택한 캐릭터가 등록한 개인 API Key 계정에 포함되어 있지 않습니다/);
 assert.match(run("nexonAccountOwnershipCard({ok:false,status:403,code:'OPENAPI00005',category:'invalid_api_key'})"), /오류/);
 const ownershipErrorResult = await invokeAccountOwnership({error: {name: 'OPENAPI00005', message: `invalid key ${selectedOcid} x-nxopen-api-key=secret-value`}}, {ok: false, status: 403});
 assert.equal(ownershipErrorResult.body.code, 'OPENAPI00005');
@@ -1781,7 +1873,7 @@ assert.equal(ownershipErrorResult.body.category, 'invalid_api_key');
 assert.doesNotMatch(JSON.stringify(ownershipErrorResult.body), /secret-value|0123456789abcdef/);
 assert.doesNotMatch(nexonAccountOwnershipApiSource, /account_id\s*:/);
 let proxyValidationStatus = 0, proxyValidationBody = null;
-await nexonSchedulerHandler(
+await schedulerTestHandler(
   {method: 'GET', query: {ocid: 'invalid ocid'}},
   {status(code) { proxyValidationStatus = code; return this; }, json(body) { proxyValidationBody = body; return this; }, setHeader() {}}
 );
@@ -1936,6 +2028,27 @@ assert.notEqual(firstEncryptedCredential.ciphertext, secondEncryptedCredential.c
 assert.throws(() => nexonCredentialStoreInternals.decryptCredential(firstEncryptedCredential, 'user-two', credentialEncryptionKey));
 assert.equal(nexonCredentialStoreInternals.encryptionKey(Buffer.alloc(32, 1).toString('base64')).length, 32);
 assert.throws(() => nexonCredentialStoreInternals.encryptionKey('short'), /암호화 키/);
+const encryptedSchedulerCredential = nexonCredentialStoreInternals.encryptCredential('personal-scheduler-server-only-key', 'scheduler-user-one', credentialEncryptionKey);
+const credentialRowClient = row => ({
+  from: () => ({
+    select() { return this; },
+    eq() { return this; },
+    maybeSingle: async () => ({data: row, error: null})
+  })
+});
+const loadedSchedulerCredential = await nexonCredentialStoreInternals.loadUserNexonCredential(
+  credentialRowClient({...encryptedSchedulerCredential, updated_at: '2026-10-02T12:00:00.000Z'}),
+  'scheduler-user-one',
+  credentialEncryptionKey
+);
+assert.deepEqual(loadedSchedulerCredential, {
+  apiKey: 'personal-scheduler-server-only-key',
+  credentialRevision: '2026-10-02T12:00:00.000Z'
+});
+await assert.rejects(
+  () => nexonCredentialStoreInternals.loadUserNexonCredential(credentialRowClient(null), 'scheduler-user-one', credentialEncryptionKey),
+  error => error.code === 'NEXON_CREDENTIAL_REQUIRED' && error.status === 409
+);
 
 function credentialResponse() {
   return {
@@ -2050,7 +2163,9 @@ assert.match(nexonCredentialStoreSource, /createCipheriv\('aes-256-gcm'/);
 assert.match(nexonCredentialStoreSource, /cipher\.setAAD\(Buffer\.from\(String\(userId\)/);
 assert.match(nexonCredentialApiSource, /const verification = await verifyKey\(apiKey\);[\s\S]*const encrypted = encrypt/);
 assert.doesNotMatch(nexonCredentialApiSource, /NEXON_OPEN_API_KEY/);
-assert.doesNotMatch(nexonApiSource, /nexon_api_credentials|NEXON_CREDENTIAL_ENCRYPTION_KEY/);
+assert.match(nexonApiSource, /loadUserNexonCredential/);
+assert.match(nexonAccountOwnershipApiSource, /loadUserNexonCredential/);
+assert.doesNotMatch(nexonApiSource, /NEXON_CREDENTIAL_ENCRYPTION_KEY/);
 assert.match(cloudSource, /app\.setCloudAuthBridge\?\.\(createCloudAuthBridge\(/);
 assert.match(cloudSource, /getSession: \(\) => supabase\.auth\.getSession\(\)/);
 assert.match(cloudSource, /const showSession = session => \{\s*user = session\?\.user \|\| null;\s*notifyCloudAuthChanged\(app, user\);/);
@@ -2076,6 +2191,26 @@ const failingAuthBridge = cloudSyncInternals.createCloudAuthBridge({
 });
 await assert.rejects(() => failingAuthBridge.getAccessToken(), error => error === sessionError);
 
+const schedulerClientRequests = [];
+context.fetch = async (url, options) => {
+  schedulerClientRequests.push({url: String(url), options});
+  const body = String(url).includes('/api/nexon-account-ownership')
+    ? {ok: true, characterOwnedByServerKey: true, accountCount: 1, characterCount: 2}
+    : String(url).includes('diagnostic=compare')
+      ? {ok: true, diagnostic: true, live: {ok: true}, yesterday: {ok: true}}
+      : {ok: true, character: {ocid: 'abcdefghijklmnop'}, bosses: [], activities: [], diagnostics: {}};
+  return {ok: true, status: 200, json: async () => body};
+};
+run("nexonCredentialAuthBridge = {isSignedIn:()=>true,getAccessToken:async()=>'supabase-access-token'}");
+await run("fetchNexonScheduler({nexonCharacter:{ocid:'abcdefghijklmnop'}})");
+await run("fetchNexonSchedulerComparison({nexonCharacter:{ocid:'abcdefghijklmnop'}})");
+await run("fetchNexonAccountOwnership({nexonCharacter:{ocid:'abcdefghijklmnop'}})");
+assert.equal(schedulerClientRequests.length, 3);
+assert.ok(schedulerClientRequests.every(request => request.options.headers.Authorization === 'Bearer supabase-access-token'));
+assert.ok(schedulerClientRequests.every(request => !JSON.stringify(request).includes('personal-scheduler-server-only-key')));
+const authenticatedFetchSource = source.slice(source.indexOf('async function nexonAuthenticatedFetch'), source.indexOf('async function fetchNexonScheduler'));
+assert.doesNotMatch(authenticatedFetchSource, /localStorage|sessionStorage|state\.|apiKey/);
+
 const authChanges = [];
 const credentialAuthApp = {onCloudAuthChanged: value => authChanges.push(value)};
 cloudSyncInternals.notifyCloudAuthChanged(credentialAuthApp, {id: 'restored-user'});
@@ -2095,13 +2230,16 @@ context.__connectionApiWarning = {status: 'warning'};
 assert.deepEqual(json('nexonConnectionStatusSummary(__connectionCharacters,__connectionCredential,true,__connectionApiWarning)'), {
   character: {label: '정상', tone: 'success'},
   credential: {label: '등록 완료', tone: 'success'},
-  automation: {label: '아직 연결되지 않음', tone: 'warning'},
+  automation: {label: '확인 실패', tone: 'warning'},
   showPreparationNotice: true
 });
 assert.equal(run("nexonConnectionStatusSummary(__connectionCharacters,__connectionCredential,true,{status:'ok'}).automation.label"), '정상');
+assert.equal(run("nexonConnectionStatusSummary(__connectionCharacters,{status:'signed-out',hasCredential:false},false,{status:'idle'}).automation.label"), '로그인 필요');
+assert.equal(run("nexonConnectionStatusSummary(__connectionCharacters,{status:'ready',hasCredential:false},true,{status:'idle'}).automation.label"), 'API Key 등록 필요');
+assert.equal(run("nexonConnectionStatusSummary(__connectionCharacters,{status:'loading',hasCredential:false},true,{status:'idle'}).automation.label"), '확인 중');
 assert.equal(run("nexonConnectionStatusSummary([],__connectionCredential,true,{status:'warning'}).automation.label"), '캐릭터 연동 필요');
-assert.match(source, /주간 자동 확인 연결 상태를 확인해주세요/);
-assert.match(source, /주간 자동 확인 준비 중/);
+assert.match(source, /주간 자동 확인 요청을 확인해주세요/);
+assert.match(source, /API Key 등록 필요/);
 assert.doesNotMatch(JSON.stringify(json('emptyState()')), /apiKey|credential|ciphertext|auth_tag/);
 assert.match(source, /fetch\('\/api\/nexon-credential'/);
 assert.match(source, /Authorization: `Bearer \$\{token\}`/);

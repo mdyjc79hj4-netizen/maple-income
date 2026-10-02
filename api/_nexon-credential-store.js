@@ -109,6 +109,46 @@ async function loadCredentialStatus(adminClient, userId) {
   return credentialStatus(data);
 }
 
+async function loadUserNexonCredential(adminClient, userId, key) {
+  const {data, error} = await adminClient.from(TABLE)
+    .select('ciphertext,iv,auth_tag,key_version,updated_at')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error) {
+    throw Object.assign(new Error('NEXON 개인 API Key를 불러오지 못했습니다.'), {
+      status: 500,
+      code: 'CREDENTIAL_READ_FAILED',
+      category: 'credential_store',
+      source: 'credential_store'
+    });
+  }
+  if (!data) {
+    throw Object.assign(new Error('주간 자동 확인을 사용하려면 NEXON 개인 API Key를 등록해주세요.'), {
+      status: 409,
+      code: 'NEXON_CREDENTIAL_REQUIRED',
+      category: 'credential_required',
+      source: 'credential_store'
+    });
+  }
+  try {
+    const apiKey = decryptCredential(data, userId, key || encryptionKey()).trim();
+    if (!apiKey) throw new Error('empty credential');
+    return {
+      apiKey,
+      credentialRevision: typeof data.updated_at === 'string' && data.updated_at
+        ? data.updated_at
+        : `key-version-${Number(data.key_version) || KEY_VERSION}`
+    };
+  } catch {
+    throw Object.assign(new Error('저장된 NEXON 개인 API Key를 확인하지 못했습니다.'), {
+      status: 500,
+      code: 'CREDENTIAL_DECRYPT_FAILED',
+      category: 'credential_store',
+      source: 'credential_store'
+    });
+  }
+}
+
 async function storeCredential(adminClient, userId, encrypted, verification) {
   const row = {
     user_id: userId,
@@ -143,6 +183,7 @@ export {
   encryptCredential,
   encryptionKey,
   loadCredentialStatus,
+  loadUserNexonCredential,
   serverConfig,
   storeCredential
 };
@@ -156,5 +197,6 @@ export const nexonCredentialStoreInternals = {
   decryptCredential,
   encryptCredential,
   encryptionKey,
+  loadUserNexonCredential,
   serverConfig
 };

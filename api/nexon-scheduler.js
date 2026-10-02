@@ -1,6 +1,20 @@
+import {
+  authenticateRequest,
+  createAdminClient,
+  loadUserNexonCredential
+} from './_nexon-credential-store.js';
+
 const NEXON_BASE_URL = 'https://open.api.nexon.com';
 const CACHE_TTL_MS = 60_000;
 const cache = new Map();
+
+function schedulerCacheKey(userId, credentialRevision, identifier, date = '') {
+  return JSON.stringify([String(userId), String(credentialRevision), String(identifier), date || 'live']);
+}
+
+function clearSchedulerCache() {
+  cache.clear();
+}
 
 const statusMessages = {
   400: '캐릭터 정보나 조회 날짜를 확인해주세요.',
@@ -272,49 +286,63 @@ async function compareSchedulerRequests(ocid, apiKey) {
   return {ok: true, diagnostic: true, fetchedAt: new Date().toISOString(), live: results[0], yesterday: results[1]};
 }
 
-export default async function handler(req, res) {
-  if (req.method !== 'GET') return send(res, 405, {ok: false, code: 'METHOD_NOT_ALLOWED', message: 'GET 요청만 사용할 수 있습니다.'});
-  const apiKey = process.env.NEXON_OPEN_API_KEY;
-  if (!apiKey) return send(res, 503, {ok: false, code: 'NOT_CONFIGURED', message: 'NEXON Open API 환경변수가 설정되지 않았습니다.'});
-  const characterName = String(req.query.characterName || '').trim();
-  let ocid = String(req.query.ocid || '').trim();
-  const date = String(req.query.date || '').trim();
-  const diagnostic = String(req.query.diagnostic || '').trim();
-  if (diagnostic) {
-    if (diagnostic !== 'compare' || characterName || date || !validOcid(ocid)) {
-      return send(res, 400, {ok: false, ...publicError(400), category: 'invalid_request', source: 'proxy_validation'});
+function createSchedulerHandler(dependencies = {}) {
+  const getAdminClient = dependencies.createAdminClient || createAdminClient;
+  const authenticate = dependencies.authenticateRequest || authenticateRequest;
+  const loadCredential = dependencies.loadUserNexonCredential || loadUserNexonCredential;
+
+  return async function handler(req, res) {
+    if (req.method !== 'GET') return send(res, 405, {ok: false, code: 'METHOD_NOT_ALLOWED', message: 'GET 요청만 사용할 수 있습니다.'});
+    try {
+      const adminClient = getAdminClient();
+      const user = await authenticate(req, adminClient);
+      const {apiKey, credentialRevision} = await loadCredential(adminClient, user.id);
+      const characterName = String(req.query.characterName || '').trim();
+      let ocid = String(req.query.ocid || '').trim();
+      const date = String(req.query.date || '').trim();
+      const diagnostic = String(req.query.diagnostic || '').trim();
+      if (diagnostic) {
+        if (diagnostic !== 'compare' || characterName || date || !validOcid(ocid)) {
+          return send(res, 400, {ok: false, ...publicError(400), category: 'invalid_request', source: 'proxy_validation'});
+        }
+        return send(res, 200, await compareSchedulerRequests(ocid, apiKey));
+      }
+      if ((!characterName && !ocid) || characterName.length > 40 || (ocid && !validOcid(ocid)) || !validDate(date)) {
+        return send(res, 400, {ok: false, ...publicError(400), category: 'invalid_request', source: 'proxy_validation'});
+      }
+      const cacheKey = schedulerCacheKey(user.id, credentialRevision, ocid || 'name:' + characterName, date);
+      const cached = cache.get(cacheKey);
+      if (cached && Date.now() - cached.savedAt < CACHE_TTL_MS) return send(res, 200, {...cached.value, cached: true});
+      if (!ocid) {
+        const identity = await requestNexon('/maplestory/v1/id', {character_name: characterName}, apiKey);
+        if (!identity || typeof identity.ocid !== 'string' || !identity.ocid) throw Object.assign(new Error('캐릭터 식별자를 확인하지 못했습니다.'), {status: 502});
+        ocid = identity.ocid;
+      }
+      const schedulerParams = date ? {ocid, date} : {ocid};
+      const payload = await requestNexon('/maplestory/v1/scheduler/character-state', schedulerParams, apiKey);
+      const value = sanitizeScheduler(payload, ocid, date);
+      cache.set(cacheKey, {savedAt: Date.now(), value});
+      return send(res, 200, value);
+    } catch (error) {
+      const status = [400, 401, 403, 409, 429, 500, 502, 503].includes(Number(error?.status)) ? Number(error.status) : 502;
+      const fallback = publicError(status);
+      const code = error?.code || (status === 401 ? 'AUTH_REQUIRED' : fallback.code);
+      const message = code === 'AUTH_REQUIRED'
+        ? '주간 자동 확인은 로그인 후 사용할 수 있습니다.'
+        : error?.message || fallback.message;
+      return send(res, status, {
+        ok: false,
+        code,
+        message,
+        category: error?.category || (status === 401 ? 'auth_required' : status >= 500 ? 'upstream_unavailable' : 'unknown_upstream_error'),
+        source: error?.source || (status === 401 ? 'proxy_auth' : 'proxy_runtime'),
+        ...(error?.upstreamMessage ? {upstreamMessage: error.upstreamMessage} : {})
+      });
     }
-    return send(res, 200, await compareSchedulerRequests(ocid, apiKey));
-  }
-  if ((!characterName && !ocid) || characterName.length > 40 || (ocid && !validOcid(ocid)) || !validDate(date)) {
-    return send(res, 400, {ok: false, ...publicError(400), category: 'invalid_request', source: 'proxy_validation'});
-  }
-  const cacheKey = (ocid || 'name:' + characterName) + ':' + (date || 'live');
-  const cached = cache.get(cacheKey);
-  if (cached && Date.now() - cached.savedAt < CACHE_TTL_MS) return send(res, 200, {...cached.value, cached: true});
-  try {
-    if (!ocid) {
-      const identity = await requestNexon('/maplestory/v1/id', {character_name: characterName}, apiKey);
-      if (!identity || typeof identity.ocid !== 'string' || !identity.ocid) throw Object.assign(new Error('캐릭터 식별자를 확인하지 못했습니다.'), {status: 502});
-      ocid = identity.ocid;
-    }
-    const schedulerParams = date ? {ocid, date} : {ocid};
-    const payload = await requestNexon('/maplestory/v1/scheduler/character-state', schedulerParams, apiKey);
-    const value = sanitizeScheduler(payload, ocid, date);
-    cache.set(cacheKey, {savedAt: Date.now(), value});
-    return send(res, 200, value);
-  } catch (error) {
-    const status = Number(error?.status) || 502;
-    const fallback = publicError(status);
-    return send(res, status, {
-      ok: false,
-      code: error?.code || fallback.code,
-      message: error?.message || fallback.message,
-      category: error?.category || (status >= 500 ? 'upstream_unavailable' : 'unknown_upstream_error'),
-      source: error?.source || 'proxy_runtime',
-      ...(error?.upstreamMessage ? {upstreamMessage: error.upstreamMessage} : {})
-    });
-  }
+  };
 }
 
-export const nexonProxyInternals = {buildNexonUrl, compareSchedulerRequests, diagnosticRaw, diagnosticSample, kstDateOffset, parseFlag, publicError, requestLogContext, sanitizeScheduler, sanitizeUpstreamText, sanitizeWeeklyContent, schedulerDiagnosticError, schedulerDiagnosticResult, schedulerErrorMessage, upstreamErrorDetails, validDate, validOcid};
+const handler = createSchedulerHandler();
+export default handler;
+
+export const nexonProxyInternals = {buildNexonUrl, clearSchedulerCache, compareSchedulerRequests, createSchedulerHandler, diagnosticRaw, diagnosticSample, kstDateOffset, parseFlag, publicError, requestLogContext, sanitizeScheduler, sanitizeUpstreamText, sanitizeWeeklyContent, schedulerCacheKey, schedulerDiagnosticError, schedulerDiagnosticResult, schedulerErrorMessage, upstreamErrorDetails, validDate, validOcid};

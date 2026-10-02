@@ -1250,8 +1250,12 @@ function isSchedulerAccountRestriction(error) {
 function nexonSchedulerWarning(character, error) {
   const status = Number(error?.status) || 0;
   const accountRestricted = isSchedulerAccountRestriction(error);
-  const message = accountRestricted
-    ? '캐릭터 연동은 정상적으로 완료되었습니다. 주간 자동 확인은 현재 이 캐릭터에서 사용할 수 없습니다. NEXON Scheduler API는 서버 API Key와 연결된 NEXON 계정의 캐릭터만 조회할 수 있습니다.'
+  const message = error?.code === 'AUTH_REQUIRED'
+    ? '주간 자동 확인은 로그인 후 사용할 수 있습니다.'
+    : error?.code === 'NEXON_CREDENTIAL_REQUIRED'
+      ? '주간 자동 확인을 사용하려면 NEXON 개인 API Key를 등록해주세요.'
+      : accountRestricted
+    ? '캐릭터 연동은 정상적으로 완료되었습니다. 선택한 캐릭터가 등록한 개인 API Key 계정에 포함되어 있는지 확인해주세요.'
     : status === 400 && error?.category === 'invalid_parameter'
     ? '주간 자동 확인 요청을 처리하지 못했습니다. 고급 진단 정보에서 자세한 내용을 확인할 수 있습니다.'
     : status === 400 && error?.category && error.category !== 'unknown_upstream_error'
@@ -1393,14 +1397,14 @@ function nexonAccountOwnershipCard(item) {
   const mismatch = item.ok && item.characterOwnedByServerKey === false;
   const label = confirmed ? '확인됨' : mismatch ? '불일치' : '오류';
   const message = confirmed
-    ? '선택한 캐릭터가 서버 진단용 API Key 계정에 포함되어 있습니다.'
+    ? '선택한 캐릭터가 등록한 개인 API Key 계정에 포함되어 있습니다.'
     : mismatch
-      ? '서버 진단용 API Key와 선택한 캐릭터의 계정이 일치하지 않습니다.'
-      : '서버 진단용 API Key 계정 확인 요청을 처리하지 못했습니다.';
+      ? '선택한 캐릭터가 등록한 개인 API Key 계정에 포함되어 있지 않습니다.'
+      : '개인 API Key 계정 확인 요청을 처리하지 못했습니다.';
   const detail = item.ok
     ? `<small>계정 ${n(item.accountCount)}개 · 캐릭터 ${n(item.characterCount)}개</small>`
     : `<small>HTTP ${escapeHtml(String(item.status || '-'))} · ${escapeHtml(item.code || 'OWNERSHIP_CHECK_FAILED')}${item.category ? ` · ${escapeHtml(item.category)}` : ''}</small>`;
-  return `<article class="nexon-api-key-ownership ${confirmed ? 'confirmed' : mismatch ? 'mismatch' : 'error'}"><div><b>서버 진단용 API Key 확인</b><span>${label}</span></div><p class="nexon-ownership-description">자동 확인 서버에서 사용하는 진단용 API Key와 선택한 캐릭터 계정의 일치 여부를 확인한 결과입니다.</p><p>${escapeHtml(message)}</p>${detail}<small class="nexon-ownership-note">이 결과는 등록한 개인 NEXON API Key의 오류를 의미하지 않습니다.</small></article>`;
+  return `<article class="nexon-api-key-ownership ${confirmed ? 'confirmed' : mismatch ? 'mismatch' : 'error'}"><div><b>개인 API Key 계정 확인</b><span>${label}</span></div><p>${escapeHtml(message)}</p>${detail}</article>`;
 }
 function renderNexonSchedulerComparison() {
   const select = $('#nexonSchedulerDiagnosticCharacter'), button = $('#runNexonSchedulerDiagnostic');
@@ -1532,6 +1536,7 @@ function onNexonCredentialAuthChanged({signedIn = false} = {}) {
 function nexonConnectionStatusSummary(characters, credentialState, signedIn, apiState) {
   const linked = characters.some(character => character.nexonCharacter?.ocid);
   const credentialReady = signedIn && credentialState?.hasCredential === true;
+  const credentialBusy = ['loading', 'saving', 'deleting'].includes(credentialState?.status);
   const character = linked ? {label: '정상', tone: 'success'} : {label: '미연동', tone: 'muted'};
   const credential = !signedIn
     ? {label: '로그인 필요', tone: 'muted'}
@@ -1543,10 +1548,13 @@ function nexonConnectionStatusSummary(characters, credentialState, signedIn, api
           ? {label: '확인 필요', tone: 'warning'}
           : {label: '미등록', tone: 'muted'};
   let automation = {label: '캐릭터 연동 필요', tone: 'muted'};
-  if (linked && apiState?.status === 'checking') automation = {label: '확인 중', tone: 'pending'};
+  if (linked && !signedIn) automation = {label: '로그인 필요', tone: 'muted'};
+  else if (linked && credentialBusy) automation = {label: '확인 중', tone: 'pending'};
+  else if (linked && credentialState?.status === 'error') automation = {label: '확인 필요', tone: 'warning'};
+  else if (linked && !credentialReady) automation = {label: 'API Key 등록 필요', tone: 'muted'};
+  else if (linked && apiState?.status === 'checking') automation = {label: '확인 중', tone: 'pending'};
   else if (linked && apiState?.status === 'ok') automation = {label: '정상', tone: 'success'};
-  else if (linked && apiState?.status === 'warning' && credentialReady) automation = {label: '아직 연결되지 않음', tone: 'warning'};
-  else if (linked && ['warning', 'error'].includes(apiState?.status)) automation = {label: '확인 필요', tone: 'warning'};
+  else if (linked && ['warning', 'error'].includes(apiState?.status)) automation = {label: '확인 실패', tone: 'warning'};
   else if (linked) automation = {label: '확인 전', tone: 'muted'};
   return {character, credential, automation, showPreparationNotice: linked && credentialReady && apiState?.status === 'warning'};
 }
@@ -1590,7 +1598,7 @@ function renderNexonSettings() {
   status.textContent = nexonApiState.status === 'idle'
     ? nexonDefaultStatusMessage(state.characters)
     : nexonApiState.status === 'warning' && credentialReady
-      ? '주간 자동 확인 연결 상태를 확인해주세요.'
+      ? '주간 자동 확인 요청을 확인해주세요.'
       : nexonApiState.message;
   status.className = nexonApiState.status === 'error' ? 'negative' : ['checking', 'warning'].includes(nexonApiState.status) ? 'pending' : nexonApiState.status === 'ok' ? 'mint' : 'muted';
   const button = $('#checkNexonBosses');
@@ -1605,12 +1613,17 @@ function renderSettings() {
   renderNexonSettings();
 }
 
+async function nexonAuthenticatedFetch(url) {
+  const token = await nexonCredentialAuthBridge?.getAccessToken?.();
+  if (!token) throw Object.assign(new Error('주간 자동 확인은 로그인 후 사용할 수 있습니다.'), {status: 401, code: 'AUTH_REQUIRED'});
+  return fetch(url, {headers: {Authorization: `Bearer ${token}`}});
+}
 async function fetchNexonScheduler(character, characterName = '', requestDate = '') {
   const params = new URLSearchParams();
   if (characterName) params.set('characterName', characterName);
   else params.set('ocid', character.nexonCharacter.ocid);
   if (requestDate) params.set('date', requestDate);
-  const response = await fetch('/api/nexon-scheduler?' + params);
+  const response = await nexonAuthenticatedFetch('/api/nexon-scheduler?' + params);
   let data;
   try { data = await response.json(); } catch { throw new Error('NEXON API 응답을 읽지 못했습니다.'); }
   if (!response.ok || !data?.ok) {
@@ -1626,15 +1639,21 @@ async function fetchNexonScheduler(character, characterName = '', requestDate = 
 }
 async function fetchNexonSchedulerComparison(character) {
   const params = new URLSearchParams({ocid: character.nexonCharacter.ocid, diagnostic: 'compare'});
-  const response = await fetch('/api/nexon-scheduler?' + params);
+  const response = await nexonAuthenticatedFetch('/api/nexon-scheduler?' + params);
   let data;
   try { data = await response.json(); } catch { throw new Error('NEXON Scheduler 진단 응답을 읽지 못했습니다.'); }
-  if (!response.ok || !data?.ok || !data?.diagnostic) throw new Error(data?.message || 'NEXON Scheduler 진단을 실행하지 못했습니다.');
+  if (!response.ok || !data?.ok || !data?.diagnostic) throw Object.assign(new Error(data?.message || 'NEXON Scheduler 진단을 실행하지 못했습니다.'), {
+    status: response.status,
+    code: data?.code || 'SCHEDULER_DIAGNOSTIC_FAILED',
+    category: data?.category || '',
+    source: data?.source || '',
+    upstreamMessage: data?.upstreamMessage || ''
+  });
   return data;
 }
 async function fetchNexonAccountOwnership(character) {
   const params = new URLSearchParams({ocid: character.nexonCharacter.ocid});
-  const response = await fetch('/api/nexon-account-ownership?' + params);
+  const response = await nexonAuthenticatedFetch('/api/nexon-account-ownership?' + params);
   let data;
   try { data = await response.json(); } catch { throw new Error('NEXON API Key 계정 확인 응답을 읽지 못했습니다.'); }
   return {

@@ -1,3 +1,9 @@
+import {
+  authenticateRequest,
+  createAdminClient,
+  loadUserNexonCredential
+} from './_nexon-credential-store.js';
+
 const CHARACTER_LIST_URL = 'https://open.api.nexon.com/maplestory/v1/character/list';
 
 function send(res, status, body) {
@@ -80,29 +86,44 @@ async function requestCharacterList(apiKey) {
   }
 }
 
-export default async function handler(req, res) {
-  if (req.method !== 'GET') return send(res, 405, {ok: false, code: 'METHOD_NOT_ALLOWED', message: 'GET 요청만 사용할 수 있습니다.'});
-  const apiKey = process.env.NEXON_OPEN_API_KEY;
-  if (!apiKey) return send(res, 503, {ok: false, code: 'NOT_CONFIGURED', message: 'NEXON Open API 환경변수가 설정되지 않았습니다.'});
-  const ocid = String(req.query.ocid || '').trim();
-  if (!validOcid(ocid)) return send(res, 400, {ok: false, code: 'BAD_REQUEST', category: 'invalid_request', source: 'proxy_validation', message: '캐릭터 식별자를 확인해주세요.'});
-  try {
-    const payload = await requestCharacterList(apiKey);
-    return send(res, 200, summarizeOwnership(payload, ocid));
-  } catch (error) {
-    const status = [400, 403, 429, 500, 503].includes(Number(error?.status)) ? Number(error.status) : 502;
-    const details = error?.payload ? publicError(status, error.payload) : {
-      ok: false,
-      code: error?.code || (status === 503 ? 'UPSTREAM_UNAVAILABLE' : 'UPSTREAM_ERROR'),
-      category: 'upstream_unavailable',
-      source: 'proxy_runtime',
-      message: sanitizeUpstreamText(error?.message) || 'NEXON API Key 계정 확인 요청을 처리하지 못했습니다.'
-    };
-    console.error('NEXON character list ownership diagnostic failed', {
-      endpoint: 'character/list', status, code: details.code, category: details.category
-    });
-    return send(res, status, details);
-  }
+function createAccountOwnershipHandler(dependencies = {}) {
+  const getAdminClient = dependencies.createAdminClient || createAdminClient;
+  const authenticate = dependencies.authenticateRequest || authenticateRequest;
+  const loadCredential = dependencies.loadUserNexonCredential || loadUserNexonCredential;
+
+  return async function handler(req, res) {
+    if (req.method !== 'GET') return send(res, 405, {ok: false, code: 'METHOD_NOT_ALLOWED', message: 'GET 요청만 사용할 수 있습니다.'});
+    try {
+      const adminClient = getAdminClient();
+      const user = await authenticate(req, adminClient);
+      const {apiKey} = await loadCredential(adminClient, user.id);
+      const ocid = String(req.query.ocid || '').trim();
+      if (!validOcid(ocid)) return send(res, 400, {ok: false, code: 'BAD_REQUEST', category: 'invalid_request', source: 'proxy_validation', message: '캐릭터 식별자를 확인해주세요.'});
+      const payload = await requestCharacterList(apiKey);
+      return send(res, 200, summarizeOwnership(payload, ocid));
+    } catch (error) {
+      const status = [400, 401, 403, 409, 429, 500, 502, 503].includes(Number(error?.status)) ? Number(error.status) : 502;
+      const authOrCredentialError = ['AUTH_REQUIRED', 'NEXON_CREDENTIAL_REQUIRED'].includes(error?.code);
+      const details = error?.payload ? publicError(status, error.payload) : {
+        ok: false,
+        code: error?.code || (status === 401 ? 'AUTH_REQUIRED' : status === 503 ? 'UPSTREAM_UNAVAILABLE' : 'UPSTREAM_ERROR'),
+        category: error?.category || (status === 401 ? 'auth_required' : 'upstream_unavailable'),
+        source: error?.source || (status === 401 ? 'proxy_auth' : 'proxy_runtime'),
+        message: error?.code === 'AUTH_REQUIRED'
+          ? '개인 API Key 계정 확인은 로그인 후 사용할 수 있습니다.'
+          : sanitizeUpstreamText(error?.message) || 'NEXON API Key 계정 확인 요청을 처리하지 못했습니다.'
+      };
+      if (!authOrCredentialError) {
+        console.error('NEXON character list ownership diagnostic failed', {
+          endpoint: 'character/list', status, code: details.code, category: details.category
+        });
+      }
+      return send(res, status, details);
+    }
+  };
 }
 
-export const nexonAccountOwnershipInternals = {CHARACTER_LIST_URL, publicError, requestCharacterList, sanitizeUpstreamText, summarizeOwnership, validOcid};
+const handler = createAccountOwnershipHandler();
+export default handler;
+
+export const nexonAccountOwnershipInternals = {CHARACTER_LIST_URL, createAccountOwnershipHandler, publicError, requestCharacterList, sanitizeUpstreamText, summarizeOwnership, validOcid};
