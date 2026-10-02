@@ -323,6 +323,14 @@ dd{margin:0;font-size:12px}
 .nexon-scheduler-diagnostic-card dl div{display:grid;grid-template-columns:88px minmax(0,1fr);gap:7px;padding-top:4px;border-top:1px solid #263945}
 .nexon-scheduler-diagnostic-card dt{color:var(--muted)}
 .nexon-scheduler-diagnostic-card dd{margin:0;overflow-wrap:anywhere;color:var(--text)}
+.nexon-api-key-ownership{grid-column:1/-1;display:grid;gap:4px;padding:9px;border:1px solid var(--line);border-radius:9px;background:#101f29}
+.nexon-api-key-ownership>div{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.nexon-api-key-ownership span{padding:2px 6px;border-radius:999px;background:#3b3020;color:var(--amber);font-size:9px;font-weight:700}
+.nexon-api-key-ownership.confirmed span{background:#173a32;color:var(--mint)}
+.nexon-api-key-ownership.mismatch{border-color:#72513a}
+.nexon-api-key-ownership.error{border-color:#613b43}
+.nexon-api-key-ownership p,.nexon-api-key-ownership small{overflow-wrap:anywhere}
+.nexon-api-key-ownership small{color:var(--muted)}
 .nexon-diagnostic-summary{display:flex;flex-wrap:wrap;gap:5px;padding:8px;border-radius:9px;background:#0c1821}
 .nexon-diagnostic-summary span{padding:4px 7px;border-radius:999px;background:#172934;color:var(--muted);white-space:nowrap}
 .nexon-diagnostic-summary b{color:var(--text)}

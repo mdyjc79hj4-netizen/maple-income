@@ -5,6 +5,7 @@ import {webcrypto} from 'node:crypto';
 import {cloudSyncInternals} from './cloud-sync.js';
 import nexonSchedulerHandler, {nexonProxyInternals} from './api/nexon-scheduler.js';
 import nexonCharacterHandler, {nexonCharacterInternals} from './api/nexon-character.js';
+import nexonAccountOwnershipHandler, {nexonAccountOwnershipInternals} from './api/nexon-account-ownership.js';
 
 const statKeys = Object.keys(nexonCharacterInternals.statDefinitions);
 const emptyDetailStats = Object.fromEntries(statKeys.map(key => [key, null]));
@@ -22,6 +23,7 @@ const css = readFileSync(new URL('./style.css', import.meta.url), 'utf8');
 const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
 const nexonApiSource = readFileSync(new URL('./api/nexon-scheduler.js', import.meta.url), 'utf8');
 const nexonCharacterApiSource = readFileSync(new URL('./api/nexon-character.js', import.meta.url), 'utf8');
+const nexonAccountOwnershipApiSource = readFileSync(new URL('./api/nexon-account-ownership.js', import.meta.url), 'utf8');
 const envExample = readFileSync(new URL('./.env.example', import.meta.url), 'utf8');
 const context = vm.createContext({console, crypto: webcrypto, document: undefined, structuredClone, setTimeout, clearTimeout, URL, URLSearchParams});
 vm.runInContext(source, context);
@@ -1522,6 +1524,13 @@ await nexonCharacterHandler(
 );
 assert.equal(missingProfileKeyStatus, 503);
 assert.equal(missingProfileKeyBody.code, 'NOT_CONFIGURED');
+let missingOwnershipKeyStatus = 0, missingOwnershipKeyBody = null;
+await nexonAccountOwnershipHandler(
+  {method: 'GET', query: {ocid: schedulerResponse.character.ocid}},
+  {status(code) { missingOwnershipKeyStatus = code; return this; }, json(body) { missingOwnershipKeyBody = body; return this; }, setHeader() {}}
+);
+assert.equal(missingOwnershipKeyStatus, 503);
+assert.equal(missingOwnershipKeyBody.code, 'NOT_CONFIGURED');
 process.env.NEXON_OPEN_API_KEY = 'test-only-key';
 const schedulerFetchBeforeDiagnosticTest = globalThis.fetch;
 const consoleErrorBeforeDiagnosticTest = console.error;
@@ -1690,9 +1699,70 @@ assert.equal(run("nexonSchedulerDiagnosticSummary({live:{ok:true},yesterday:{ok:
 const diagnosticRunnerSource = source.slice(source.indexOf('async function runNexonSchedulerDiagnosticComparison'), source.indexOf('async function fetchNexonProfile'));
 assert.doesNotMatch(diagnosticRunnerSource, /transaction\(|lastCheckedAt|applyNexonSchedulerState|saveState|cloud/i);
 assert.match(diagnosticRunnerSource, /fetchNexonSchedulerComparison/);
+assert.match(diagnosticRunnerSource, /fetchNexonAccountOwnership/);
 assert.match(html, /id="runNexonSchedulerDiagnostic"/);
 assert.match(html, /id="nexonSchedulerDiagnosticResults"/);
 assert.match(css, /\.nexon-scheduler-diagnostic-results\{display:grid/);
+const selectedOcid = schedulerResponse.character.ocid;
+const nestedOwnershipPayload = {
+  account_list: [
+    {account_id: 'account-one-secret', character_list: [{ocid: 'aaaaaaaaaaaaaaaa', character_name: '다른캐릭터'}]},
+    {account_id: 'account-two-secret', character_list: [{ocid: selectedOcid, character_name: '선택캐릭터'}, {ocid: 'bbbbbbbbbbbbbbbb', character_name: '부캐'}]}
+  ]
+};
+const ownedSummary = nexonAccountOwnershipInternals.summarizeOwnership(nestedOwnershipPayload, selectedOcid);
+assert.deepEqual(ownedSummary, {
+  ok: true,
+  characterOwnedByServerKey: true,
+  accountCount: 2,
+  characterCount: 3,
+  applicationCategory: '',
+  checkedAt: ownedSummary.checkedAt
+});
+const ownershipMismatch = nexonAccountOwnershipInternals.summarizeOwnership(nestedOwnershipPayload, 'cccccccccccccccc');
+assert.equal(ownershipMismatch.characterOwnedByServerKey, false);
+assert.equal(ownershipMismatch.applicationCategory, 'scheduler_account_restriction');
+assert.throws(() => nexonAccountOwnershipInternals.summarizeOwnership({}, selectedOcid), /응답 구조/);
+async function invokeAccountOwnership(payload, {ok = true, status = 200} = {}) {
+  const previousFetch = globalThis.fetch, previousConsoleError = console.error;
+  let target = '', requestOptions = null, responseStatus = 0, body = null;
+  try {
+    console.error = () => {};
+    globalThis.fetch = async (value, options) => {
+      target = String(value);
+      requestOptions = options;
+      return {ok, status, json: async () => payload};
+    };
+    await nexonAccountOwnershipHandler(
+      {method: 'GET', query: {ocid: selectedOcid}},
+      {status(code) { responseStatus = code; return this; }, json(value) { body = value; return this; }, setHeader() {}}
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+    console.error = previousConsoleError;
+  }
+  return {target, requestOptions, status: responseStatus, body};
+}
+const ownedAccountResult = await invokeAccountOwnership(nestedOwnershipPayload);
+assert.equal(ownedAccountResult.target, 'https://open.api.nexon.com/maplestory/v1/character/list');
+assert.equal(ownedAccountResult.requestOptions.headers['x-nxopen-api-key'], 'test-only-key');
+assert.equal(ownedAccountResult.status, 200);
+assert.equal(ownedAccountResult.body.characterOwnedByServerKey, true);
+assert.equal(ownedAccountResult.body.accountCount, 2);
+assert.equal(ownedAccountResult.body.characterCount, 3);
+assert.doesNotMatch(JSON.stringify(ownedAccountResult.body), /test-only-key|account-one-secret|account-two-secret|선택캐릭터|0123456789abcdef/);
+const missingAccountResult = await invokeAccountOwnership({account_list: [{account_id: 'secret-account', character_list: [{ocid: 'dddddddddddddddd'}]}]});
+assert.equal(missingAccountResult.body.characterOwnedByServerKey, false);
+assert.equal(missingAccountResult.body.applicationCategory, 'scheduler_account_restriction');
+assert.match(run("nexonAccountOwnershipCard({ok:true,characterOwnedByServerKey:true,accountCount:2,characterCount:3})"), /확인됨/);
+assert.doesNotMatch(run("nexonAccountOwnershipCard({ok:true,characterOwnedByServerKey:true,accountCount:2,characterCount:3})"), /불일치/);
+assert.match(run("nexonAccountOwnershipCard({ok:true,characterOwnedByServerKey:false,accountCount:1,characterCount:15,applicationCategory:'scheduler_account_restriction'})"), /불일치/);
+assert.match(run("nexonAccountOwnershipCard({ok:false,status:403,code:'OPENAPI00005',category:'invalid_api_key'})"), /오류/);
+const ownershipErrorResult = await invokeAccountOwnership({error: {name: 'OPENAPI00005', message: `invalid key ${selectedOcid} x-nxopen-api-key=secret-value`}}, {ok: false, status: 403});
+assert.equal(ownershipErrorResult.body.code, 'OPENAPI00005');
+assert.equal(ownershipErrorResult.body.category, 'invalid_api_key');
+assert.doesNotMatch(JSON.stringify(ownershipErrorResult.body), /secret-value|0123456789abcdef/);
+assert.doesNotMatch(nexonAccountOwnershipApiSource, /account_id\s*:/);
 let proxyValidationStatus = 0, proxyValidationBody = null;
 await nexonSchedulerHandler(
   {method: 'GET', query: {ocid: 'invalid ocid'}},

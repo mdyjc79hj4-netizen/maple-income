@@ -1385,6 +1385,21 @@ function nexonSchedulerDiagnosticCard(title, item) {
   } else rows.push(['Message', item.upstreamMessage || item.message || '-']);
   return `<article class="nexon-scheduler-diagnostic-card ${statusClass}"><div><b>${escapeHtml(title)}</b><span>${item.ok ? '성공' : '실패'}</span></div><dl>${rows.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl></article>`;
 }
+function nexonAccountOwnershipCard(item) {
+  if (!item) return '';
+  const confirmed = item.ok && item.characterOwnedByServerKey === true;
+  const mismatch = item.ok && item.characterOwnedByServerKey === false;
+  const label = confirmed ? '확인됨' : mismatch ? '불일치' : '오류';
+  const message = confirmed
+    ? '선택한 캐릭터가 서버 API Key 계정에 포함되어 있습니다.'
+    : mismatch
+      ? '선택한 캐릭터가 현재 서버 API Key 계정에 포함되어 있지 않습니다.'
+      : 'NEXON API Key 계정 확인 요청을 처리하지 못했습니다.';
+  const detail = item.ok
+    ? `<small>계정 ${n(item.accountCount)}개 · 캐릭터 ${n(item.characterCount)}개</small>`
+    : `<small>HTTP ${escapeHtml(String(item.status || '-'))} · ${escapeHtml(item.code || 'OWNERSHIP_CHECK_FAILED')}${item.category ? ` · ${escapeHtml(item.category)}` : ''}</small>`;
+  return `<article class="nexon-api-key-ownership ${confirmed ? 'confirmed' : mismatch ? 'mismatch' : 'error'}"><div><b>API Key 계정 확인</b><span>${label}</span></div><p>${escapeHtml(message)}</p>${detail}</article>`;
+}
 function renderNexonSchedulerComparison() {
   const select = $('#nexonSchedulerDiagnosticCharacter'), button = $('#runNexonSchedulerDiagnostic');
   const status = $('#nexonSchedulerDiagnosticStatus'), results = $('#nexonSchedulerDiagnosticResults');
@@ -1399,7 +1414,7 @@ function renderNexonSchedulerComparison() {
   status.textContent = linked.length ? nexonSchedulerDiagnosticState.message : '연동된 NEXON 캐릭터가 없습니다.';
   status.className = nexonSchedulerDiagnosticState.status === 'error' ? 'negative' : nexonSchedulerDiagnosticState.status === 'checking' ? 'pending' : nexonSchedulerDiagnosticState.status === 'done' ? 'mint' : 'muted';
   const result = nexonSchedulerDiagnosticState.result;
-  results.innerHTML = result ? `${nexonSchedulerDiagnosticCard('LIVE', result.live)}${nexonSchedulerDiagnosticCard('어제 날짜', result.yesterday)}` : '';
+  results.innerHTML = result ? `${nexonSchedulerDiagnosticCard('LIVE', result.live)}${nexonSchedulerDiagnosticCard('어제 날짜', result.yesterday)}${nexonAccountOwnershipCard(result.ownership)}` : '';
 }
 function renderNexonDiagnostics() {
   const details = $('#nexonDiagnostics'), content = $('#nexonDiagnosticsContent');
@@ -1486,6 +1501,24 @@ async function fetchNexonSchedulerComparison(character) {
   if (!response.ok || !data?.ok || !data?.diagnostic) throw new Error(data?.message || 'NEXON Scheduler 진단을 실행하지 못했습니다.');
   return data;
 }
+async function fetchNexonAccountOwnership(character) {
+  const params = new URLSearchParams({ocid: character.nexonCharacter.ocid});
+  const response = await fetch('/api/nexon-account-ownership?' + params);
+  let data;
+  try { data = await response.json(); } catch { throw new Error('NEXON API Key 계정 확인 응답을 읽지 못했습니다.'); }
+  return {
+    ok: response.ok && data?.ok === true,
+    status: response.status,
+    characterOwnedByServerKey: data?.characterOwnedByServerKey === true,
+    accountCount: Number(data?.accountCount) || 0,
+    characterCount: Number(data?.characterCount) || 0,
+    applicationCategory: typeof data?.applicationCategory === 'string' ? data.applicationCategory : '',
+    code: typeof data?.code === 'string' ? data.code : '',
+    category: typeof data?.category === 'string' ? data.category : '',
+    source: typeof data?.source === 'string' ? data.source : '',
+    upstreamMessage: typeof data?.upstreamMessage === 'string' ? data.upstreamMessage : ''
+  };
+}
 async function runNexonSchedulerDiagnosticComparison() {
   if (nexonSchedulerDiagnosticState.status === 'checking') return;
   const character = state.characters.find(item => item.id === nexonSchedulerDiagnosticState.characterId && item.nexonCharacter?.ocid);
@@ -1494,13 +1527,20 @@ async function runNexonSchedulerDiagnosticComparison() {
     renderNexonSchedulerComparison();
     return;
   }
-  nexonSchedulerDiagnosticState = {status: 'checking', characterId: character.id, result: null, message: 'LIVE와 어제 날짜 Scheduler 요청을 확인 중…'};
+  nexonSchedulerDiagnosticState = {status: 'checking', characterId: character.id, result: null, message: 'Scheduler 요청과 API Key 계정 정보를 확인 중…'};
   renderNexonSchedulerComparison();
-  try {
-    const result = await fetchNexonSchedulerComparison(character);
+  const [schedulerRequest, ownershipRequest] = await Promise.allSettled([
+    fetchNexonSchedulerComparison(character),
+    fetchNexonAccountOwnership(character)
+  ]);
+  const ownership = ownershipRequest.status === 'fulfilled'
+    ? ownershipRequest.value
+    : {ok: false, status: 0, code: 'OWNERSHIP_CHECK_FAILED', category: 'network_error'};
+  if (schedulerRequest.status === 'fulfilled') {
+    const result = {...schedulerRequest.value, ownership};
     nexonSchedulerDiagnosticState = {status: 'done', characterId: character.id, result, message: nexonSchedulerDiagnosticSummary(result)};
-  } catch (error) {
-    nexonSchedulerDiagnosticState = {status: 'error', characterId: character.id, result: null, message: error.message || 'NEXON Scheduler 진단을 실행하지 못했습니다.'};
+  } else {
+    nexonSchedulerDiagnosticState = {status: 'error', characterId: character.id, result: {ownership}, message: schedulerRequest.reason?.message || 'NEXON Scheduler 진단을 실행하지 못했습니다.'};
   }
   renderNexonSchedulerComparison();
 }
