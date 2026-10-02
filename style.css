@@ -279,8 +279,9 @@ dd{margin:0;font-size:12px}
 .nexon-help{margin-top:7px;font-size:11px}
 .nexon-credential{display:grid;gap:10px;margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:11px;background:#0c1821}
 .nexon-credential-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.nexon-credential-head-copy{display:grid;gap:3px;min-width:0}
 .nexon-credential-head h4{margin:0;font-size:13px}
-.nexon-credential-head p{margin-top:2px;font-size:10px}
+.nexon-credential-head p{font-size:10px;line-height:1.5}
 .nexon-credential-badge{flex:none;padding:3px 7px;border-radius:999px;background:#26343e;color:var(--muted);font-size:9px;font-weight:700}
 .nexon-credential-badge.registered{background:#173a32;color:var(--mint)}
 .nexon-credential-badge.pending{background:#3b3020;color:var(--amber)}
@@ -289,14 +290,30 @@ dd{margin:0;font-size:12px}
 #nexonCredentialSignedOut button{justify-self:start}
 .nexon-credential-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 8px;align-items:end}
 .nexon-credential-form label{grid-column:1/-1;color:#c5d4df;font-size:11px}
-.nexon-credential-form input{font-size:14px}
+.nexon-credential-form input{min-width:0;font-size:14px}
 .nexon-credential-form small{grid-column:1/-1;color:var(--muted);font-size:10px}
+.nexon-credential-input-note{line-height:1.5;overflow-wrap:anywhere}
 .nexon-credential-actions{display:flex;align-items:center;gap:7px}
 .nexon-credential-actions button{white-space:nowrap}
 .nexon-credential-registered{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.nexon-credential-registered-copy{display:grid;gap:5px;min-width:0}
 .nexon-credential-registered p{display:grid;gap:2px}
 .nexon-credential-registered b{font-size:12px}
 .nexon-credential-registered span,.nexon-credential-registered small{display:block;font-size:10px}
+.nexon-credential-secret-note{color:var(--muted);line-height:1.45}
+.nexon-credential-guide{border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.nexon-credential-guide>summary{display:flex;align-items:center;min-height:44px;color:var(--blue);font-size:11px;font-weight:700;cursor:pointer}
+.nexon-credential-guide-body{display:grid;gap:10px;padding:0 2px 12px}
+.nexon-credential-guide ol{display:grid;gap:5px;margin:0;padding-left:22px;color:var(--muted);font-size:10px;line-height:1.55}
+.nexon-credential-guide li,.nexon-credential-guide b{overflow-wrap:anywhere}
+.nexon-credential-guide b{color:var(--text)}
+.nexon-credential-guide-link{display:inline-flex;align-items:center;justify-content:center;justify-self:start;min-height:44px;border:1px solid var(--line);border-radius:9px;padding:8px 11px;color:var(--blue);font-size:11px;font-weight:700;text-decoration:none}
+.nexon-credential-guide-link:hover{text-decoration:underline}
+.nexon-credential-security{display:grid;gap:6px;border:1px solid var(--line);border-radius:9px;padding:10px;background:var(--panel);font-style:normal}
+.nexon-credential-security>b{color:var(--mint);font-size:11px}
+.nexon-credential-security ul{display:grid;gap:3px;margin:0;padding-left:18px;color:var(--muted);font-size:10px;line-height:1.45}
+.nexon-credential-security li{overflow-wrap:anywhere}
+.nexon-credential-security strong{color:var(--text);font-size:10px;line-height:1.45}
 #nexonCredentialMessage:empty{display:none}
 #nexonCredentialMessage{font-size:10px;overflow-wrap:anywhere}
 .nexon-availability{margin-top:7px;border:1px solid var(--line);border-radius:9px;background:#0c1821;font-size:11px}
@@ -503,6 +520,8 @@ main{padding:24px 30px}
 .nexon-credential-form label,.nexon-credential-form small{grid-column:1}
 .nexon-credential-form .nexon-credential-actions{display:grid;grid-template-columns:1fr auto}
 .nexon-credential-form .primary{width:100%}
+.nexon-credential-guide-link{justify-self:stretch;width:100%}
+.nexon-credential-security{padding:9px}
 .nexon-credential-registered{align-items:stretch;flex-direction:column}
 .nexon-credential-registered .nexon-credential-actions{display:grid;grid-template-columns:1fr 1fr}
 .nexon-credential-registered button{min-height:44px}

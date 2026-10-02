@@ -75,15 +75,37 @@
         <div class="settings-title"><div><h3>NEXON Open API</h3><p class="muted">Data based on NEXON Open API</p></div></div>
         <p class="muted nexon-help">캐릭터 정보를 불러오고 보스·주간 콘텐츠 자동 확인을 요청합니다. 요청이 실패하면 상세 진단에서 NEXON 오류 코드를 확인할 수 있습니다.</p>
         <div class="nexon-credential" aria-labelledby="nexonCredentialTitle">
-          <div class="nexon-credential-head"><div><h4 id="nexonCredentialTitle">NEXON 개인 API Key</h4><p class="muted">개인 키 등록은 로그인 사용자만 사용할 수 있습니다.</p></div><span id="nexonCredentialBadge" class="nexon-credential-badge">로그인 필요</span></div>
-          <div id="nexonCredentialSignedOut"><p class="muted">로그인 후 개인 API Key를 등록하면 향후 보스·주간 콘텐츠 자동 확인에 사용할 수 있습니다.</p><button class="ghost" type="button" disabled>로그인 후 사용 가능</button></div>
+          <div class="nexon-credential-head"><div class="nexon-credential-head-copy"><h4 id="nexonCredentialTitle">NEXON 개인 API Key</h4><p class="muted">보스·주간 콘텐츠 자동 확인을 사용하려면 본인의 NEXON Open API Key를 등록해주세요.</p><p class="muted">로그인한 사용자의 API Key는 서버에서 암호화하여 저장하며, 등록한 Key는 화면에 다시 표시되지 않습니다.</p></div><span id="nexonCredentialBadge" class="nexon-credential-badge">로그인 필요</span></div>
+          <div id="nexonCredentialSignedOut"><p class="muted">메기 계정에 로그인하면 본인의 NEXON Open API Key를 안전하게 등록할 수 있습니다.</p><button class="ghost" type="button" disabled>로그인 후 사용 가능</button></div>
           <form id="nexonCredentialForm" class="nexon-credential-form hidden">
-            <label for="nexonCredentialInput">API Key</label>
-            <input id="nexonCredentialInput" name="nexon-api-key" type="password" autocomplete="new-password" autocapitalize="none" spellcheck="false" maxlength="512" placeholder="NEXON Open API Key 입력" required>
-            <div class="nexon-credential-actions"><button id="saveNexonCredential" class="primary" type="submit">API Key 등록</button><button id="cancelNexonCredentialChange" class="text-button hidden" type="button">취소</button></div>
-            <small>API Key는 서버에서 암호화하여 저장하며, 저장 후 다시 표시하지 않습니다.</small>
+            <label for="nexonCredentialInput">NEXON Open API Key</label>
+            <input id="nexonCredentialInput" name="nexon-api-key" type="password" autocomplete="new-password" autocapitalize="none" spellcheck="false" maxlength="512" placeholder="발급받은 API Key를 붙여넣어주세요" required>
+            <div class="nexon-credential-actions"><button id="saveNexonCredential" class="primary" type="submit">API Key 확인 및 등록</button><button id="cancelNexonCredentialChange" class="text-button hidden" type="button">취소</button></div>
+            <small class="nexon-credential-input-note">NEXON 비밀번호를 입력하는 곳이 아닙니다. NEXON Open API에서 발급받은 API Key만 입력해주세요.</small>
           </form>
-          <div id="nexonCredentialRegistered" class="nexon-credential-registered hidden"><p><b>API Key 확인 완료</b><span id="nexonCredentialCounts" class="muted"></span><small id="nexonCredentialVerifiedAt" class="muted"></small></p><div class="nexon-credential-actions"><button id="changeNexonCredential" class="ghost" type="button">API Key 변경</button><button id="deleteNexonCredential" class="text-button danger-text" type="button">연결 해제</button></div></div>
+          <div id="nexonCredentialRegistered" class="nexon-credential-registered hidden"><div class="nexon-credential-registered-copy"><p><b>API Key 확인 완료</b><span id="nexonCredentialCounts" class="muted"></span><small id="nexonCredentialVerifiedAt" class="muted"></small></p><small class="nexon-credential-secret-note">등록된 API Key 원문은 보안을 위해 다시 표시하지 않습니다.</small></div><div class="nexon-credential-actions"><button id="changeNexonCredential" class="ghost" type="button">API Key 변경</button><button id="deleteNexonCredential" class="text-button danger-text" type="button">연결 해제</button></div></div>
+          <details class="nexon-credential-guide">
+            <summary>API Key 발급 방법</summary>
+            <div class="nexon-credential-guide-body">
+              <ol>
+                <li>NEXON Open API에 NEXON ID로 로그인합니다.</li>
+                <li>상단 또는 마이페이지에서 <b>내 애플리케이션</b>을 선택합니다.</li>
+                <li><b>애플리케이션 등록</b>을 선택합니다.</li>
+                <li>게임에서 <b>메이플스토리</b>를 선택합니다.</li>
+                <li>개인 사용·테스트 목적이면 <b>개발 단계</b>로 등록합니다.</li>
+                <li>서비스명을 입력하고 약관에 동의한 뒤 등록합니다.</li>
+                <li><b>내 애플리케이션 → 애플리케이션 상세</b>에서 API Key를 확인합니다.</li>
+                <li>발급된 API Key를 복사하여 위 입력란에 붙여넣습니다.</li>
+                <li><b>API Key 확인 및 등록</b>을 선택합니다.</li>
+              </ol>
+              <a class="nexon-credential-guide-link" href="https://openapi.nexon.com/" target="_blank" rel="noopener noreferrer">NEXON Open API에서 발급하기 ↗</a>
+            </div>
+          </details>
+          <aside class="nexon-credential-security" aria-label="API Key 보안 안내">
+            <b>안전하게 보관됩니다</b>
+            <ul><li>API Key는 브라우저 localStorage에 저장하지 않습니다.</li><li>서버에서 암호화하여 보관합니다.</li><li>등록 후 API Key 원문은 다시 표시하지 않습니다.</li><li>로그아웃해도 등록된 Key는 유지됩니다.</li><li>연결 해제를 선택하면 저장된 개인 API Key만 삭제됩니다.</li><li>캐릭터·수익·주차 기록은 삭제되지 않습니다.</li></ul>
+            <strong>NEXON 계정 비밀번호는 절대 입력하지 마세요.</strong>
+          </aside>
           <p id="nexonCredentialMessage" class="muted" role="status" aria-live="polite"></p>
         </div>
         <details class="nexon-availability"><summary>지원 범위 안내</summary><div><p><b>캐릭터 정보</b><span>프로필 · 레벨/직업/월드 · 전투력 · 상세 능력치 · 유니온</span></p><p><b>자동 확인</b><span>보스 · 주간 콘텐츠</span></p><small>자동 확인 요청이 실패해도 캐릭터 연동과 수동 보스 체크는 계속 사용할 수 있습니다.</small></div></details>

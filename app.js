@@ -1472,7 +1472,7 @@ function renderNexonCredentialSettings() {
   badge.textContent = badgeState[0];
   badge.className = `nexon-credential-badge ${badgeState[1]}`.trim();
   $('#saveNexonCredential').disabled = busy;
-  $('#saveNexonCredential').textContent = busy && nexonCredentialState.status === 'saving' ? '확인·저장 중…' : hasCredential ? '새 API Key 저장' : 'API Key 등록';
+  $('#saveNexonCredential').textContent = busy && nexonCredentialState.status === 'saving' ? '확인·저장 중…' : hasCredential ? '새 API Key 확인 및 저장' : 'API Key 확인 및 등록';
   $('#cancelNexonCredentialChange').classList.toggle('hidden', !hasCredential || !nexonCredentialState.editing);
   $('#changeNexonCredential').disabled = busy;
   $('#deleteNexonCredential').disabled = busy;

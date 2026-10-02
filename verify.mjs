@@ -1512,6 +1512,14 @@ assert.match(nexonSettingsHtml, /자동 확인 요청이 실패해도 캐릭터 
 assert.doesNotMatch(nexonSettingsHtml, /서버 API Key와 연결된 NEXON 계정|일부 계정에서 사용할 수 없습니다/);
 assert.match(nexonSettingsHtml, /id="nexonCredentialInput"[^>]+type="password"/);
 assert.doesNotMatch(nexonSettingsHtml, /value="[^\"]+"[^>]*id="nexonCredentialInput"/);
+assert.match(nexonSettingsHtml, /<summary>API Key 발급 방법<\/summary>/);
+assert.match(nexonSettingsHtml, /href="https:\/\/openapi\.nexon\.com\/"[^>]+target="_blank"[^>]+rel="noopener noreferrer"/);
+assert.match(nexonSettingsHtml, /NEXON 계정 비밀번호는 절대 입력하지 마세요/);
+assert.match(nexonSettingsHtml, /placeholder="발급받은 API Key를 붙여넣어주세요"/);
+assert.match(nexonSettingsHtml, /NEXON Open API Key<\/label>/);
+assert.match(nexonSettingsHtml, /등록된 API Key 원문은 보안을 위해 다시 표시하지 않습니다/);
+assert.match(nexonSettingsHtml, /메기 계정에 로그인하면[\s\S]*NEXON Open API Key를 안전하게 등록할 수 있습니다/);
+assert.doesNotMatch(nexonSettingsHtml, /NEXON 계정 비밀번호[^<]*(?:input|입력란)/);
 const originalNexonKey = process.env.NEXON_OPEN_API_KEY;
 delete process.env.NEXON_OPEN_API_KEY;
 let missingKeyStatus = 0, missingKeyBody = null;
@@ -2078,5 +2086,10 @@ assert.doesNotMatch(credentialClientSource, /localStorage|sessionStorage|transac
 assert.doesNotMatch(JSON.stringify(json('emptyState()')), /apiKey|credential|ciphertext|auth_tag/);
 assert.match(source, /fetch\('\/api\/nexon-credential'/);
 assert.match(source, /Authorization: `Bearer \$\{token\}`/);
+assert.match(source, /const apiKey = input\.value\.trim\(\)/);
+assert.match(source, /'API Key 확인 및 등록'/);
 assert.match(source, /input\.value = ''/);
+assert.match(css, /\.nexon-credential-guide>summary\{[^}]*min-height:44px/);
+assert.match(css, /\.nexon-credential-guide-link\{[^}]*min-height:44px/);
+assert.match(css, /@media\(max-width:430px\)[\s\S]*\.nexon-credential-guide-link\{justify-self:stretch;width:100%\}/);
 console.log('boss roster, preset, migration, backup, reset, rollover, income, NEXON scheduler and multi-device cloud sync regression checks passed');
