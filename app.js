@@ -1236,9 +1236,9 @@ function selectedHubCharacter(data = viewData()) {
   return list.find(character => character.id === selectedHubCharacterId) || null;
 }
 function renderHomeCharacterCard(character, data) {
-  const stats = characterStats(character), percent = stats.count ? Math.round(stats.done / stats.count * 100) : 0;
+  const stats = characterStats(character);
   const weekId = data?.weekId || data?.currentWeek || '';
-  return `<article class="character character-summary-card" data-character="${escapeHtml(character.id)}"><span class="character-main"><span class="character-identity">${nexonProfileAvatar(character, 'summary-art')}<span class="character-identity-copy"><b>${escapeHtml(character.name)}</b>${nexonProfileCopy(character)}</span></span></span>${nexonSpecSummary(character)}<span class="character-progress"><span class="character-progress-head"><small>주간 보스 ${stats.done} / ${stats.count} · ${percent}%</small><span class="character-weekly-income"><small>이번 주 보스 수익</small><strong class="mint">${money(bossIncomeForWeek(character, weekId))}</strong></span></span><progress value="${stats.done}" max="${stats.count || 1}" aria-label="${escapeHtml(character.name)} 주간 보스 진행률"></progress></span><button type="button" class="character-detail-button" data-character-detail aria-label="${escapeHtml(character.name)} 캐릭터 상세 보기">상세 보기 <span aria-hidden="true">›</span></button></article>`;
+  return `<article class="character character-summary-card" data-character="${escapeHtml(character.id)}"><span class="character-main"><span class="character-identity">${nexonProfileAvatar(character, 'summary-art')}<span class="character-identity-copy"><b>${escapeHtml(character.name)}</b>${nexonProfileCopy(character)}</span></span></span>${nexonSpecSummary(character)}<span class="character-progress"><span class="character-progress-head"><small>보스 ${stats.done} / ${stats.count}</small><span class="character-weekly-income"><small>보스 수익</small><strong class="mint">${money(bossIncomeForWeek(character, weekId))}</strong></span></span><progress value="${stats.done}" max="${stats.count || 1}" aria-label="${escapeHtml(character.name)} 주간 보스 진행률"></progress></span><button type="button" class="character-detail-button" data-character-detail aria-label="${escapeHtml(character.name)} 캐릭터 상세 보기">상세 보기 <span aria-hidden="true">›</span></button></article>`;
 }
 function characterHubHero(character) {
   const profile = character?.nexonCharacter, linked = !!profile?.ocid;
@@ -1417,8 +1417,9 @@ function renderHomeRecent(data) {
   const rows = (data.incomes || []).map((row, index) => ({row, index})).sort((a, b) => n(b.row.createdAt) - n(a.row.createdAt) || b.index - a.index).slice(0, 3);
   target.innerHTML = rows.map(({row}) => {
     const value = incomeValue(row), kind = recordKind(row);
+    const category = labels[row.category] || row.categoryLabel || '기타';
     const detail = kind === 'income' ? '직접 획득' : kind === 'acquired' ? `${won(row.qty ?? row.quantity)}개 · 미판매` : `${won(row.qty ?? row.quantity)}개 판매`;
-    return `<div class="home-recent-row"><span><b>${escapeHtml(labels[row.category] || row.categoryLabel || '기타')} · ${escapeHtml(row.item)}</b><small>${escapeHtml(detail)} · ${escapeHtml(historyDate(row))}</small></span><strong class="${kind === 'acquired' ? 'muted' : value < 0 ? 'negative' : 'mint'}">${kind === 'acquired' ? '—' : `${value >= 0 ? '+' : ''}${koreanMeso(value)}`}</strong></div>`;
+    return `<div class="home-recent-row"><b>${escapeHtml(row.item)}</b><strong class="${kind === 'acquired' ? 'muted' : value < 0 ? 'negative' : 'mint'}">${kind === 'acquired' ? '—' : `${value >= 0 ? '+' : ''}${koreanMeso(value)}`}</strong><small class="home-recent-detail">${escapeHtml(category)} · ${escapeHtml(detail)}</small><small class="home-recent-time">${escapeHtml(historyDate(row))}</small></div>`;
   }).join('') || '<p class="empty compact-empty">아직 저장된 수익 기록이 없습니다.</p>';
 }
 function renderHistory(data) {

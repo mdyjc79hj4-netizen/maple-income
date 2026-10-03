@@ -63,15 +63,19 @@
         <button class="green home-income-action" type="button" data-open-income>+ 수익 입력</button>
         <div class="metric-grid" id="metrics"></div>
       </section>
-      <section class="panel home-characters-panel">
-        <div class="panel-head"><div><h2>캐릭터별 현황</h2><p class="muted">이번 주의 작은 성과를 한눈에.</p></div><button class="green" data-open-income>+ 수익 입력</button></div>
-        <div id="characterList"></div><button class="ghost full" id="addCharacter">+ 캐릭터 추가</button>
-      </section>
-      <section class="panel weekly-content-panel" aria-labelledby="weeklyActivitiesTitle">
-        <div class="weekly-activities-head"><div><h2 id="weeklyActivitiesTitle">주간 콘텐츠</h2><p class="muted">계정 공용 콘텐츠와 선택한 캐릭터의 콘텐츠를 확인합니다.</p></div><small class="api-badge">NEXON 연동</small></div>
-        <div id="weeklyActivityList"></div>
-      </section>
-      <section class="panel home-recent-panel" aria-labelledby="homeRecentTitle"><div class="panel-head"><div><h2 id="homeRecentTitle">최근 기록</h2><p class="muted">가장 최근에 저장한 수익 기록입니다.</p></div><button class="ghost compact" type="button" data-open-page="history">전체 보기</button></div><div id="homeRecentRecords" class="home-recent-records"></div></section>
+      <div class="home-content-grid">
+        <section class="panel home-characters-panel">
+          <div class="panel-head"><div><h2>캐릭터별 현황</h2><p class="muted">이번 주의 작은 성과를 한눈에.</p></div><button class="green" data-open-income>+ 수익 입력</button></div>
+          <div id="characterList"></div><button class="ghost full" id="addCharacter">+ 캐릭터 추가</button>
+        </section>
+        <aside class="home-side-rail" aria-label="홈 보조 정보">
+          <section class="panel weekly-content-panel" aria-labelledby="weeklyActivitiesTitle">
+            <div class="weekly-activities-head"><div><h2 id="weeklyActivitiesTitle">주간 콘텐츠</h2><p class="muted">계정 공용 콘텐츠와 선택한 캐릭터의 콘텐츠를 확인합니다.</p></div><small class="api-badge">NEXON 연동</small></div>
+            <div id="weeklyActivityList"></div>
+          </section>
+          <section class="panel home-recent-panel" aria-labelledby="homeRecentTitle"><div class="panel-head"><div><h2 id="homeRecentTitle">최근 기록</h2><p class="muted">가장 최근에 저장한 수익 기록입니다.</p></div><button class="ghost compact" type="button" data-open-page="history">전체 보기</button></div><div id="homeRecentRecords" class="home-recent-records"></div></section>
+        </aside>
+      </div>
     </div>
     <section class="character-hub hidden" data-page="character" id="characterHubTab" aria-labelledby="characterHubTitle">
       <div class="character-hub-toolbar">
