@@ -6,6 +6,7 @@ import {cloudSyncInternals} from './cloud-sync.js';
 import {nexonProxyInternals} from './api/nexon-scheduler.js';
 import nexonCharacterHandler, {nexonCharacterInternals} from './api/nexon-character.js';
 import {nexonAccountOwnershipInternals} from './api/nexon-account-ownership.js';
+import {nexonCharacterDetailInternals} from './api/nexon-character-detail.js';
 import {nexonCredentialStoreInternals} from './api/_nexon-credential-store.js';
 import {nexonCredentialInternals} from './api/nexon-credential.js';
 
@@ -26,6 +27,7 @@ const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
 const nexonApiSource = readFileSync(new URL('./api/nexon-scheduler.js', import.meta.url), 'utf8');
 const nexonCharacterApiSource = readFileSync(new URL('./api/nexon-character.js', import.meta.url), 'utf8');
 const nexonAccountOwnershipApiSource = readFileSync(new URL('./api/nexon-account-ownership.js', import.meta.url), 'utf8');
+const nexonCharacterDetailApiSource = readFileSync(new URL('./api/nexon-character-detail.js', import.meta.url), 'utf8');
 const nexonCredentialApiSource = readFileSync(new URL('./api/nexon-credential.js', import.meta.url), 'utf8');
 const nexonCredentialStoreSource = readFileSync(new URL('./api/_nexon-credential-store.js', import.meta.url), 'utf8');
 const envExample = readFileSync(new URL('./.env.example', import.meta.url), 'utf8');
@@ -2002,6 +2004,196 @@ assert.equal(ownershipErrorResult.body.code, 'OPENAPI00005');
 assert.equal(ownershipErrorResult.body.category, 'invalid_api_key');
 assert.doesNotMatch(JSON.stringify(ownershipErrorResult.body), /secret-value|0123456789abcdef/);
 assert.doesNotMatch(nexonAccountOwnershipApiSource, /account_id\s*:/);
+
+const equipmentPayloadFixture = {
+  date: '2026-10-03T00:00+09:00', character_gender: '여', character_class: '아델', preset_no: 2,
+  item_equipment: [{
+    item_equipment_part: '무기', item_equipment_slot: '무기', item_name: '테스트 무기',
+    item_icon: 'https://example.com/item.png', item_description: '안전한 설명', item_shape_name: '외형 무기', item_shape_icon: 'javascript:alert(1)',
+    starforce: '22', scroll_upgrade: '8', exceptional_upgrade: '1', special_ring_level: '4',
+    potential_option_grade: '레전드리', potential_option_1: '보스 몬스터 공격 시 데미지 +40%', potential_option_2: '', potential_option_3: '공격력 +9%',
+    additional_potential_option_grade: '에픽', additional_potential_option_1: '공격력 +6%',
+    soul_name: '위대한 소울', soul_option: '공격력 +3%',
+    item_base_option: {str: '100', attack_power: '250', apiKey: 'must-not-pass', constructor: 'must-not-pass'},
+    item_add_option: {str: '30'}, item_etc_option: {attack_power: '12'}, item_starforce_option: {attack_power: '80'},
+    item_exceptional_option: {attack_power: '5'}, item_total_option: {str: '130', attack_power: '347', hidden_secret: 'must-not-pass'}
+  }, {
+    item_equipment_part: '알 수 없는 부위', item_equipment_slot: '미래 슬롯', item_name: '미래 장비', item_icon: 'https://example.com/future.png'
+  }],
+  item_equipment_preset_1: [], item_equipment_preset_2: [{item_equipment_part: '모자', item_equipment_slot: '모자', item_name: '프리셋 모자'}],
+  dragon_equipment: null, mechanic_equipment: [{item_equipment_part: '메카닉', item_equipment_slot: '트랜지스터', item_name: '메카닉 장비'}],
+  title: {title_name: '테스트 칭호', title_icon: 'https://example.com/title.png', title_description: '칭호 설명'},
+  item_equipment_preset_2_title: {title_name: '프리셋 칭호'}
+};
+const sanitizedEquipment = nexonCharacterDetailInternals.sanitizeEquipmentPayload(equipmentPayloadFixture);
+assert.equal(sanitizedEquipment.presetNo, 2);
+assert.equal(sanitizedEquipment.equipment.length, 2);
+assert.equal(sanitizedEquipment.equipment[0].name, '테스트 무기');
+assert.equal(sanitizedEquipment.equipment[0].starforce, 22);
+assert.equal(sanitizedEquipment.equipment[0].scrollUpgrade, 8);
+assert.equal(sanitizedEquipment.equipment[0].potential.options.length, 2);
+assert.equal(sanitizedEquipment.equipment[0].additionalPotential.grade, '에픽');
+assert.equal(sanitizedEquipment.equipment[0].soul.name, '위대한 소울');
+assert.equal(sanitizedEquipment.equipment[0].shapeIcon, '');
+assert.deepEqual(sanitizedEquipment.equipment[0].options.base, {str: '100', attack_power: '250'});
+assert.deepEqual(sanitizedEquipment.equipment[0].options.total, {str: '130', attack_power: '347'});
+assert.equal(sanitizedEquipment.equipment[1].slot, '미래 슬롯');
+assert.equal(sanitizedEquipment.presets[1].length, 0);
+assert.equal(sanitizedEquipment.presets[2].length, 1);
+assert.equal(sanitizedEquipment.presets[3].length, 0);
+assert.equal(sanitizedEquipment.dragonEquipment.length, 0);
+assert.equal(sanitizedEquipment.mechanicEquipment.length, 1);
+assert.equal(sanitizedEquipment.title.name, '테스트 칭호');
+assert.equal(sanitizedEquipment.presetTitles[2].name, '프리셋 칭호');
+assert.throws(() => nexonCharacterDetailInternals.sanitizeEquipmentPayload({date: '2026-10-03'}), /응답 구조/);
+assert.throws(() => nexonCharacterDetailInternals.sanitizeEquipmentPayload({item_equipment: {}}), /응답 구조/);
+assert.equal(nexonCharacterDetailInternals.safeInteger('22'), 22);
+assert.equal(nexonCharacterDetailInternals.safeInteger('2.5'), null);
+assert.equal(nexonCharacterDetailInternals.safeDecimal('96.42'), 96.42);
+assert.equal(nexonCharacterDetailInternals.safeImageUrl('data:text/html,bad'), '');
+assert.deepEqual(Object.keys(nexonCharacterDetailInternals.DETAIL_RESOURCES), ['equipment']);
+assert.equal(nexonCharacterDetailInternals.DETAIL_RESOURCES.equipment.path, '/maplestory/v1/character/item-equipment');
+assert.doesNotMatch(nexonCharacterDetailApiSource, /searchParams\.set\(['"]date|[?&]date=/);
+assert.doesNotMatch(JSON.stringify(sanitizedEquipment), /must-not-pass|apiKey|hidden_secret|javascript:/);
+
+nexonCharacterDetailInternals.detailCache.clear();
+let detailRequestCount = 0;
+let detailRequestCredential = '';
+let detailNow = Date.parse('2026-10-03T12:00:00.000Z');
+const detailHandler = nexonCharacterDetailInternals.createNexonCharacterDetailHandler({
+  createAdminClient: () => ({}),
+  authenticateRequest: async req => ({id: req.testUser || 'detail-user-one'}),
+  loadUserNexonCredential: async (_client, userId) => ({apiKey: `private-${userId}`, credentialRevision: userId === 'detail-user-one' ? 'revision-one' : 'revision-two'}),
+  requestNexonDetail: async (config, _ocid, apiKey) => { detailRequestCount += 1; detailRequestCredential = apiKey; assert.equal(config.path, '/maplestory/v1/character/item-equipment'); return structuredClone(equipmentPayloadFixture); },
+  now: () => detailNow
+});
+const invokeDetail = async (overrides = {}) => {
+  const response = nexonApiTestResponse();
+  await detailHandler({method: 'GET', headers: {authorization: 'Bearer test-session'}, query: {resource: 'equipment', ocid: selectedOcid}, ...overrides}, response);
+  return response;
+};
+const detailFirst = await invokeDetail();
+assert.equal(detailFirst.statusCode, 200);
+assert.equal(detailFirst.body.ok, true);
+assert.equal(detailFirst.body.resource, 'equipment');
+assert.equal(detailFirst.body.cached, false);
+assert.equal(detailFirst.body.data.equipment[0].name, '테스트 무기');
+assert.equal(detailRequestCredential, 'private-detail-user-one');
+const detailCached = await invokeDetail();
+assert.equal(detailCached.body.cached, true);
+assert.equal(detailRequestCount, 1);
+await invokeDetail({testUser: 'detail-user-two'});
+assert.equal(detailRequestCount, 2, 'server detail cache must be isolated by user and credential revision');
+detailNow += nexonCharacterDetailInternals.DETAIL_CACHE_TTL_MS + 1;
+await invokeDetail();
+assert.equal(detailRequestCount, 3, 'expired server cache must refetch');
+assert.doesNotMatch(JSON.stringify(detailFirst.body), /private-detail-user|must-not-pass/);
+
+const invalidDetailResource = nexonApiTestResponse();
+await detailHandler({method: 'GET', query: {resource: 'symbols', ocid: selectedOcid}}, invalidDetailResource);
+assert.equal(invalidDetailResource.statusCode, 400);
+assert.equal(invalidDetailResource.body.code, 'INVALID_RESOURCE');
+const invalidDetailOcid = nexonApiTestResponse();
+await detailHandler({method: 'GET', query: {resource: 'equipment', ocid: 'invalid ocid'}}, invalidDetailOcid);
+assert.equal(invalidDetailOcid.statusCode, 400);
+const signedOutDetailHandler = nexonCharacterDetailInternals.createNexonCharacterDetailHandler({
+  createAdminClient: () => ({}),
+  authenticateRequest: async () => { throw Object.assign(new Error('로그인 필요'), {status: 401, code: 'AUTH_REQUIRED'}); }
+});
+const signedOutDetailResponse = nexonApiTestResponse();
+await signedOutDetailHandler({method: 'GET', query: {resource: 'equipment', ocid: selectedOcid}}, signedOutDetailResponse);
+assert.equal(signedOutDetailResponse.statusCode, 401);
+assert.equal(signedOutDetailResponse.body.code, 'AUTH_REQUIRED');
+const missingDetailCredentialHandler = nexonCharacterDetailInternals.createNexonCharacterDetailHandler({
+  createAdminClient: () => ({}),
+  authenticateRequest: async () => ({id: 'detail-user-one'}),
+  loadUserNexonCredential: async () => { throw Object.assign(new Error('개인 키 필요'), {status: 409, code: 'NEXON_CREDENTIAL_REQUIRED', category: 'credential_required', source: 'credential_store'}); }
+});
+const missingDetailCredentialResponse = nexonApiTestResponse();
+await missingDetailCredentialHandler({method: 'GET', query: {resource: 'equipment', ocid: selectedOcid}}, missingDetailCredentialResponse);
+assert.equal(missingDetailCredentialResponse.statusCode, 409);
+assert.equal(missingDetailCredentialResponse.body.code, 'NEXON_CREDENTIAL_REQUIRED');
+const malformedDetailHandler = nexonCharacterDetailInternals.createNexonCharacterDetailHandler({
+  createAdminClient: () => ({}),
+  authenticateRequest: async () => ({id: 'malformed-user'}),
+  loadUserNexonCredential: async () => ({apiKey: 'server-only-key', credentialRevision: 'malformed-revision'}),
+  requestNexonDetail: async () => ({unexpected: true})
+});
+const malformedDetailResponse = nexonApiTestResponse();
+await malformedDetailHandler({method: 'GET', query: {resource: 'equipment', ocid: selectedOcid}}, malformedDetailResponse);
+assert.equal(malformedDetailResponse.statusCode, 502);
+assert.equal(malformedDetailResponse.body.code, 'INVALID_EQUIPMENT_RESPONSE');
+const upstreamDetailHandler = nexonCharacterDetailInternals.createNexonCharacterDetailHandler({
+  createAdminClient: () => ({}),
+  authenticateRequest: async () => ({id: 'error-user'}),
+  loadUserNexonCredential: async () => ({apiKey: 'server-only-key', credentialRevision: 'error-revision'}),
+  requestNexonDetail: async () => { throw Object.assign(new Error('상세 조회 실패'), {status: 429, code: 'RATE_LIMITED', category: 'rate_limited', source: 'nexon_upstream', upstreamMessage: `x-nxopen-api-key=server-only-key ${selectedOcid}`}); }
+});
+const upstreamDetailResponse = nexonApiTestResponse();
+await upstreamDetailHandler({method: 'GET', query: {resource: 'equipment', ocid: selectedOcid}}, upstreamDetailResponse);
+assert.equal(upstreamDetailResponse.statusCode, 429);
+assert.equal(upstreamDetailResponse.body.category, 'rate_limited');
+assert.doesNotMatch(JSON.stringify(upstreamDetailResponse.body), /server-only-key|0123456789abcdef/);
+assert.notEqual(
+  nexonCharacterDetailInternals.detailCacheKey('user-one', 'revision-one', selectedOcid, 'equipment'),
+  nexonCharacterDetailInternals.detailCacheKey('user-one', 'revision-two', selectedOcid, 'equipment')
+);
+nexonCharacterDetailInternals.detailCache.clear();
+for (let index = 0; index < nexonCharacterDetailInternals.DETAIL_CACHE_MAX_ENTRIES + 5; index += 1) {
+  nexonCharacterDetailInternals.detailCache.set(`entry-${index}`, {cachedAt: detailNow, body: {ok: true}});
+}
+nexonCharacterDetailInternals.pruneDetailCache(detailNow);
+assert.equal(nexonCharacterDetailInternals.detailCache.size, nexonCharacterDetailInternals.DETAIL_CACHE_MAX_ENTRIES);
+assert.equal(nexonCharacterDetailInternals.detailCache.has('entry-0'), false);
+nexonCharacterDetailInternals.detailCache.clear();
+
+context.__equipmentData = {...structuredClone(sanitizedEquipment), fetchedAt: '2026-10-03T12:00:00.000Z'};
+run("nexonCredentialAuthBridge={isSignedIn:()=>true,getAccessToken:async()=>'detail-session-token'};nexonCredentialState={status:'ready',hasCredential:true,editing:false,message:''};selectedWeek='';state={currentWeek:'2026-10-01~2026-10-07',weeklyHistory:{},characters:[__hubCharacter]};clearNexonDetailRuntimeCache();nexonDetailRuntimeCache.set(nexonDetailCacheKey('equipment',__hubCharacter.nexonCharacter.ocid),{status:'ready',data:__equipmentData,receivedAt:Date.now()})");
+const hubEquipmentMarkup = run('renderCharacterHubEquipment(__hubCharacter)');
+assert.match(hubEquipmentMarkup, /장비 프리셋/);
+assert.match(hubEquipmentMarkup, /현재 장비 · 프리셋 2/);
+assert.match(hubEquipmentMarkup, /value="1"[^>]*disabled/);
+assert.match(hubEquipmentMarkup, /테스트 무기/);
+assert.match(hubEquipmentMarkup, /미래 장비/);
+assert.match(hubEquipmentMarkup, /테스트 칭호/);
+assert.match(hubEquipmentMarkup, /메카닉 장비/);
+assert.match(hubEquipmentMarkup, /data-equipment-item/);
+assert.ok(hubEquipmentMarkup.indexOf('테스트 무기') < hubEquipmentMarkup.indexOf('미래 장비'), 'unknown equipment slots should render last');
+assert.match(run("renderCharacterHubEquipment({id:'unlinked',name:'미연동',bosses:[],weeklyActivities:[]})"), /NEXON 캐릭터를 연동/);
+run("nexonCredentialAuthBridge={isSignedIn:()=>false,getAccessToken:async()=>''}");
+assert.match(run('renderCharacterHubEquipment(__hubCharacter)'), /메기 계정에 로그인/);
+run("nexonCredentialAuthBridge={isSignedIn:()=>true,getAccessToken:async()=>'detail-session-token'};nexonCredentialState={status:'ready',hasCredential:false,editing:true,message:''}");
+assert.match(run('renderCharacterHubEquipment(__hubCharacter)'), /NEXON 개인 API Key를 등록/);
+assert.match(run('renderCharacterHubEquipment(__hubCharacter)'), /data-equipment-open-settings/);
+run("nexonCredentialState={status:'ready',hasCredential:true,editing:false,message:''};selectedWeek='2026-09-24~2026-09-30';state.weeklyHistory[selectedWeek]={weekId:selectedWeek,characters:[__hubCharacter],accountWeeklyActivities:[],incomes:[]};nexonDetailRuntimeCache.set(nexonDetailCacheKey('equipment',__hubCharacter.nexonCharacter.ocid),{status:'ready',data:__equipmentData,receivedAt:Date.now()})");
+assert.match(run('renderCharacterHubEquipment(__hubCharacter)'), /과거 주차 스냅샷이 아닌 현재 NEXON 조회 결과/);
+run("selectedWeek='';nexonDetailRuntimeCache.set(nexonDetailCacheKey('equipment',__hubCharacter.nexonCharacter.ocid),{status:'error',error:{status:429,category:'rate_limited'},receivedAt:Date.now()})");
+assert.match(run('renderCharacterHubEquipment(__hubCharacter)'), /호출 한도를 초과/);
+assert.match(run('renderCharacterHubEquipment(__hubCharacter)'), /data-equipment-retry/);
+assert.match(run("renderEquipmentOptionRows({str:'130',attack_power:'347',dex:'0'})"), /STR/);
+assert.doesNotMatch(run("renderEquipmentOptionRows({str:'130',attack_power:'347',dex:'0'})"), /DEX/);
+assert.match(run("renderEquipmentDetailSection('잠재능력','<p>보스 데미지 +40%</p>')"), /잠재능력/);
+assert.equal(run("renderEquipmentDetailSection('소울','')"), '');
+run('clearNexonDetailRuntimeCache()');
+let clientDetailFetchCount = 0;
+context.fetch = async (target, options) => {
+  clientDetailFetchCount += 1;
+  assert.match(String(target), /^\/api\/nexon-character-detail\?resource=equipment&ocid=/);
+  assert.equal(options.headers.Authorization, 'Bearer detail-session-token');
+  return {ok: true, status: 200, json: async () => ({ok: true, resource: 'equipment', fetchedAt: '2026-10-03T12:00:00.000Z', data: structuredClone(sanitizedEquipment)})};
+};
+const firstClientDetail = run("fetchNexonCharacterDetail('equipment',__hubCharacter.nexonCharacter.ocid)");
+const duplicateClientDetail = run("fetchNexonCharacterDetail('equipment',__hubCharacter.nexonCharacter.ocid)");
+await Promise.all([firstClientDetail, duplicateClientDetail]);
+assert.equal(clientDetailFetchCount, 1, 'loading state must prevent duplicate client detail requests');
+await run("fetchNexonCharacterDetail('equipment',__hubCharacter.nexonCharacter.ocid)");
+assert.equal(clientDetailFetchCount, 1, 'fresh client detail cache must avoid refetch');
+assert.equal(run("nexonDetailCacheEntry('equipment',__hubCharacter.nexonCharacter.ocid).status"), 'ready');
+run('clearNexonDetailRuntimeCache()');
+assert.equal(run('nexonDetailRuntimeCache.size'), 0);
+assert.doesNotMatch(JSON.stringify(json('state')), /테스트 무기|item_equipment|equipmentData/);
+assert.match(source.slice(source.indexOf('async function ensureCharacterHubEquipment'), source.indexOf('const NEXON_EQUIPMENT_SLOT_ORDER')), /activeCharacterHubTab !== 'equipment'/);
+assert.doesNotMatch(source.slice(source.indexOf('function renderCharacterHubEquipment'), source.indexOf('const EQUIPMENT_OPTION_LABELS')), /fetchNexonCharacterDetail\(/);
 let proxyValidationStatus = 0, proxyValidationBody = null;
 await schedulerTestHandler(
   {method: 'GET', query: {ocid: 'invalid ocid'}},
@@ -2135,10 +2327,24 @@ assert.match(html, /data-page="history" id="historyTab"/);
 assert.match(html, /data-page="character" id="characterHubTab"/);
 assert.match(html, /id="characterHubBack"/);
 assert.match(html, /id="characterHubSelect" aria-label="캐릭터 허브 캐릭터 선택"/);
-assert.equal((html.match(/data-character-hub-tab=/g) || []).length, 3);
+assert.equal((html.match(/data-character-hub-tab=/g) || []).length, 4);
 assert.match(html, /data-character-hub-tab="overview"[^>]*aria-selected="true"/);
 assert.match(html, /data-character-hub-tab="stats"/);
+assert.match(html, /data-character-hub-tab="equipment"/);
 assert.match(html, /data-character-hub-tab="content"/);
+assert.match(html, /id="equipmentDetailDialog"/);
+assert.match(html, /id="equipmentDetailBody"/);
+assert.match(css, /\.character-hub-tabs\{grid-template-columns:repeat\(4,1fr\)/);
+assert.match(css, /\.equipment-grid\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+assert.match(css, /@media\(min-width:600px\)[\s\S]*\.equipment-grid\{grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
+assert.match(css, /@media\(min-width:1000px\)[\s\S]*\.equipment-grid\{grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/);
+assert.match(source, /const NEXON_DETAIL_CLIENT_TTL_MS = 5 \* 60 \* 1000/);
+assert.match(source, /headers: \{Authorization: `Bearer \$\{token\}`\}/);
+assert.match(source, /clearNexonDetailRuntimeCache\(\);[\s\S]*nexonCredentialState = \{\.\.\.result, status: 'saved'/);
+assert.match(source, /await nexonCredentialRequest\('DELETE'\);[\s\S]*clearNexonDetailRuntimeCache\(\)/);
+assert.match(source, /if \(!signedIn\) \{[\s\S]*clearNexonDetailRuntimeCache\(\)/);
+assert.doesNotMatch(cloudSource, /nexon-character-detail|item_equipment|nexonDetailRuntimeCache/);
+assert.equal(run('STATE_VERSION'), 9);
 assert.doesNotMatch(html, /data-tab="character"/);
 assert.match(html, /id="homeRecentRecords"/);
 assert.match(source, /function renderHomeRecent\(data\)/);
@@ -2156,7 +2362,7 @@ assert.equal(run("navigationSurfaceFor('price', 'history')"), 'history');
 assert.equal(run("navigationSurfaceFor('character', 'boss')"), 'summary');
 assert.match(source, /function openCharacterHub\(characterId\)[\s\S]*activeCharacterHubTab = 'overview';[\s\S]*activatePage\('character'\)/);
 assert.match(source, /#characterHubBack[\s\S]*activatePage\('summary'\)/);
-assert.match(source, /#characterHubSelect[\s\S]*selectedHubCharacterId = e\.target\.value; renderCharacterHub\(viewData\(\)\)/);
+assert.match(source, /#characterHubSelect[\s\S]*selectedHubCharacterId = e\.target\.value; renderCharacterHub\(viewData\(\)\); ensureCharacterHubEquipment\(\)/);
 assert.match(source, /selectedBossCharacterId = character\.id;\s*activatePage\('boss'\);\s*renderBosses\(viewData\(\)\)/);
 for (const returnTab of ['summary', 'boss', 'history', 'settings']) {
   run(`activeMainTab=${JSON.stringify(returnTab)};returnTabAfterIncome=activeMainTab`);

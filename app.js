@@ -972,6 +972,10 @@ let nexonApiState = {status: 'idle', message: '연동할 캐릭터를 선택해�
 let nexonSchedulerDiagnosticState = {status: 'idle', characterId: '', result: null, message: '진단을 실행하면 두 요청 결과를 비교합니다.'};
 let nexonCredentialAuthBridge = null;
 let nexonCredentialState = {status: 'signed-out', hasCredential: false, editing: false, message: ''};
+const NEXON_DETAIL_CLIENT_TTL_MS = 5 * 60 * 1000;
+const nexonDetailRuntimeCache = new Map();
+const nexonEquipmentPresetSelection = new Map();
+const nexonEquipmentDialogItems = new Map();
 let cloudAuthUiState = {initialized: false, signedIn: false, ready: false};
 let onboardingWasActive = false, onboardingDismissed = false;
 let onboardingCharacterCandidate = null;
@@ -1234,6 +1238,166 @@ function nexonStatDetails(character) {
   if (!groups.length) return `<section id="${escapeHtml(detailsId)}" class="character-stat-details"><b>상세 스펙</b><p class="muted">상세 스펙 정보가 없습니다.</p></section>`;
   return `<section id="${escapeHtml(detailsId)}" class="character-stat-details"><b>상세 스펙</b><div class="character-stat-groups">${groups.map(group => `<section class="character-stat-group" data-stat-group="${escapeHtml(group.id)}"><h4>${escapeHtml(group.title)}</h4><dl>${group.items.map(([key, label, type]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(nexonStatValue(stats[key], type))}</dd></div>`).join('')}</dl></section>`).join('')}</div></section>`;
 }
+function nexonDetailCacheKey(resource, ocid) {
+  return `${resource}:${ocid}`;
+}
+function nexonDetailCacheEntry(resource, ocid, now = Date.now()) {
+  const entry = nexonDetailRuntimeCache.get(nexonDetailCacheKey(resource, ocid));
+  if (!entry) return null;
+  if (entry.status === 'ready' && now - entry.receivedAt >= NEXON_DETAIL_CLIENT_TTL_MS) {
+    nexonDetailRuntimeCache.delete(nexonDetailCacheKey(resource, ocid));
+    return null;
+  }
+  return entry;
+}
+function clearNexonDetailRuntimeCache() {
+  nexonDetailRuntimeCache.clear();
+  nexonEquipmentPresetSelection.clear();
+  nexonEquipmentDialogItems.clear();
+}
+function nexonDetailErrorMessage(error) {
+  if (error?.status === 401 || error?.code === 'AUTH_REQUIRED') return '장비 정보는 메기 계정에 로그인한 뒤 확인할 수 있습니다.';
+  if (error?.status === 409 || error?.code === 'NEXON_CREDENTIAL_REQUIRED') return '장비 정보를 보려면 NEXON 개인 API Key를 등록해주세요.';
+  if (error?.status === 429 || error?.category === 'rate_limited') return 'NEXON API 호출 한도를 초과했습니다. 잠시 후 다시 시도해주세요.';
+  if (error?.category === 'data_preparing') return 'NEXON 장비 데이터가 아직 준비 중입니다. 잠시 후 다시 시도해주세요.';
+  return error?.message || 'NEXON 장비 정보를 불러오지 못했습니다.';
+}
+async function fetchNexonCharacterDetail(resource, ocid, {force = false} = {}) {
+  const key = nexonDetailCacheKey(resource, ocid);
+  const existing = nexonDetailCacheEntry(resource, ocid);
+  if (!force && existing?.status === 'ready') return existing.data;
+  if (existing?.status === 'loading') return existing.promise;
+  if (!nexonCredentialAuthBridge?.isSignedIn?.()) throw Object.assign(new Error('장비 정보는 메기 계정에 로그인한 뒤 확인할 수 있습니다.'), {status: 401, code: 'AUTH_REQUIRED'});
+  const params = new URLSearchParams({resource, ocid});
+  const promise = (async () => {
+    const token = await nexonCredentialAuthBridge.getAccessToken();
+    if (!token) throw Object.assign(new Error('로그인 세션을 확인할 수 없습니다. 다시 로그인해주세요.'), {status: 401, code: 'AUTH_REQUIRED'});
+    const response = await fetch('/api/nexon-character-detail?' + params, {headers: {Authorization: `Bearer ${token}`}});
+    let payload = null;
+    try { payload = await response.json(); } catch {}
+    if (!response.ok || !payload?.ok) throw Object.assign(new Error(payload?.message || 'NEXON 장비 정보를 불러오지 못했습니다.'), {
+      status: response.status,
+      code: payload?.code || 'NEXON_DETAIL_REQUEST_FAILED',
+      category: payload?.category || '',
+      source: payload?.source || '',
+      upstreamMessage: payload?.upstreamMessage || ''
+    });
+    const data = {...payload.data, fetchedAt: payload.fetchedAt || ''};
+    nexonDetailRuntimeCache.set(key, {status: 'ready', data, receivedAt: Date.now()});
+    return data;
+  })().catch(error => {
+    nexonDetailRuntimeCache.set(key, {status: 'error', error, receivedAt: Date.now()});
+    throw error;
+  });
+  nexonDetailRuntimeCache.set(key, {status: 'loading', promise, receivedAt: Date.now()});
+  return promise;
+}
+async function ensureCharacterHubEquipment({force = false} = {}) {
+  if (activeCharacterHubTab !== 'equipment') return;
+  const character = selectedHubCharacter(viewData());
+  const ocid = character?.nexonCharacter?.ocid;
+  if (!ocid || !nexonCredentialAuthBridge?.isSignedIn?.() || !nexonCredentialState.hasCredential) return;
+  const existing = nexonDetailCacheEntry('equipment', ocid);
+  if (!force && ['loading', 'ready'].includes(existing?.status)) return existing?.promise || existing?.data;
+  const request = fetchNexonCharacterDetail('equipment', ocid, {force});
+  renderCharacterHub(viewData());
+  try { await request; } catch {}
+  if (activeCharacterHubTab === 'equipment' && selectedHubCharacter()?.id === character.id) renderCharacterHub(viewData());
+}
+const NEXON_EQUIPMENT_SLOT_ORDER = Object.freeze([
+  '모자', '얼굴장식', '눈장식', '귀고리', '상의', '한벌옷', '하의', '신발', '장갑', '망토',
+  '벨트', '포켓 아이템', '펜던트', '펜던트2', '반지1', '반지2', '반지3', '반지4',
+  '무기', '보조무기', '엠블렘', '뱃지', '훈장', '기계 심장'
+]);
+function equipmentSlotOrder(item) {
+  const slot = item?.slot || item?.part || '';
+  const exact = NEXON_EQUIPMENT_SLOT_ORDER.indexOf(slot);
+  if (exact >= 0) return exact;
+  const ring = /^반지\s*(\d)$/u.exec(slot);
+  return ring ? 14 + Number(ring[1]) - 1 : NEXON_EQUIPMENT_SLOT_ORDER.length + 1;
+}
+function sortNexonEquipment(items) {
+  return [...(Array.isArray(items) ? items : [])].sort((left, right) => equipmentSlotOrder(left) - equipmentSlotOrder(right) || String(left?.slot || left?.part || '').localeCompare(String(right?.slot || right?.part || ''), 'ko'));
+}
+function equipmentPresetOptions(equipment) {
+  return [
+    {value: 'current', label: `현재 장비${Number.isInteger(equipment?.presetNo) ? ` · 프리셋 ${equipment.presetNo}` : ''}`, disabled: false},
+    ...[1, 2, 3].map(number => ({value: String(number), label: `프리셋 ${number}`, disabled: !equipment?.presets?.[number]?.length}))
+  ];
+}
+function selectedEquipmentView(ocid, equipment) {
+  let selection = nexonEquipmentPresetSelection.get(ocid) || 'current';
+  if (selection !== 'current' && !equipment?.presets?.[selection]?.length) selection = 'current';
+  const preset = selection === 'current' ? equipment?.equipment : equipment?.presets?.[selection];
+  const title = selection === 'current' ? equipment?.title : equipment?.presetTitles?.[selection];
+  return {selection, items: sortNexonEquipment(preset), title};
+}
+function equipmentBadge(item) {
+  const labels = [];
+  if (Number.isInteger(item?.starforce) && item.starforce > 0) labels.push(`${item.starforce}성`);
+  if (item?.potential?.grade) labels.push(item.potential.grade);
+  if (item?.additionalPotential?.grade) labels.push(`에디 ${item.additionalPotential.grade}`);
+  return labels.slice(0, 3).map(label => `<small>${escapeHtml(label)}</small>`).join('');
+}
+function equipmentImage(item, className = '') {
+  const icon = typeof item?.icon === 'string' && /^https?:\/\//i.test(item.icon) ? item.icon : '';
+  return icon ? `<img class="${escapeHtml(className)}" src="${escapeHtml(icon)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span class="equipment-icon-placeholder" aria-hidden="true">◇</span>`;
+}
+function renderEquipmentCards(items, group = 'equipment') {
+  if (!items.length) return '<p class="empty compact-empty">표시할 장비가 없습니다.</p>';
+  return `<div class="equipment-grid">${items.map((item, index) => {
+    const key = `${group}:${index}`;
+    nexonEquipmentDialogItems.set(key, item);
+    return `<button type="button" class="equipment-card" data-equipment-item="${escapeHtml(key)}" aria-label="${escapeHtml(item.name || item.slot || '장비')} 상세 보기">${equipmentImage(item, 'equipment-card-icon')}<span><small>${escapeHtml(item.slot || item.part || '기타 장비')}</small><b>${escapeHtml(item.name || '이름 없는 장비')}</b><span class="equipment-card-badges">${equipmentBadge(item)}</span></span></button>`;
+  }).join('')}</div>`;
+}
+function renderCharacterHubEquipment(character) {
+  const profile = character?.nexonCharacter;
+  if (!profile?.ocid) return '<div class="character-hub-equipment-state"><h3>장비</h3><p class="muted">NEXON 캐릭터를 연동하면 현재 장비를 확인할 수 있습니다.</p></div>';
+  if (!nexonCredentialAuthBridge?.isSignedIn?.()) return '<div class="character-hub-equipment-state"><h3>장비</h3><p class="muted">장비 정보는 메기 계정에 로그인한 뒤 확인할 수 있습니다.</p></div>';
+  if (!nexonCredentialState.hasCredential) return '<div class="character-hub-equipment-state"><h3>장비</h3><p class="muted">장비 정보를 보려면 NEXON 개인 API Key를 등록해주세요.</p><button type="button" class="ghost compact" data-equipment-open-settings>설정에서 API Key 등록</button></div>';
+  const entry = nexonDetailCacheEntry('equipment', profile.ocid);
+  if (!entry || entry.status === 'loading') return '<div class="character-hub-equipment-state" aria-busy="true"><span class="equipment-loading" aria-hidden="true"></span><p>장비 정보를 불러오는 중…</p></div>';
+  if (entry.status === 'error') return `<div class="character-hub-equipment-state"><h3>장비 정보를 불러오지 못했습니다.</h3><p class="muted">${escapeHtml(nexonDetailErrorMessage(entry.error))}</p><button type="button" class="ghost compact" data-equipment-retry>다시 시도</button></div>`;
+  nexonEquipmentDialogItems.clear();
+  const equipment = entry.data || {}, view = selectedEquipmentView(profile.ocid, equipment);
+  const selectOptions = equipmentPresetOptions(equipment).map(item => `<option value="${item.value}" ${item.value === view.selection ? 'selected' : ''} ${item.disabled ? 'disabled' : ''}>${escapeHtml(item.label)}</option>`).join('');
+  const special = [...(equipment.dragonEquipment || []), ...(equipment.mechanicEquipment || [])];
+  const fetchedAt = nexonCheckedLabel(equipment.fetchedAt);
+  const titleMarkup = view.title ? `<section class="equipment-title-card"><div>${equipmentImage(view.title, 'equipment-title-icon')}</div><span><small>칭호</small><b>${escapeHtml(view.title.name || '칭호')}</b>${view.title.description ? `<p>${escapeHtml(view.title.description)}</p>` : ''}</span></section>` : '';
+  return `<div class="character-hub-equipment"><div class="equipment-toolbar"><div><h3>장비</h3><p class="muted">NEXON 현재 조회 기준${fetchedAt ? ` · ${escapeHtml(fetchedAt)}` : ''}</p></div><label>장비 프리셋<select data-equipment-preset aria-label="장비 프리셋 선택">${selectOptions}</select></label></div>${isPast() ? '<p class="notice equipment-history-notice">장비는 과거 주차 스냅샷이 아닌 현재 NEXON 조회 결과입니다.</p>' : ''}${titleMarkup}<section class="equipment-section"><h4>장착 장비 <small>${view.items.length}개</small></h4>${renderEquipmentCards(view.items, 'main')}</section>${special.length ? `<section class="equipment-section"><h4>전용 장비 <small>${special.length}개</small></h4>${renderEquipmentCards(sortNexonEquipment(special), 'special')}</section>` : ''}</div>`;
+}
+const EQUIPMENT_OPTION_LABELS = Object.freeze({
+  str: 'STR', dex: 'DEX', int: 'INT', luk: 'LUK', max_hp: '최대 HP', max_mp: '최대 MP',
+  max_hp_rate: '최대 HP(%)', max_mp_rate: '최대 MP(%)', attack_power: '공격력', magic_power: '마력',
+  armor: '방어력', speed: '이동속도', jump: '점프력', boss_damage: '보스 데미지',
+  ignore_monster_armor: '방어율 무시', all_stat: '올스탯', damage: '데미지',
+  equipment_level_decrease: '착용 레벨 감소', base_equipment_level: '기본 장비 레벨'
+});
+function equipmentHasValue(value) {
+  if (typeof value === 'number') return Number.isFinite(value) && value !== 0;
+  return typeof value === 'string' && value.trim() !== '' && value.trim() !== '0';
+}
+function renderEquipmentOptionRows(options) {
+  const rows = Object.entries(options || {}).filter(([, value]) => equipmentHasValue(value));
+  if (!rows.length) return '';
+  return `<dl class="equipment-option-list">${rows.map(([key, value]) => `<div><dt>${escapeHtml(EQUIPMENT_OPTION_LABELS[key] || key)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>`;
+}
+function renderEquipmentDetailSection(title, content) {
+  return content ? `<section class="equipment-detail-section"><h3>${escapeHtml(title)}</h3>${content}</section>` : '';
+}
+function openEquipmentDetail(item) {
+  const dialog = $('#equipmentDetailDialog');
+  if (!dialog || !item) return;
+  $('#equipmentDetailTitle').textContent = item.name || item.slot || '장비 상세';
+  $('#equipmentDetailBody').innerHTML = `<header class="equipment-detail-head">${equipmentImage(item, 'equipment-detail-icon')}<div><small>${escapeHtml(item.slot || item.part || '기타 장비')}</small><b>${escapeHtml(item.name || '이름 없는 장비')}</b>${item.description ? `<p>${escapeHtml(item.description)}</p>` : ''}</div></header>${renderEquipmentDetailSection('강화', [
+    Number.isInteger(item.starforce) ? `스타포스 ${item.starforce}성` : '',
+    Number.isInteger(item.scrollUpgrade) ? `업그레이드 ${item.scrollUpgrade}회` : '',
+    Number.isInteger(item.exceptionalUpgrade) ? `익셉셔널 ${item.exceptionalUpgrade}회` : '',
+    Number.isInteger(item.specialRingLevel) ? `특수 반지 Lv. ${item.specialRingLevel}` : ''
+  ].filter(Boolean).map(value => `<span class="equipment-detail-chip">${escapeHtml(value)}</span>`).join(''))}${renderEquipmentDetailSection(item.potential?.grade ? `잠재능력 · ${item.potential.grade}` : '잠재능력', item.potential?.options?.map(value => `<p>${escapeHtml(value)}</p>`).join(''))}${renderEquipmentDetailSection(item.additionalPotential?.grade ? `에디셔널 잠재능력 · ${item.additionalPotential.grade}` : '에디셔널 잠재능력', item.additionalPotential?.options?.map(value => `<p>${escapeHtml(value)}</p>`).join(''))}${renderEquipmentDetailSection('소울', [item.soul?.name, item.soul?.option].filter(Boolean).map(value => `<p>${escapeHtml(value)}</p>`).join(''))}${renderEquipmentDetailSection('총 옵션', renderEquipmentOptionRows(item.options?.total))}${renderEquipmentDetailSection('기본 옵션', renderEquipmentOptionRows(item.options?.base))}${renderEquipmentDetailSection('추가 옵션', renderEquipmentOptionRows(item.options?.add))}${renderEquipmentDetailSection('업그레이드 옵션', renderEquipmentOptionRows(item.options?.scroll))}${renderEquipmentDetailSection('스타포스 옵션', renderEquipmentOptionRows(item.options?.starforce))}${renderEquipmentDetailSection('익셉셔널 옵션', renderEquipmentOptionRows(item.options?.exceptional))}${item.expiresAt ? `<p class="muted equipment-expiry">유효기간 ${escapeHtml(item.expiresAt)}</p>` : ''}`;
+  dialog.showModal();
+}
 function selectedHubCharacter(data = viewData()) {
   const list = data?.characters || [];
   if (!list.some(character => character.id === selectedHubCharacterId)) selectedHubCharacterId = list[0]?.id || '';
@@ -1299,6 +1463,8 @@ function renderCharacterHub(data = viewData()) {
   hero.innerHTML = characterHubHero(character);
   panel.innerHTML = activeCharacterHubTab === 'stats'
     ? renderCharacterHubStats(character)
+    : activeCharacterHubTab === 'equipment'
+      ? renderCharacterHubEquipment(character)
     : activeCharacterHubTab === 'content'
       ? renderCharacterHubContent(character, data)
       : renderCharacterHubOverview(character, data);
@@ -1806,6 +1972,7 @@ function onNexonCredentialAuthChanged({signedIn = false} = {}) {
   cloudAuthUiState = {initialized: true, signedIn: !!signedIn, ready: !signedIn};
   if (!signedIn) {
     onboardingCharacterCandidate = null;
+    clearNexonDetailRuntimeCache();
     nexonCredentialState = {status: 'signed-out', hasCredential: false, editing: false, message: ''};
     const input = $('#nexonCredentialInput');
     if (input) input.value = '';
@@ -2359,18 +2526,36 @@ function init() {
     if (card) openCharacterHub(card.dataset.character);
   });
   $('#characterHubBack').addEventListener('click', () => activatePage('summary'));
-  $('#characterHubSelect').addEventListener('change', e => { selectedHubCharacterId = e.target.value; renderCharacterHub(viewData()); });
+  $('#characterHubSelect').addEventListener('change', e => { selectedHubCharacterId = e.target.value; renderCharacterHub(viewData()); ensureCharacterHubEquipment(); });
   $$('[data-character-hub-tab]').forEach(button => button.addEventListener('click', () => {
     activeCharacterHubTab = button.dataset.characterHubTab;
     renderCharacterHub(viewData());
+    ensureCharacterHubEquipment();
   }));
   $('#characterHubTab').addEventListener('click', e => {
+    const equipmentItem = e.target.closest('[data-equipment-item]');
+    if (equipmentItem) { openEquipmentDetail(nexonEquipmentDialogItems.get(equipmentItem.dataset.equipmentItem)); return; }
+    if (e.target.closest('[data-equipment-retry]')) { ensureCharacterHubEquipment({force: true}); return; }
+    if (e.target.closest('[data-equipment-open-settings]')) {
+      activatePage('settings');
+      const route = $('[data-settings-route="nexon"]');
+      if (route?.tagName === 'DETAILS') route.open = true;
+      return;
+    }
     if (!e.target.closest('[data-hub-boss-manage]')) return;
     const character = selectedHubCharacter(viewData());
     if (!character) return;
     selectedBossCharacterId = character.id;
     activatePage('boss');
     renderBosses(viewData());
+  });
+  $('#characterHubTab').addEventListener('change', e => {
+    const select = e.target.closest('[data-equipment-preset]');
+    if (!select) return;
+    const character = selectedHubCharacter(viewData()), ocid = character?.nexonCharacter?.ocid;
+    if (!ocid) return;
+    nexonEquipmentPresetSelection.set(ocid, select.value);
+    renderCharacterHub(viewData());
   });
   $$('[data-tab]').forEach(button => button.addEventListener('click', () => activatePage(button.dataset.tab)));
   const openIncomeEntry = () => { returnTabAfterIncome = activeMainTab; activatePage('income', {updateNavigation: false}); };
@@ -2404,6 +2589,7 @@ function init() {
     try {
       const result = await nexonCredentialRequest('POST', {apiKey});
       input.value = '';
+      clearNexonDetailRuntimeCache();
       nexonCredentialState = {...result, status: 'saved', editing: false, message: '개인 NEXON API Key가 안전하게 등록되었습니다.'};
     } catch (error) {
       nexonCredentialState = {...previous, status: 'error', editing: true, message: nexonCredentialErrorMessage(error)};
@@ -2429,6 +2615,7 @@ function init() {
       await nexonCredentialRequest('DELETE');
       $('#nexonCredentialInput').value = '';
       onboardingCharacterCandidate = null;
+      clearNexonDetailRuntimeCache();
       nexonCredentialState = {status: 'ready', hasCredential: false, editing: true, message: 'NEXON API Key 연결을 해제했습니다.'};
     } catch (error) {
       nexonCredentialState = {...previous, status: 'error', editing: false, message: nexonCredentialErrorMessage(error)};
