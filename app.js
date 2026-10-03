@@ -975,6 +975,7 @@ let nexonCredentialState = {status: 'signed-out', hasCredential: false, editing:
 const NEXON_DETAIL_CLIENT_TTL_MS = 5 * 60 * 1000;
 const nexonDetailRuntimeCache = new Map();
 const nexonEquipmentPresetSelection = new Map();
+const nexonEquipmentItemSelection = new Map();
 const nexonEquipmentDialogItems = new Map();
 let cloudAuthUiState = {initialized: false, signedIn: false, ready: false};
 let onboardingWasActive = false, onboardingDismissed = false;
@@ -1253,6 +1254,7 @@ function nexonDetailCacheEntry(resource, ocid, now = Date.now()) {
 function clearNexonDetailRuntimeCache() {
   nexonDetailRuntimeCache.clear();
   nexonEquipmentPresetSelection.clear();
+  nexonEquipmentItemSelection.clear();
   nexonEquipmentDialogItems.clear();
 }
 function nexonDetailErrorMessage(error) {
@@ -1307,8 +1309,14 @@ async function ensureCharacterHubEquipment({force = false} = {}) {
 const NEXON_EQUIPMENT_SLOT_ORDER = Object.freeze([
   '모자', '얼굴장식', '눈장식', '귀고리', '상의', '한벌옷', '하의', '신발', '장갑', '망토',
   '벨트', '포켓 아이템', '펜던트', '펜던트2', '반지1', '반지2', '반지3', '반지4',
-  '무기', '보조무기', '엠블렘', '뱃지', '훈장', '기계 심장'
+  '무기', '보조무기', '엠블렘', '뱃지', '훈장', '안드로이드', '기계 심장'
 ]);
+const NEXON_EQUIPMENT_SLOT_GROUPS = Object.freeze([
+  {id: 'accessory', label: '장신구', slots: ['반지1', '반지2', '반지3', '반지4', '펜던트', '펜던트2', '얼굴장식', '눈장식', '귀고리', '포켓 아이템', '벨트', '뱃지', '훈장']},
+  {id: 'armor', label: '방어구', slots: ['모자', '어깨장식', '상의', '한벌옷', '하의', '장갑', '신발', '망토']},
+  {id: 'weapon', label: '무기·보조', slots: ['무기', '보조무기', '엠블렘', '안드로이드', '기계 심장']}
+]);
+const NEXON_KNOWN_EQUIPMENT_SLOTS = new Set(NEXON_EQUIPMENT_SLOT_GROUPS.flatMap(group => group.slots));
 function equipmentSlotOrder(item) {
   const slot = item?.slot || item?.part || '';
   const exact = NEXON_EQUIPMENT_SLOT_ORDER.indexOf(slot);
@@ -1327,7 +1335,10 @@ function equipmentPresetOptions(equipment) {
 }
 function selectedEquipmentView(ocid, equipment) {
   let selection = nexonEquipmentPresetSelection.get(ocid) || 'current';
-  if (selection !== 'current' && !equipment?.presets?.[selection]?.length) selection = 'current';
+  if (selection !== 'current' && !equipment?.presets?.[selection]?.length) {
+    selection = 'current';
+    nexonEquipmentPresetSelection.set(ocid, selection);
+  }
   const preset = selection === 'current' ? equipment?.equipment : equipment?.presets?.[selection];
   const title = selection === 'current' ? equipment?.title : equipment?.presetTitles?.[selection];
   return {selection, items: sortNexonEquipment(preset), title};
@@ -1343,13 +1354,39 @@ function equipmentImage(item, className = '') {
   const icon = typeof item?.icon === 'string' && /^https?:\/\//i.test(item.icon) ? item.icon : '';
   return icon ? `<img class="${escapeHtml(className)}" src="${escapeHtml(icon)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span class="equipment-icon-placeholder" aria-hidden="true">◇</span>`;
 }
-function renderEquipmentCards(items, group = 'equipment') {
-  if (!items.length) return '<p class="empty compact-empty">표시할 장비가 없습니다.</p>';
-  return `<div class="equipment-grid">${items.map((item, index) => {
-    const key = `${group}:${index}`;
-    nexonEquipmentDialogItems.set(key, item);
-    return `<button type="button" class="equipment-card" data-equipment-item="${escapeHtml(key)}" aria-label="${escapeHtml(item.name || item.slot || '장비')} 상세 보기">${equipmentImage(item, 'equipment-card-icon')}<span><small>${escapeHtml(item.slot || item.part || '기타 장비')}</small><b>${escapeHtml(item.name || '이름 없는 장비')}</b><span class="equipment-card-badges">${equipmentBadge(item)}</span></span></button>`;
-  }).join('')}</div>`;
+function equipmentEntries(items, group) {
+  return items.map((item, index) => {
+    const ref = `${group}:${index}`;
+    nexonEquipmentDialogItems.set(ref, item);
+    return {item, ref};
+  });
+}
+function equipmentSelectionKey(ocid, preset) {
+  return `${ocid}:${preset}`;
+}
+function resolveEquipmentSelection(ocid, preset, entries) {
+  const key = equipmentSelectionKey(ocid, preset);
+  let ref = nexonEquipmentItemSelection.get(key);
+  if (!entries.some(entry => entry.ref === ref)) ref = entries[0]?.ref || '';
+  if (ref) nexonEquipmentItemSelection.set(key, ref);
+  return ref;
+}
+function renderEquipmentCards(entries, selectedRef = '') {
+  if (!entries.length) return '<p class="empty compact-empty">표시할 장비가 없습니다.</p>';
+  return `<div class="equipment-grid">${entries.map(({item, ref}) => `<button type="button" class="equipment-card ${ref === selectedRef ? 'selected' : ''}" data-equipment-item="${escapeHtml(ref)}" aria-pressed="${ref === selectedRef}" aria-label="${escapeHtml(item.name || item.slot || '장비')} 상세 보기">${equipmentImage(item, 'equipment-card-icon')}<span><small>${escapeHtml(item.slot || item.part || '기타 장비')}</small><b>${escapeHtml(item.name || '이름 없는 장비')}</b><span class="equipment-card-badges">${equipmentBadge(item)}</span></span></button>`).join('')}</div>`;
+}
+function renderEquipmentSlot(entry, slot, selectedRef) {
+  if (!entry) return `<div class="equipment-slot empty" aria-label="${escapeHtml(slot)} 장비 없음"><span class="equipment-slot-icon" aria-hidden="true">◇</span><small>${escapeHtml(slot)}</small></div>`;
+  const {item, ref} = entry;
+  return `<button type="button" class="equipment-slot ${ref === selectedRef ? 'selected' : ''}" data-equipment-item="${escapeHtml(ref)}" aria-pressed="${ref === selectedRef}" aria-label="${escapeHtml(item.name || slot)} 상세 보기">${equipmentImage(item, 'equipment-slot-icon')}<span class="equipment-slot-copy"><small>${escapeHtml(slot)}</small><b>${escapeHtml(item.name || '이름 없는 장비')}</b><span class="equipment-card-badges">${equipmentBadge(item)}</span></span></button>`;
+}
+function renderEquipmentSlotBoard(entries, selectedRef) {
+  const bySlot = new Map(entries.map(entry => [String(entry.item?.slot || entry.item?.part || '').trim(), entry]));
+  return `<div class="equipment-slot-board">${NEXON_EQUIPMENT_SLOT_GROUPS.map(group => `<section class="equipment-slot-group" data-equipment-slot-group="${group.id}"><h5>${group.label}</h5><div class="equipment-slot-grid">${group.slots.map(slot => renderEquipmentSlot(bySlot.get(slot), slot, selectedRef)).join('')}</div></section>`).join('')}</div>`;
+}
+function renderEquipmentExtraSection(entries, selectedRef, title = '추가 장비') {
+  if (!entries.length) return '';
+  return `<section class="equipment-extra-section"><h5>${escapeHtml(title)} <small>${entries.length}개</small></h5><div class="equipment-extra-list">${entries.map(entry => renderEquipmentSlot(entry, entry.item?.slot || entry.item?.part || '기타 장비', selectedRef)).join('')}</div></section>`;
 }
 function renderCharacterHubEquipment(character) {
   const profile = character?.nexonCharacter;
@@ -1362,10 +1399,19 @@ function renderCharacterHubEquipment(character) {
   nexonEquipmentDialogItems.clear();
   const equipment = entry.data || {}, view = selectedEquipmentView(profile.ocid, equipment);
   const selectOptions = equipmentPresetOptions(equipment).map(item => `<option value="${item.value}" ${item.value === view.selection ? 'selected' : ''} ${item.disabled ? 'disabled' : ''}>${escapeHtml(item.label)}</option>`).join('');
-  const special = [...(equipment.dragonEquipment || []), ...(equipment.mechanicEquipment || [])];
+  const mainEntries = equipmentEntries(view.items, 'main');
+  const dragonEntries = equipmentEntries(sortNexonEquipment(equipment.dragonEquipment || []), 'dragon');
+  const mechanicEntries = equipmentEntries(sortNexonEquipment(equipment.mechanicEquipment || []), 'mechanic');
+  const allEntries = [...mainEntries, ...dragonEntries, ...mechanicEntries];
+  const selectedRef = resolveEquipmentSelection(profile.ocid, view.selection, allEntries);
+  const selectedItem = allEntries.find(item => item.ref === selectedRef)?.item;
+  const extraEntries = mainEntries.filter(entry => !NEXON_KNOWN_EQUIPMENT_SLOTS.has(String(entry.item?.slot || entry.item?.part || '').trim()));
   const fetchedAt = nexonCheckedLabel(equipment.fetchedAt);
   const titleMarkup = view.title ? `<section class="equipment-title-card"><div>${equipmentImage(view.title, 'equipment-title-icon')}</div><span><small>칭호</small><b>${escapeHtml(view.title.name || '칭호')}</b>${view.title.description ? `<p>${escapeHtml(view.title.description)}</p>` : ''}</span></section>` : '';
-  return `<div class="character-hub-equipment"><div class="equipment-toolbar"><div><h3>장비</h3><p class="muted">NEXON 현재 조회 기준${fetchedAt ? ` · ${escapeHtml(fetchedAt)}` : ''}</p></div><label>장비 프리셋<select data-equipment-preset aria-label="장비 프리셋 선택">${selectOptions}</select></label></div>${isPast() ? '<p class="notice equipment-history-notice">장비는 과거 주차 스냅샷이 아닌 현재 NEXON 조회 결과입니다.</p>' : ''}${titleMarkup}<section class="equipment-section"><h4>장착 장비 <small>${view.items.length}개</small></h4>${renderEquipmentCards(view.items, 'main')}</section>${special.length ? `<section class="equipment-section"><h4>전용 장비 <small>${special.length}개</small></h4>${renderEquipmentCards(sortNexonEquipment(special), 'special')}</section>` : ''}</div>`;
+  const dragonMobile = dragonEntries.length ? `<section class="equipment-section"><h4>용 장비 <small>${dragonEntries.length}개</small></h4>${renderEquipmentCards(dragonEntries, selectedRef)}</section>` : '';
+  const mechanicMobile = mechanicEntries.length ? `<section class="equipment-section"><h4>메카닉 장비 <small>${mechanicEntries.length}개</small></h4>${renderEquipmentCards(mechanicEntries, selectedRef)}</section>` : '';
+  const specialDesktop = `${renderEquipmentExtraSection(dragonEntries, selectedRef, '용 장비')}${renderEquipmentExtraSection(mechanicEntries, selectedRef, '메카닉 장비')}`;
+  return `<div class="character-hub-equipment"><div class="equipment-toolbar"><div><h3>장비</h3><p class="muted">NEXON 현재 조회 기준${fetchedAt ? ` · ${escapeHtml(fetchedAt)}` : ''}</p></div><label>장비 프리셋<select data-equipment-preset aria-label="장비 프리셋 선택">${selectOptions}</select><small>적용 중 · ${escapeHtml(equipmentPresetOptions(equipment).find(item => item.value === view.selection)?.label || '현재 장비')}</small></label></div>${isPast() ? '<p class="notice equipment-history-notice">장비는 과거 주차 스냅샷이 아닌 현재 NEXON 조회 결과입니다.</p>' : ''}${titleMarkup}<div class="equipment-mobile-list"><section class="equipment-section"><h4>장착 장비 <small>${view.items.length}개</small></h4>${renderEquipmentCards(mainEntries, selectedRef)}</section>${dragonMobile}${mechanicMobile}</div><div class="equipment-desktop-viewer"><div class="equipment-loadout"><div class="equipment-loadout-head"><h4>장착 장비</h4><small>슬롯을 선택하면 오른쪽에서 상세 옵션을 확인할 수 있습니다.</small></div>${renderEquipmentSlotBoard(mainEntries, selectedRef)}${renderEquipmentExtraSection(extraEntries, selectedRef)}${specialDesktop}</div><aside class="equipment-inline-detail" aria-label="선택 장비 상세" aria-live="polite">${selectedItem ? renderEquipmentDetailMarkup(selectedItem) : '<p class="empty compact-empty">선택할 장비가 없습니다.</p>'}</aside></div></div>`;
 }
 const EQUIPMENT_OPTION_LABELS = Object.freeze({
   str: 'STR', dex: 'DEX', int: 'INT', luk: 'LUK', max_hp: '최대 HP', max_mp: '최대 MP',
@@ -1379,24 +1425,33 @@ function equipmentHasValue(value) {
   return typeof value === 'string' && value.trim() !== '' && value.trim() !== '0';
 }
 function renderEquipmentOptionRows(options) {
-  const rows = Object.entries(options || {}).filter(([, value]) => equipmentHasValue(value));
+  const rows = Object.entries(options || {}).filter(([key, value]) => Object.hasOwn(EQUIPMENT_OPTION_LABELS, key) && equipmentHasValue(value));
   if (!rows.length) return '';
-  return `<dl class="equipment-option-list">${rows.map(([key, value]) => `<div><dt>${escapeHtml(EQUIPMENT_OPTION_LABELS[key] || key)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>`;
+  return `<dl class="equipment-option-list">${rows.map(([key, value]) => `<div><dt>${escapeHtml(EQUIPMENT_OPTION_LABELS[key])}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>`;
 }
 function renderEquipmentDetailSection(title, content) {
   return content ? `<section class="equipment-detail-section"><h3>${escapeHtml(title)}</h3>${content}</section>` : '';
+}
+function renderEquipmentDetailMarkup(item) {
+  const potential = Array.isArray(item?.potential?.options) ? item.potential.options : [];
+  const additionalPotential = Array.isArray(item?.additionalPotential?.options) ? item.additionalPotential.options : [];
+  const enhancements = [
+    [Number.isInteger(item.starforce), '스타포스', `${item.starforce}성`],
+    [Number.isInteger(item.scrollUpgrade), '업그레이드', `${item.scrollUpgrade}회`],
+    [Number.isInteger(item.exceptionalUpgrade), '익셉셔널', `${item.exceptionalUpgrade}회`],
+    [Number.isInteger(item.specialRingLevel), '특수 반지 Lv.', String(item.specialRingLevel)]
+  ].filter(([visible]) => visible);
+  return `<header class="equipment-detail-head">${equipmentImage(item, 'equipment-detail-icon')}<div><small>${escapeHtml(item.slot || item.part || '기타 장비')}</small><b>${escapeHtml(item.name || '이름 없는 장비')}</b>${item.description ? `<p>${escapeHtml(item.description)}</p>` : ''}</div></header>${renderEquipmentDetailSection('강화', enhancements.length ? `<dl class="equipment-enhancement-list">${enhancements.map(([, label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>` : '')}${renderEquipmentDetailSection(item.potential?.grade ? `잠재능력 · ${item.potential.grade}` : '잠재능력', potential.map(value => `<p>${escapeHtml(value)}</p>`).join(''))}${renderEquipmentDetailSection(item.additionalPotential?.grade ? `에디셔널 잠재능력 · ${item.additionalPotential.grade}` : '에디셔널 잠재능력', additionalPotential.map(value => `<p>${escapeHtml(value)}</p>`).join(''))}${renderEquipmentDetailSection('소울', [item.soul?.name, item.soul?.option].filter(Boolean).map(value => `<p>${escapeHtml(value)}</p>`).join(''))}${renderEquipmentDetailSection('총 옵션', renderEquipmentOptionRows(item.options?.total))}${item.expiresAt ? `<p class="muted equipment-expiry">유효기간 ${escapeHtml(item.expiresAt)}</p>` : ''}`;
 }
 function openEquipmentDetail(item) {
   const dialog = $('#equipmentDetailDialog');
   if (!dialog || !item) return;
   $('#equipmentDetailTitle').textContent = item.name || item.slot || '장비 상세';
-  $('#equipmentDetailBody').innerHTML = `<header class="equipment-detail-head">${equipmentImage(item, 'equipment-detail-icon')}<div><small>${escapeHtml(item.slot || item.part || '기타 장비')}</small><b>${escapeHtml(item.name || '이름 없는 장비')}</b>${item.description ? `<p>${escapeHtml(item.description)}</p>` : ''}</div></header>${renderEquipmentDetailSection('강화', [
-    Number.isInteger(item.starforce) ? `스타포스 ${item.starforce}성` : '',
-    Number.isInteger(item.scrollUpgrade) ? `업그레이드 ${item.scrollUpgrade}회` : '',
-    Number.isInteger(item.exceptionalUpgrade) ? `익셉셔널 ${item.exceptionalUpgrade}회` : '',
-    Number.isInteger(item.specialRingLevel) ? `특수 반지 Lv. ${item.specialRingLevel}` : ''
-  ].filter(Boolean).map(value => `<span class="equipment-detail-chip">${escapeHtml(value)}</span>`).join(''))}${renderEquipmentDetailSection(item.potential?.grade ? `잠재능력 · ${item.potential.grade}` : '잠재능력', item.potential?.options?.map(value => `<p>${escapeHtml(value)}</p>`).join(''))}${renderEquipmentDetailSection(item.additionalPotential?.grade ? `에디셔널 잠재능력 · ${item.additionalPotential.grade}` : '에디셔널 잠재능력', item.additionalPotential?.options?.map(value => `<p>${escapeHtml(value)}</p>`).join(''))}${renderEquipmentDetailSection('소울', [item.soul?.name, item.soul?.option].filter(Boolean).map(value => `<p>${escapeHtml(value)}</p>`).join(''))}${renderEquipmentDetailSection('총 옵션', renderEquipmentOptionRows(item.options?.total))}${renderEquipmentDetailSection('기본 옵션', renderEquipmentOptionRows(item.options?.base))}${renderEquipmentDetailSection('추가 옵션', renderEquipmentOptionRows(item.options?.add))}${renderEquipmentDetailSection('업그레이드 옵션', renderEquipmentOptionRows(item.options?.scroll))}${renderEquipmentDetailSection('스타포스 옵션', renderEquipmentOptionRows(item.options?.starforce))}${renderEquipmentDetailSection('익셉셔널 옵션', renderEquipmentOptionRows(item.options?.exceptional))}${item.expiresAt ? `<p class="muted equipment-expiry">유효기간 ${escapeHtml(item.expiresAt)}</p>` : ''}`;
+  $('#equipmentDetailBody').innerHTML = renderEquipmentDetailMarkup(item);
   dialog.showModal();
+}
+function equipmentUsesInlineDetail() {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(min-width: 1100px)').matches;
 }
 function selectedHubCharacter(data = viewData()) {
   const list = data?.characters || [];
@@ -2534,7 +2589,14 @@ function init() {
   }));
   $('#characterHubTab').addEventListener('click', e => {
     const equipmentItem = e.target.closest('[data-equipment-item]');
-    if (equipmentItem) { openEquipmentDetail(nexonEquipmentDialogItems.get(equipmentItem.dataset.equipmentItem)); return; }
+    if (equipmentItem) {
+      const ref = equipmentItem.dataset.equipmentItem, item = nexonEquipmentDialogItems.get(ref);
+      const character = selectedHubCharacter(viewData()), ocid = character?.nexonCharacter?.ocid;
+      if (ocid) nexonEquipmentItemSelection.set(equipmentSelectionKey(ocid, nexonEquipmentPresetSelection.get(ocid) || 'current'), ref);
+      if (equipmentUsesInlineDetail()) renderCharacterHub(viewData());
+      else openEquipmentDetail(item);
+      return;
+    }
     if (e.target.closest('[data-equipment-retry]')) { ensureCharacterHubEquipment({force: true}); return; }
     if (e.target.closest('[data-equipment-open-settings]')) {
       activatePage('settings');
