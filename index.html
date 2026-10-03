@@ -73,6 +73,19 @@
       </section>
       <section class="panel home-recent-panel" aria-labelledby="homeRecentTitle"><div class="panel-head"><div><h2 id="homeRecentTitle">최근 기록</h2><p class="muted">가장 최근에 저장한 수익 기록입니다.</p></div><button class="ghost compact" type="button" data-open-page="history">전체 보기</button></div><div id="homeRecentRecords" class="home-recent-records"></div></section>
     </div>
+    <section class="character-hub hidden" data-page="character" id="characterHubTab" aria-labelledby="characterHubTitle">
+      <div class="character-hub-toolbar">
+        <button id="characterHubBack" class="text-button character-hub-back" type="button">← 홈으로</button>
+        <label class="character-hub-picker" for="characterHubSelect"><span>캐릭터</span><select id="characterHubSelect" aria-label="캐릭터 허브 캐릭터 선택"></select></label>
+      </div>
+      <section class="panel character-hub-hero" id="characterHubHero"></section>
+      <div class="seg character-hub-tabs" role="tablist" aria-label="캐릭터 허브 메뉴">
+        <button id="characterHubOverviewTab" type="button" role="tab" data-character-hub-tab="overview" aria-controls="characterHubPanel" aria-selected="true" class="active">개요</button>
+        <button id="characterHubStatsTab" type="button" role="tab" data-character-hub-tab="stats" aria-controls="characterHubPanel" aria-selected="false">스펙</button>
+        <button id="characterHubContentTab" type="button" role="tab" data-character-hub-tab="content" aria-controls="characterHubPanel" aria-selected="false">콘텐츠</button>
+      </div>
+      <section class="panel character-hub-panel" id="characterHubPanel" role="tabpanel" aria-live="polite"></section>
+    </section>
     <section class="panel hidden" data-page="boss" id="bossTab">
       <div class="boss-page-head"><div><h2>보스</h2><p class="muted">주간·월간 보스를 초기화 주기에 맞게 관리해요.</p></div><div class="boss-character-tools"><label class="sr-only" for="bossCharacterSelect">캐릭터 선택</label><select id="bossCharacterSelect" aria-label="캐릭터 선택"></select><button class="ghost compact" id="addCharacterFromBoss" type="button">+ 캐릭터 추가</button><details class="more-menu" id="characterMenu"><summary aria-label="캐릭터 메뉴">⋯</summary><div class="more-menu-popover"><button type="button" data-character-action="rename">캐릭터 이름 변경</button><button type="button" data-character-action="apply-preset">프리셋 적용</button><button type="button" data-character-action="save-preset">현재 구성을 프리셋으로 저장</button><button type="button" class="danger-text" data-character-action="delete">캐릭터 삭제</button></div></details></div></div>
       <div class="seg filters" role="group" aria-label="보스 완료 필터"><button data-filter="pending" class="active" aria-pressed="true">미완료</button><button data-filter="all" aria-pressed="false">전체</button><button data-filter="done" aria-pressed="false">완료</button></div>

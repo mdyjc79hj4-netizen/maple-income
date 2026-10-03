@@ -76,7 +76,7 @@ input[type=checkbox]{accent-color:var(--accent);width:21px;min-height:21px;heigh
 .danger{background:var(--danger-bg);border-color:var(--danger-border);color:var(--danger-text)}
 .danger-text{color:var(--red)!important}
 .full{width:100%;margin-top:12px}
-.character{width:100%;display:grid;grid-template-columns:minmax(0,1fr);gap:10px;text-align:left;background:var(--surface-deep);border:1px solid var(--line);border-radius:12px;margin-top:9px;padding:13px;color:var(--text);cursor:pointer}
+.character{width:100%;display:grid;grid-template-columns:minmax(0,1fr);gap:10px;text-align:left;background:var(--surface-deep);border:1px solid var(--line);border-radius:12px;margin-top:9px;padding:13px;color:var(--text)}
 .character:hover{border-color:var(--line-strong);background:var(--hover)}
 .character-main{display:flex;align-items:center;gap:12px;min-width:0;order:1}
 .character-identity{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
@@ -99,15 +99,12 @@ input[type=checkbox]{accent-color:var(--accent);width:21px;min-height:21px;heigh
 .character-weekly-income{display:flex;align-items:baseline;justify-content:flex-end;gap:7px;margin-left:auto;min-width:0;text-align:right}
 .character-weekly-income small{margin:0;white-space:nowrap}
 .character-weekly-income strong{font-size:14px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
-.character-income-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:0;order:3}
-.character-income-grid div{display:grid;gap:2px;background:var(--surface-soft);border-radius:9px;padding:7px 9px}
-.character-income-grid dd{font-weight:600;overflow-wrap:anywhere}
+.character-detail-button{justify-self:end;border:0;background:transparent;color:var(--blue);min-height:40px;padding:6px 2px;font-size:11px;font-weight:700}
+.character-detail-button:hover{text-decoration:underline}
 .character-spec{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding-top:9px;border-top:1px solid var(--line);order:4}
 .character-spec>span{display:flex;align-items:baseline;justify-content:space-between;gap:8px;min-width:0}
 .character-spec small{margin:0;color:var(--muted);white-space:nowrap}
 .character-spec b{font-size:14px;color:var(--text);font-variant-numeric:tabular-nums;text-align:right;overflow-wrap:anywhere}
-.stat-detail-toggle{grid-column:1/-1;justify-self:end;border:0;background:transparent;color:var(--blue);min-height:36px;padding:6px 2px;font-size:11px;font-weight:650}
-.stat-detail-toggle:hover{text-decoration:underline}
 .character-stat-details{grid-column:1/-1;display:grid;gap:10px;order:5;padding-top:11px;border-top:1px solid var(--line);cursor:default}
 .character-stat-details>b{font-size:13px}
 .character-stat-details>.muted{margin:0}
@@ -118,6 +115,54 @@ input[type=checkbox]{accent-color:var(--accent);width:21px;min-height:21px;heigh
 .character-stat-group dl div{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;gap:8px}
 .character-stat-group dt{font-size:11px;overflow-wrap:anywhere}
 .character-stat-group dd{font-size:12px;font-weight:650;font-variant-numeric:tabular-nums;text-align:right;overflow-wrap:anywhere}
+.character-hub{max-width:1000px}
+.character-hub-toolbar{display:flex;align-items:end;justify-content:space-between;gap:12px;margin-bottom:10px}
+.character-hub-back{padding-left:0}
+.character-hub-picker{display:grid;grid-template-columns:auto minmax(150px,220px);align-items:center;gap:8px;color:var(--muted);font-size:11px}
+.character-hub-picker select{min-height:40px;padding-top:7px;padding-bottom:7px;font-size:13px}
+.character-hub-hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(250px,.8fr);align-items:center;gap:20px;background:var(--panel)}
+.character-hub-identity{display:flex;align-items:center;gap:16px;min-width:0}
+.character-hub-identity>div{min-width:0}
+.character-hub-identity h2{margin-top:3px;font-size:24px;overflow-wrap:anywhere}
+.character-hub-link-state{display:inline-flex;color:var(--muted);font-size:10px;font-weight:700}
+.character-hub-link-state.linked{color:var(--success)}
+.hub-art{width:118px;height:112px;border:0;background:transparent}
+.hub-art img{object-position:center 54%;transform:translateY(4px) scale(2);transform-origin:center 54%}
+.hub-profile-line{font-size:12px}
+.character-hub-core-stats{display:grid;gap:8px;margin:0}
+.character-hub-core-stats div{display:grid;grid-template-columns:72px minmax(0,1fr);align-items:baseline;gap:12px;padding:7px 0;border-bottom:1px solid var(--line)}
+.character-hub-core-stats div:last-child{border-bottom:0}
+.character-hub-core-stats dd{font-size:15px;font-weight:700;text-align:right;overflow-wrap:anywhere}
+.character-hub-tabs{grid-template-columns:repeat(3,1fr);margin-bottom:10px}
+.character-hub-tabs button.active{background:var(--active);color:var(--accent-text)}
+.character-hub-panel{margin-bottom:0}
+.character-hub-overview{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.character-hub-section{min-width:0;padding:13px;border:1px solid var(--line);border-radius:12px;background:var(--surface-soft)}
+.character-hub-overview>.character-hub-section:first-child{grid-column:1/-1}
+.character-hub-section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.character-hub-section-head p{margin-top:2px;font-size:10px}
+.character-hub-section-head>strong{color:var(--accent-text);font-size:13px}
+.character-hub-income-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0 5px}
+.character-hub-income-grid div{display:grid;gap:3px;padding:8px 9px;border-radius:9px;background:var(--panel)}
+.character-hub-income-grid dd{font-size:13px;font-weight:700;overflow-wrap:anywhere}
+.character-hub-activity-summary{margin:0}
+.character-hub-activity-summary dd,.character-hub-nexon-info dd{font-weight:700;text-align:right}
+.character-hub-manage{width:100%;margin-top:10px}
+.character-hub-stats>.character-spec{grid-template-columns:repeat(2,minmax(0,1fr));padding:0 0 14px;border-top:0;border-bottom:1px solid var(--line)}
+.character-hub-stats>.character-spec>span{padding:10px 12px;border-radius:10px;background:var(--surface-soft)}
+.character-hub-stats>.character-spec b{font-size:17px}
+.character-hub-stats>.character-stat-details{padding-top:14px;border-top:0}
+.character-hub-content{display:grid;gap:12px}
+.character-hub-status-list{display:grid}
+.character-hub-status-row{display:grid;grid-template-columns:22px minmax(100px,1fr) minmax(70px,.5fr) 58px minmax(90px,.7fr);align-items:center;gap:8px;min-height:42px;padding:7px 4px;border-top:1px solid var(--line);font-size:11px}
+.character-hub-status-row:first-child{border-top:0}
+.character-hub-status-row b{font-size:12px;overflow-wrap:anywhere}
+.character-hub-status-row small{color:var(--muted)}
+.character-hub-status-row>span:not(.character-hub-status-icon){color:var(--muted);text-align:center}
+.character-hub-status-row strong{text-align:right;overflow-wrap:anywhere}
+.character-hub-status-row.completed .character-hub-status-icon,.character-hub-status-row.completed>span:not(.character-hub-status-icon){color:var(--success)}
+.character-hub-status-row.activity{grid-template-columns:22px minmax(0,1fr) 58px}
+.character-hub-status-icon{color:var(--muted);font-size:14px;font-weight:800;text-align:center}
 .progress-label{font-size:11px;color:var(--muted)}
 progress{width:100%;height:5px;accent-color:var(--accent);border:0;border-radius:10px;overflow:hidden}
 progress::-webkit-progress-bar{background:var(--surface-deep)}
@@ -569,17 +614,16 @@ main>.week-card>label span{font-size:9px}
 main>.week-card select{min-height:40px;padding-top:7px;padding-bottom:7px;font-size:13px}
 main>.week-card .week-footer{justify-content:flex-start;margin:0;min-height:40px}
 main>#status{margin:5px 0 10px}
-.character{grid-template-columns:minmax(0,1fr) minmax(220px,280px);grid-template-areas:"profile spec" "progress progress" "income income" "details details";column-gap:24px;row-gap:8px;padding:11px 18px 12px}
+#characterList{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.character{grid-template-columns:minmax(0,1fr) minmax(150px,.75fr);grid-template-areas:"profile spec" "progress progress" "detail detail";column-gap:18px;row-gap:7px;margin-top:0;padding:10px 14px}
 .character-main{grid-area:profile}
 .character-spec{grid-area:spec;grid-template-columns:1fr;align-content:center;gap:5px;padding:0;border:0}
-.character-spec>span{display:grid;grid-template-columns:68px minmax(0,1fr);gap:10px}
-.character-spec b{font-size:15px}
+.character-spec>span{display:grid;grid-template-columns:52px minmax(0,1fr);gap:7px}
+.character-spec b{font-size:13px}
 .character-progress{grid-area:progress}
-.character-income-grid{grid-area:income}
-.character-income-grid div{grid-template-columns:auto minmax(0,1fr);align-items:baseline;padding:6px 10px}
-.character-income-grid dd{text-align:right}
-.character-stat-details{grid-area:details}
+.character-detail-button{grid-area:detail}
 .character-stat-groups{grid-template-columns:repeat(4,minmax(0,1fr));gap:18px}
+.character-hub{width:min(1000px,100%)}
 #weeklyActivityList{display:block}
 .history-desktop-head{display:grid;grid-template-columns:88px minmax(120px,.9fr) minmax(220px,1.8fr) minmax(150px,.9fr) 110px 44px;gap:12px;padding:0 8px 7px 12px;color:var(--muted);font-size:10px}
 #incomeHistory.compact-history{gap:0;border:1px solid var(--line);border-radius:12px;overflow:visible}
@@ -641,6 +685,35 @@ main>#status{margin:5px 0 10px}
 .onboarding-shell .nexon-credential-head{display:grid}.onboarding-shell .nexon-credential-badge{justify-self:start}.onboarding-shell .nexon-credential-security{font-size:10px}
 .settings-route-body{padding-left:7px;padding-right:7px}
 .home-progress{grid-template-columns:1fr}
+.character-hub-toolbar{display:grid;align-items:stretch}
+.character-hub-back{justify-self:start}
+.character-hub-picker{grid-template-columns:1fr;width:100%;gap:4px}
+.character-hub-picker select{width:100%;min-height:44px}
+.character-hub-hero{grid-template-columns:1fr;gap:10px;padding:14px}
+.character-hub-identity{gap:10px}
+.character-hub-identity h2{font-size:20px}
+.hub-art{width:92px;height:88px}
+.character-hub-core-stats div{grid-template-columns:62px minmax(0,1fr);padding:5px 0}
+.character-hub-core-stats dd{font-size:13px}
+.character-hub-tabs{margin-bottom:8px}
+.character-hub-tabs button{min-height:44px;padding-left:4px;padding-right:4px}
+.character-hub-panel{padding:13px}
+.character-hub-overview{grid-template-columns:1fr}
+.character-hub-overview>.character-hub-section:first-child{grid-column:auto}
+.character-hub-section{padding:11px}
+.character-hub-income-grid{grid-template-columns:1fr;gap:5px}
+.character-hub-income-grid div{grid-template-columns:minmax(0,1fr) auto;align-items:baseline;padding:6px 8px}
+.character-hub-income-grid dd{text-align:right}
+.character-hub-stats>.character-spec{grid-template-columns:1fr 1fr}
+.character-hub-stats>.character-spec>span{display:grid;gap:3px;padding:8px}
+.character-hub-stats>.character-spec b{text-align:left;font-size:14px}
+.character-hub-status-row{grid-template-columns:22px minmax(0,1fr) auto;grid-template-areas:"icon name state" "icon difficulty state" "icon value value";gap:2px 7px;padding:8px 2px}
+.character-hub-status-row .character-hub-status-icon{grid-area:icon}
+.character-hub-status-row b{grid-area:name}
+.character-hub-status-row small{grid-area:difficulty}
+.character-hub-status-row>span:not(.character-hub-status-icon){grid-area:state}
+.character-hub-status-row strong{grid-area:value;text-align:left}
+.character-hub-status-row.activity{grid-template-columns:22px minmax(0,1fr) auto;grid-template-areas:"icon name state"}
 .weekly-activities-head{align-items:flex-start}
 .weekly-activities-head .api-badge{margin-top:2px}
 .character-picker-head{display:grid;grid-template-columns:minmax(0,1fr)}
@@ -652,7 +725,6 @@ main>#status{margin:5px 0 10px}
 .more-menu{grid-column:2;grid-row:1}
 .direct-boss-row{grid-template-columns:minmax(0,1fr) 78px 78px;padding:8px 7px;gap:5px}
 .direct-boss-row select{padding:6px 5px;font-size:11px}
-.character-income-grid{grid-template-columns:1fr}
 .character-spec{grid-template-columns:1fr 1fr}
 .character-stat-groups{grid-template-columns:1fr;gap:12px}
 .sale-entry-grid,.sale-result-grid{grid-template-columns:1fr}

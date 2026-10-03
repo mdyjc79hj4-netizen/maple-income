@@ -967,7 +967,7 @@ function rollover(data, now = new Date()) {
 let state, savedRaw = null, storageBlocked = false, migrationSyncInfo = null;
 let selectedWeek = '', bossFilter = 'pending', historyFilter = 'all', selectedBossCharacterId = '', selectedActivityCharacterId = '', characterMode = 'preset', presetApplyMode = 'add';
 let editingIncomeId = '', editSaleState = 'acquired', incomeFeeRateDraft = null;
-const expandedStatCharacterIds = new Set();
+let selectedHubCharacterId = '', activeCharacterHubTab = 'overview';
 let nexonApiState = {status: 'idle', message: '연동할 캐릭터를 선택해주세요.', diagnostics: null};
 let nexonSchedulerDiagnosticState = {status: 'idle', characterId: '', result: null, message: '진단을 실행하면 두 요청 결과를 비교합니다.'};
 let nexonCredentialAuthBridge = null;
@@ -1072,6 +1072,7 @@ function renderAppExperience() {
 }
 function navigationSurfaceFor(page, mainTab = activeMainTab) {
   if (page === 'income') return 'income';
+  if (page === 'character') return 'summary';
   return mainNavigationPages.includes(page) ? page : mainTab;
 }
 function applyNavigationState(buttons, surface) {
@@ -1216,12 +1217,11 @@ function nexonStatValue(value, type) {
   const formatted = value.toLocaleString('ko-KR', {maximumFractionDigits: 20});
   return type === 'percent' ? `${formatted}%` : formatted;
 }
-function nexonSpecSummary(character, expanded = false) {
+function nexonSpecSummary(character) {
   const profile = character?.nexonCharacter;
   const combatPower = Number.isInteger(profile?.combatPower) ? koreanNumber(profile.combatPower) : '정보 없음';
   const unionLevel = Number.isInteger(profile?.unionLevel) ? profile.unionLevel.toLocaleString('ko-KR') : '정보 없음';
-  const detailsId = `character-stats-${character?.id || ''}`;
-  return `<span class="character-spec"><span><small>전투력</small><b>${escapeHtml(combatPower)}</b></span><span><small>유니온</small><b>${escapeHtml(unionLevel)}</b></span><button type="button" class="stat-detail-toggle" data-stat-toggle aria-expanded="${expanded}" aria-controls="${escapeHtml(detailsId)}">${expanded ? '스펙 상세 닫기' : '스펙 상세 보기'}</button></span>`;
+  return `<span class="character-spec"><span><small>전투력</small><b>${escapeHtml(combatPower)}</b></span><span><small>유니온</small><b>${escapeHtml(unionLevel)}</b></span></span>`;
 }
 function nexonStatDetails(character) {
   const stats = normalizeNexonStats(character?.nexonCharacter?.stats);
@@ -1229,6 +1229,82 @@ function nexonStatDetails(character) {
   const detailsId = `character-stats-${character?.id || ''}`;
   if (!groups.length) return `<section id="${escapeHtml(detailsId)}" class="character-stat-details"><b>상세 스펙</b><p class="muted">상세 스펙 정보가 없습니다.</p></section>`;
   return `<section id="${escapeHtml(detailsId)}" class="character-stat-details"><b>상세 스펙</b><div class="character-stat-groups">${groups.map(group => `<section class="character-stat-group" data-stat-group="${escapeHtml(group.id)}"><h4>${escapeHtml(group.title)}</h4><dl>${group.items.map(([key, label, type]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(nexonStatValue(stats[key], type))}</dd></div>`).join('')}</dl></section>`).join('')}</div></section>`;
+}
+function selectedHubCharacter(data = viewData()) {
+  const list = data?.characters || [];
+  if (!list.some(character => character.id === selectedHubCharacterId)) selectedHubCharacterId = list[0]?.id || '';
+  return list.find(character => character.id === selectedHubCharacterId) || null;
+}
+function renderHomeCharacterCard(character, data) {
+  const stats = characterStats(character), percent = stats.count ? Math.round(stats.done / stats.count * 100) : 0;
+  const weekId = data?.weekId || data?.currentWeek || '';
+  return `<article class="character character-summary-card" data-character="${escapeHtml(character.id)}"><span class="character-main"><span class="character-identity">${nexonProfileAvatar(character, 'summary-art')}<span class="character-identity-copy"><b>${escapeHtml(character.name)}</b>${nexonProfileCopy(character)}</span></span></span>${nexonSpecSummary(character)}<span class="character-progress"><span class="character-progress-head"><small>주간 보스 ${stats.done} / ${stats.count} · ${percent}%</small><span class="character-weekly-income"><small>이번 주 보스 수익</small><strong class="mint">${money(bossIncomeForWeek(character, weekId))}</strong></span></span><progress value="${stats.done}" max="${stats.count || 1}" aria-label="${escapeHtml(character.name)} 주간 보스 진행률"></progress></span><button type="button" class="character-detail-button" data-character-detail aria-label="${escapeHtml(character.name)} 캐릭터 상세 보기">상세 보기 <span aria-hidden="true">›</span></button></article>`;
+}
+function characterHubHero(character) {
+  const profile = character?.nexonCharacter, linked = !!profile?.ocid;
+  const combatPower = Number.isInteger(profile?.combatPower) ? koreanNumber(profile.combatPower) : '정보 없음';
+  const unionLevel = Number.isInteger(profile?.unionLevel) ? profile.unionLevel.toLocaleString('ko-KR') : '정보 없음';
+  const unionGrade = profile?.unionGrade ? ` · ${escapeHtml(profile.unionGrade)}` : '';
+  return `<div class="character-hub-identity">${nexonProfileAvatar(character, 'hub-art')}<div><span class="character-hub-link-state ${linked ? 'linked' : ''}">NEXON ${linked ? '● 연결됨' : '미연동'}</span><h2 id="characterHubTitle">${escapeHtml(character.name)}</h2>${nexonProfileCopy(character, 'hub-profile-line')}</div></div><dl class="character-hub-core-stats"><div><dt>전투력</dt><dd>${escapeHtml(combatPower)}</dd></div><div><dt>유니온</dt><dd>${escapeHtml(unionLevel)}${unionGrade}</dd></div></dl>`;
+}
+function renderCharacterHubOverview(character, data) {
+  const stats = characterStats(character), percent = stats.count ? Math.round(stats.done / stats.count * 100) : 0;
+  const activities = normalizeWeeklyActivities(character.weeklyActivities, 'character', true);
+  const accountActivities = normalizeWeeklyActivities(data?.accountWeeklyActivities, 'account', true);
+  const characterDone = activities.filter(activity => activity.done).length, accountDone = accountActivities.filter(activity => activity.done).length;
+  const profile = character.nexonCharacter, checkedAt = profile?.profileCheckedAt || profile?.statsCheckedAt || profile?.lastCheckedAt;
+  return `<div class="character-hub-overview"><section class="character-hub-section"><div class="character-hub-section-head"><div><h3>이번 주 보스</h3><p class="muted">주간 보스 진행과 수익</p></div><strong>${stats.done} / ${stats.count}</strong></div><progress value="${stats.done}" max="${stats.count || 1}" aria-label="${escapeHtml(character.name)} 주간 보스 진행률"></progress><dl class="character-hub-income-grid"><div><dt>완료 수익</dt><dd>${money(stats.earned)}</dd></div><div><dt>예상 수익</dt><dd>${money(stats.expected)}</dd></div><div><dt>남은 수익</dt><dd>${money(stats.remaining)}</dd></div></dl><small class="muted">진행률 ${percent}%</small></section><section class="character-hub-section"><div class="character-hub-section-head"><div><h3>주간 콘텐츠</h3><p class="muted">범위별 완료 상태</p></div></div><dl class="character-hub-activity-summary"><div><dt>캐릭터별 콘텐츠</dt><dd>${characterDone} / ${activities.length}</dd></div><div><dt>계정 공용 콘텐츠</dt><dd>${accountDone} / ${accountActivities.length}</dd></div></dl></section><section class="character-hub-section character-hub-nexon-info"><div class="character-hub-section-head"><div><h3>NEXON 정보</h3><p class="muted">저장된 프로필 기준</p></div></div><dl><div><dt>연동 상태</dt><dd>${profile?.ocid ? '연결됨' : '미연동'}</dd></div><div><dt>마지막 프로필 확인</dt><dd>${escapeHtml(nexonCheckedLabel(checkedAt))}</dd></div></dl></section><button type="button" class="ghost character-hub-manage" data-hub-boss-manage>보스 관리 ›</button></div>`;
+}
+function renderCharacterHubStats(character) {
+  return `<div class="character-hub-stats">${nexonSpecSummary(character)}${nexonStatDetails(character)}</div>`;
+}
+function characterHubBossRows(character, data, monthly = false) {
+  const weekId = data?.weekId || data?.currentWeek || selectedWeek || '';
+  const bosses = normalizeBosses(character.bosses).filter(boss => isMonthlyBoss(boss) === monthly);
+  if (!bosses.length) return '<p class="empty compact-empty">등록된 보스가 없습니다.</p>';
+  return `<div class="character-hub-status-list">${bosses.map(boss => {
+    const done = bossDoneForView(boss, data);
+    const value = monthly && isPast() ? monthlyBossIncomeForWeek(boss, weekId) || bossValue(boss) : done && boss.completedIncome != null ? boss.completedIncome : bossValue(boss);
+    return `<div class="character-hub-status-row ${done ? 'completed' : ''}"><span class="character-hub-status-icon" aria-hidden="true">${done ? '✓' : '○'}</span><b>${escapeHtml(boss.name)}</b><small>${escapeHtml(boss.difficulty)}</small><span>${done ? '완료' : '미완료'}</span><strong>${money(value)}</strong></div>`;
+  }).join('')}</div>`;
+}
+function characterHubActivityRows(activities) {
+  if (!activities.length) return '<p class="empty compact-empty">표시할 주간 콘텐츠가 없습니다.</p>';
+  return `<div class="character-hub-status-list">${activities.map(activity => `<div class="character-hub-status-row activity ${activity.done ? 'completed' : ''}"><span class="character-hub-status-icon" aria-hidden="true">${activity.done ? '✓' : '○'}</span><b>${escapeHtml(activity.name)}</b><span>${activity.done ? '완료' : '미완료'}</span></div>`).join('')}</div>`;
+}
+function renderCharacterHubContent(character, data) {
+  const activities = normalizeWeeklyActivities(character.weeklyActivities, 'character', true);
+  const accountActivities = normalizeWeeklyActivities(data?.accountWeeklyActivities, 'account', true);
+  return `<div class="character-hub-content"><section class="character-hub-section"><div class="character-hub-section-head"><div><h3>주간 보스</h3><p class="muted">선택한 난이도와 현재 완료 상태</p></div></div>${characterHubBossRows(character, data)}</section><section class="character-hub-section"><div class="character-hub-section-head"><div><h3>월간 보스</h3><p class="muted">기존 월간 완료 기록 기준</p></div></div>${characterHubBossRows(character, data, true)}</section><section class="character-hub-section"><div class="character-hub-section-head"><div><h3>캐릭터별 주간 콘텐츠</h3></div></div>${characterHubActivityRows(activities)}</section><section class="character-hub-section"><div class="character-hub-section-head"><div><h3>계정 공용 콘텐츠</h3></div></div>${characterHubActivityRows(accountActivities)}</section><button type="button" class="ghost character-hub-manage" data-hub-boss-manage>보스 관리 ›</button></div>`;
+}
+function renderCharacterHub(data = viewData()) {
+  const character = selectedHubCharacter(data), characters = data?.characters || [];
+  const selector = $('#characterHubSelect'), hero = $('#characterHubHero'), panel = $('#characterHubPanel');
+  if (!selector || !hero || !panel) return;
+  selector.innerHTML = characters.map(item => option(item.id, item.name, item.id === character?.id)).join('');
+  selector.disabled = !characters.length;
+  $$('[data-character-hub-tab]').forEach(button => {
+    const active = button.dataset.characterHubTab === activeCharacterHubTab;
+    button.classList.toggle('active', active); button.setAttribute('aria-selected', String(active)); button.tabIndex = active ? 0 : -1;
+  });
+  if (!character) {
+    hero.innerHTML = '<h2 id="characterHubTitle">캐릭터 허브</h2><p class="empty">저장된 캐릭터가 없습니다.</p>';
+    panel.innerHTML = '<p class="empty">캐릭터를 추가하면 프로필과 주간 현황을 확인할 수 있습니다.</p>';
+    return;
+  }
+  hero.innerHTML = characterHubHero(character);
+  panel.innerHTML = activeCharacterHubTab === 'stats'
+    ? renderCharacterHubStats(character)
+    : activeCharacterHubTab === 'content'
+      ? renderCharacterHubContent(character, data)
+      : renderCharacterHubOverview(character, data);
+}
+function openCharacterHub(characterId) {
+  const characters = viewData()?.characters || [];
+  selectedHubCharacterId = characters.some(character => character.id === characterId) ? characterId : characters[0]?.id || '';
+  activeCharacterHubTab = 'overview';
+  renderCharacterHub(viewData());
+  activatePage('character');
 }
 function render() {
   if (selectedWeek && !state.weeklyHistory[selectedWeek]) selectedWeek = '';
@@ -1248,14 +1324,10 @@ function render() {
   const activityProgress = {done: activityRows.filter(activity => activity.done).length, total: activityRows.length};
   $('#homeProgress').innerHTML = `<span><small>보스</small><b>${bossProgress.done} / ${bossProgress.total}</b></span><span><small>주간 콘텐츠</small><b>${activityProgress.done} / ${activityProgress.total}</b></span>`;
   $('#metrics').innerHTML = Object.entries(labels).map(([key, label]) => `<div class="metric${key === 'hunt' ? ' metric-hunt' : ''}"><small>${label}</small><b>${money(totals[key])}</b>${key === 'hunt' ? `<dl class="hunt-resource-summary"><div><dt>메소 획득</dt><dd title="${won(huntSummary.mesoAcquired)} 메소">${koreanMeso(huntSummary.mesoAcquired)} 메소</dd></div><div><dt>솔 에르다 조각</dt><dd>${won(huntSummary.solErdaPieces)}개 획득</dd></div></dl>` : ''}</div>`).join('');
-  $('#characterList').innerHTML = (data.characters || []).map(c => {
-    const s = characterStats(c), percent = s.count ? Math.round(s.done / s.count * 100) : 0;
-    const statsExpanded = expandedStatCharacterIds.has(c.id);
-    return `<article class="character" data-character="${escapeHtml(c.id)}"><span class="character-main"><span class="character-identity">${nexonProfileAvatar(c, 'summary-art')}<span class="character-identity-copy"><b>${escapeHtml(c.name)}</b>${nexonProfileCopy(c)}</span></span></span>${nexonSpecSummary(c, statsExpanded)}<span class="character-progress"><span class="character-progress-head"><small>주간 보스 ${s.done} / ${s.count} 완료 · 진행률 ${percent}%</small><span class="character-weekly-income"><small>이번 주 보스 수익</small><strong class="mint">${money(bossIncomeForWeek(c, data.weekId || data.currentWeek || ''))}</strong></span></span><progress value="${s.done}" max="${s.count || 1}" aria-label="${escapeHtml(c.name)} 주간 보스 진행률"></progress></span><dl class="character-income-grid"><div><dt>주간 완료 수익</dt><dd>${money(s.earned)}</dd></div><div><dt>주간 예상 수익</dt><dd>${money(s.expected)}</dd></div><div><dt>주간 남은 수익</dt><dd>${money(s.remaining)}</dd></div></dl>${statsExpanded ? nexonStatDetails(c) : ''}</article>`;
-  }).join('') || '<p class="empty">저장된 캐릭터가 없습니다.</p>';
+  $('#characterList').innerHTML = (data.characters || []).map(character => renderHomeCharacterCard(character, data)).join('') || '<p class="empty">저장된 캐릭터가 없습니다.</p>';
   $('#addCharacter').disabled = !!isPast() || storageBlocked; $('#incomeFields').disabled = !!isPast() || storageBlocked;
   $('#incomeReadOnly').classList.toggle('hidden', !isPast()); $('#resetAll').disabled = !!isPast(); $('#resetWeek').disabled = !!isPast();
-  renderWeeklyActivities(data); renderBosses(data); renderHistory(data); renderHomeRecent(data); renderPrices(); renderSettings();
+  renderWeeklyActivities(data); renderBosses(data); renderCharacterHub(data); renderHistory(data); renderHomeRecent(data); renderPrices(); renderSettings();
   const homeNexon = $('#homeNexonStatus');
   if (homeNexon) {
     const summary = nexonConnectionStatusSummary(state.characters, nexonCredentialState, cloudAuthUiState.signedIn, nexonApiState);
@@ -2278,15 +2350,22 @@ function init() {
   $('#weekSelect').addEventListener('change', e => { selectedWeek = e.target.value; render(); });
   $('#returnCurrent').addEventListener('click', () => { selectedWeek = ''; render(); });
   $('#characterList').addEventListener('click', e => {
-    const card = e.target.closest('[data-character]'); if (!card) return;
-    if (e.target.closest('[data-stat-toggle]')) {
-      const characterId = card.dataset.character;
-      if (expandedStatCharacterIds.has(characterId)) expandedStatCharacterIds.delete(characterId);
-      else expandedStatCharacterIds.add(characterId);
-      render(); return;
-    }
-    if (e.target.closest('.character-stat-details')) return;
-    selectedBossCharacterId = card.dataset.character; $('[data-tab="boss"]').click(); renderBosses(viewData());
+    const button = e.target.closest('[data-character-detail]'), card = button?.closest('[data-character]');
+    if (card) openCharacterHub(card.dataset.character);
+  });
+  $('#characterHubBack').addEventListener('click', () => activatePage('summary'));
+  $('#characterHubSelect').addEventListener('change', e => { selectedHubCharacterId = e.target.value; renderCharacterHub(viewData()); });
+  $$('[data-character-hub-tab]').forEach(button => button.addEventListener('click', () => {
+    activeCharacterHubTab = button.dataset.characterHubTab;
+    renderCharacterHub(viewData());
+  }));
+  $('#characterHubTab').addEventListener('click', e => {
+    if (!e.target.closest('[data-hub-boss-manage]')) return;
+    const character = selectedHubCharacter(viewData());
+    if (!character) return;
+    selectedBossCharacterId = character.id;
+    activatePage('boss');
+    renderBosses(viewData());
   });
   $$('[data-tab]').forEach(button => button.addEventListener('click', () => activatePage(button.dataset.tab)));
   const openIncomeEntry = () => { returnTabAfterIncome = activeMainTab; activatePage('income', {updateNavigation: false}); };
