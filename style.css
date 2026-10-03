@@ -102,6 +102,7 @@ input[type=checkbox]{accent-color:var(--accent);width:21px;min-height:21px;heigh
 .character-detail-button{justify-self:end;border:0;background:transparent;color:var(--blue);min-height:40px;padding:6px 2px;font-size:11px;font-weight:700}
 .character-detail-button:hover{text-decoration:underline}
 .character-spec{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding-top:9px;border-top:1px solid var(--line);order:4}
+.character-home-spec{grid-template-columns:minmax(0,1fr)}
 .character-spec>span{display:flex;align-items:baseline;justify-content:space-between;gap:8px;min-width:0}
 .character-spec small{margin:0;color:var(--muted);white-space:nowrap}
 .character-spec b{font-size:14px;color:var(--text);font-variant-numeric:tabular-nums;text-align:right;overflow-wrap:anywhere}
@@ -616,6 +617,7 @@ main>.week-card .week-footer{justify-content:flex-start;margin:0;min-height:40px
 main>#status{margin:5px 0 10px}
 #characterList{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .character{grid-template-columns:minmax(0,1fr) minmax(150px,.75fr);grid-template-areas:"profile spec" "progress progress" "detail detail";column-gap:18px;row-gap:7px;margin-top:0;padding:10px 14px}
+.character-summary-card{grid-template-columns:minmax(0,1fr);grid-template-areas:"profile" "spec" "progress" "detail"}
 .character-main{grid-area:profile}
 .character-spec{grid-area:spec;grid-template-columns:1fr;align-content:center;gap:5px;padding:0;border:0}
 .character-spec>span{display:grid;grid-template-columns:52px minmax(0,1fr);gap:7px}
@@ -672,7 +674,7 @@ main>#status{margin:5px 0 10px}
 .home-content-grid{display:grid;grid-template-columns:minmax(0,1fr) clamp(380px,29vw,440px);align-items:start;gap:14px}
 .home-content-grid>.panel,.home-side-rail>.panel{margin-bottom:0}
 .home-side-rail{display:grid;align-content:start;gap:14px;min-width:0}
-.home-content-grid #characterList{grid-template-columns:minmax(0,1fr)}
+.home-content-grid #characterList{grid-template-columns:repeat(2,minmax(0,1fr))}
 .home-characters-panel>.full{display:block;width:auto;min-width:160px;margin-left:auto}
 .home-side-rail>.panel{padding:17px 18px}
 .home-side-rail .weekly-activities-head{margin-bottom:10px}

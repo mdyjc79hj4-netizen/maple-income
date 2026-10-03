@@ -1223,6 +1223,10 @@ function nexonSpecSummary(character) {
   const unionLevel = Number.isInteger(profile?.unionLevel) ? profile.unionLevel.toLocaleString('ko-KR') : '정보 없음';
   return `<span class="character-spec"><span><small>전투력</small><b>${escapeHtml(combatPower)}</b></span><span><small>유니온</small><b>${escapeHtml(unionLevel)}</b></span></span>`;
 }
+function nexonHomeCombatPower(character) {
+  const combatPower = Number.isInteger(character?.nexonCharacter?.combatPower) ? koreanNumber(character.nexonCharacter.combatPower) : '정보 없음';
+  return `<span class="character-spec character-home-spec"><span><small>전투력</small><b>${escapeHtml(combatPower)}</b></span></span>`;
+}
 function nexonStatDetails(character) {
   const stats = normalizeNexonStats(character?.nexonCharacter?.stats);
   const groups = NEXON_STAT_GROUPS.map(group => ({...group, items: group.items.filter(([key]) => Number.isFinite(stats?.[key]))})).filter(group => group.items.length);
@@ -1238,7 +1242,7 @@ function selectedHubCharacter(data = viewData()) {
 function renderHomeCharacterCard(character, data) {
   const stats = characterStats(character);
   const weekId = data?.weekId || data?.currentWeek || '';
-  return `<article class="character character-summary-card" data-character="${escapeHtml(character.id)}"><span class="character-main"><span class="character-identity">${nexonProfileAvatar(character, 'summary-art')}<span class="character-identity-copy"><b>${escapeHtml(character.name)}</b>${nexonProfileCopy(character)}</span></span></span>${nexonSpecSummary(character)}<span class="character-progress"><span class="character-progress-head"><small>보스 ${stats.done} / ${stats.count}</small><span class="character-weekly-income"><small>보스 수익</small><strong class="mint">${money(bossIncomeForWeek(character, weekId))}</strong></span></span><progress value="${stats.done}" max="${stats.count || 1}" aria-label="${escapeHtml(character.name)} 주간 보스 진행률"></progress></span><button type="button" class="character-detail-button" data-character-detail aria-label="${escapeHtml(character.name)} 캐릭터 상세 보기">상세 보기 <span aria-hidden="true">›</span></button></article>`;
+  return `<article class="character character-summary-card" data-character="${escapeHtml(character.id)}"><span class="character-main"><span class="character-identity">${nexonProfileAvatar(character, 'summary-art')}<span class="character-identity-copy"><b>${escapeHtml(character.name)}</b>${nexonProfileCopy(character)}</span></span></span>${nexonHomeCombatPower(character)}<span class="character-progress"><span class="character-progress-head"><small>보스 ${stats.done} / ${stats.count}</small><span class="character-weekly-income"><small>보스 수익</small><strong class="mint">${money(bossIncomeForWeek(character, weekId))}</strong></span></span><progress value="${stats.done}" max="${stats.count || 1}" aria-label="${escapeHtml(character.name)} 주간 보스 진행률"></progress></span><button type="button" class="character-detail-button" data-character-detail aria-label="${escapeHtml(character.name)} 캐릭터 상세 보기">상세 보기 <span aria-hidden="true">›</span></button></article>`;
 }
 function characterHubHero(character) {
   const profile = character?.nexonCharacter, linked = !!profile?.ocid;
