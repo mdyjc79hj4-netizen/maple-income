@@ -1420,17 +1420,36 @@ const EQUIPMENT_OPTION_LABELS = Object.freeze({
   ignore_monster_armor: '방어율 무시', all_stat: '올스탯', damage: '데미지',
   equipment_level_decrease: '착용 레벨 감소', base_equipment_level: '기본 장비 레벨'
 });
+const EQUIPMENT_OPTION_SOURCES = Object.freeze([
+  {key: 'base', label: '기본 옵션', tone: 'base'},
+  {key: 'add', label: '추가옵션', tone: 'add'},
+  {key: 'scroll', label: '주문서 강화', tone: 'scroll'},
+  {key: 'starforce', label: '스타포스', tone: 'starforce'},
+  {key: 'exceptional', label: '익셉셔널', tone: 'exceptional'}
+]);
 function equipmentHasValue(value) {
   if (typeof value === 'number') return Number.isFinite(value) && value !== 0;
-  return typeof value === 'string' && value.trim() !== '' && value.trim() !== '0';
+  if (typeof value !== 'string') return false;
+  const text = value.trim();
+  if (!text) return false;
+  const numeric = text.replace(/,/g, '').replace(/%$/u, '');
+  return !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/u.test(numeric) || Number(numeric) !== 0;
 }
 function renderEquipmentOptionRows(options) {
   const rows = Object.entries(options || {}).filter(([key, value]) => Object.hasOwn(EQUIPMENT_OPTION_LABELS, key) && equipmentHasValue(value));
   if (!rows.length) return '';
   return `<dl class="equipment-option-list">${rows.map(([key, value]) => `<div><dt>${escapeHtml(EQUIPMENT_OPTION_LABELS[key])}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>`;
 }
-function renderEquipmentDetailSection(title, content) {
-  return content ? `<section class="equipment-detail-section"><h3>${escapeHtml(title)}</h3>${content}</section>` : '';
+function renderEquipmentDetailSection(title, content, tone = '') {
+  return content ? `<section class="equipment-detail-section${tone ? ` equipment-detail-${escapeHtml(tone)}` : ''}"><h3>${escapeHtml(title)}</h3>${content}</section>` : '';
+}
+function renderEquipmentOptionBreakdown(options) {
+  const groups = EQUIPMENT_OPTION_SOURCES.map(source => {
+    const rows = renderEquipmentOptionRows(options?.[source.key]);
+    return rows ? `<section class="equipment-source-group source-${source.tone}" data-equipment-option-source="${source.key}"><h4>${source.label}</h4>${rows}</section>` : '';
+  }).filter(Boolean);
+  if (!groups.length) return '';
+  return `<section class="equipment-option-breakdown"><header><h3>옵션 구성</h3><p>공식 NEXON API가 제공한 출처별 옵션입니다.</p></header>${groups.join('')}</section>`;
 }
 function renderEquipmentDetailMarkup(item) {
   const potential = Array.isArray(item?.potential?.options) ? item.potential.options : [];
@@ -1441,7 +1460,11 @@ function renderEquipmentDetailMarkup(item) {
     [Number.isInteger(item.exceptionalUpgrade), '익셉셔널', `${item.exceptionalUpgrade}회`],
     [Number.isInteger(item.specialRingLevel), '특수 반지 Lv.', String(item.specialRingLevel)]
   ].filter(([visible]) => visible);
-  return `<header class="equipment-detail-head">${equipmentImage(item, 'equipment-detail-icon')}<div><small>${escapeHtml(item.slot || item.part || '기타 장비')}</small><b>${escapeHtml(item.name || '이름 없는 장비')}</b>${item.description ? `<p>${escapeHtml(item.description)}</p>` : ''}</div></header>${renderEquipmentDetailSection('강화', enhancements.length ? `<dl class="equipment-enhancement-list">${enhancements.map(([, label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>` : '')}${renderEquipmentDetailSection(item.potential?.grade ? `잠재능력 · ${item.potential.grade}` : '잠재능력', potential.map(value => `<p>${escapeHtml(value)}</p>`).join(''))}${renderEquipmentDetailSection(item.additionalPotential?.grade ? `에디셔널 잠재능력 · ${item.additionalPotential.grade}` : '에디셔널 잠재능력', additionalPotential.map(value => `<p>${escapeHtml(value)}</p>`).join(''))}${renderEquipmentDetailSection('소울', [item.soul?.name, item.soul?.option].filter(Boolean).map(value => `<p>${escapeHtml(value)}</p>`).join(''))}${renderEquipmentDetailSection('총 옵션', renderEquipmentOptionRows(item.options?.total))}${item.expiresAt ? `<p class="muted equipment-expiry">유효기간 ${escapeHtml(item.expiresAt)}</p>` : ''}`;
+  const badges = equipmentBadge(item);
+  const totalOptions = renderEquipmentOptionRows(item.options?.total) || '<p class="equipment-option-empty">표시할 최종 옵션이 없습니다.</p>';
+  const breakdown = renderEquipmentOptionBreakdown(item.options);
+  const soul = [item.soul?.name, item.soul?.option].filter(Boolean).map(value => `<p>${escapeHtml(value)}</p>`).join('');
+  return `<header class="equipment-detail-head">${equipmentImage(item, 'equipment-detail-icon')}<div><small>${escapeHtml(item.slot || item.part || '기타 장비')}</small><b>${escapeHtml(item.name || '이름 없는 장비')}</b>${badges ? `<span class="equipment-detail-badges">${badges}</span>` : ''}${item.description ? `<p>${escapeHtml(item.description)}</p>` : ''}</div></header>${renderEquipmentDetailSection('강화 정보', enhancements.length ? `<dl class="equipment-enhancement-list">${enhancements.map(([, label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>` : '', 'enhancement')}${renderEquipmentDetailSection(item.potential?.grade ? `잠재능력 · ${item.potential.grade}` : '잠재능력', potential.map(value => `<p>${escapeHtml(value)}</p>`).join(''), 'potential')}${renderEquipmentDetailSection(item.additionalPotential?.grade ? `에디셔널 잠재능력 · ${item.additionalPotential.grade}` : '에디셔널 잠재능력', additionalPotential.map(value => `<p>${escapeHtml(value)}</p>`).join(''), 'additional')}${renderEquipmentDetailSection('최종 옵션', totalOptions, 'total')}${breakdown}${renderEquipmentDetailSection('소울', soul, 'soul')}${item.expiresAt ? `<p class="muted equipment-expiry">유효기간 ${escapeHtml(item.expiresAt)}</p>` : ''}`;
 }
 function openEquipmentDetail(item) {
   const dialog = $('#equipmentDetailDialog');
