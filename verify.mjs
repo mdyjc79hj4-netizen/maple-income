@@ -2051,6 +2051,54 @@ assert.equal(nexonCharacterDetailInternals.safeInteger('22'), 22);
 assert.equal(nexonCharacterDetailInternals.safeInteger('2.5'), null);
 assert.equal(nexonCharacterDetailInternals.safeDecimal('96.42'), 96.42);
 assert.equal(nexonCharacterDetailInternals.safeImageUrl('data:text/html,bad'), '');
+const setEffectPayloadFixture = {
+  date: '2026-10-03T00:00+09:00',
+  set_effect: [{
+    set_name: '에테르넬 메이지 세트', total_set_count: 4,
+    set_effect_info: [
+      {set_count: 2, set_option: 'INT : +15, 마력 : +5'},
+      {set_count: 3, set_option: '보스 몬스터 공격 시 데미지 : +10%'},
+      {set_count: 4, set_option: 'INT : +30'}
+    ],
+    set_option_full: [
+      {set_count: 2, set_option: 'INT : +15, 마력 : +5'},
+      {set_count: 3, set_option: '보스 몬스터 공격 시 데미지 : +10%'},
+      {set_count: 4, set_option: 'INT : +30'},
+      {set_count: 5, set_option: '마력 : +20'},
+      {set_count: 6, set_option: '방어율 무시 : +10%'}
+    ],
+    secret: 'must-not-pass'
+  }, {
+    set_name: '칠흑의 보스 세트', total_set_count: 2,
+    set_effect_info: [{set_count: 2, set_option: '공격력 : +10'}],
+    set_option_full: [{set_count: 2, set_option: '공격력 : +10'}]
+  }],
+  account_id: 'must-not-pass'
+};
+const sanitizedSetEffects = nexonCharacterDetailInternals.sanitizeSetEffectPayload(setEffectPayloadFixture);
+assert.equal(sanitizedSetEffects.date, '2026-10-03T00:00+09:00');
+assert.equal(sanitizedSetEffects.setEffects.length, 2);
+assert.deepEqual(sanitizedSetEffects.setEffects[0], {
+  setName: '에테르넬 메이지 세트', totalSetCount: 4,
+  activeEffects: [
+    {setCount: 2, option: 'INT : +15, 마력 : +5'},
+    {setCount: 3, option: '보스 몬스터 공격 시 데미지 : +10%'},
+    {setCount: 4, option: 'INT : +30'}
+  ],
+  allEffects: [
+    {setCount: 2, option: 'INT : +15, 마력 : +5'},
+    {setCount: 3, option: '보스 몬스터 공격 시 데미지 : +10%'},
+    {setCount: 4, option: 'INT : +30'},
+    {setCount: 5, option: '마력 : +20'},
+    {setCount: 6, option: '방어율 무시 : +10%'}
+  ]
+});
+assert.deepEqual(nexonCharacterDetailInternals.sanitizeSetEffectPayload({date: '2026-10-03', set_effect: []}), {date: '2026-10-03', setEffects: []});
+assert.throws(() => nexonCharacterDetailInternals.sanitizeSetEffectPayload({set_effect: {}}), /응답 구조/);
+assert.throws(() => nexonCharacterDetailInternals.sanitizeSetEffectPayload({set_effect: [{set_name: '세트', total_set_count: 1, set_effect_info: {}, set_option_full: []}]}), /응답 구조/);
+assert.throws(() => nexonCharacterDetailInternals.sanitizeSetEffectPayload({set_effect: [{set_name: '세트', total_set_count: 1, set_effect_info: [], set_option_full: {}}]}), /응답 구조/);
+assert.throws(() => nexonCharacterDetailInternals.sanitizeSetEffectPayload({set_effect: [{set_name: '세트', total_set_count: 1, set_effect_info: [{set_count: '잘못됨', set_option: '효과'}], set_option_full: []}]}), /응답 구조/);
+assert.doesNotMatch(JSON.stringify(sanitizedSetEffects), /must-not-pass|account_id|secret/);
 const symbolPayloadFixture = {
   date: '2026-10-03T00:00+09:00', character_class: '아델',
   symbol: [{
@@ -2127,8 +2175,9 @@ assert.throws(() => nexonCharacterDetailInternals.sanitizeHexaPayload({character
 assert.throws(() => nexonCharacterDetailInternals.sanitizeHexaSkillPayload({character_skill: {}}), /응답 구조/);
 assert.throws(() => nexonCharacterDetailInternals.sanitizeHexaStatPayload({...hexaStatPayloadFixture, character_hexa_stat_core_2: {}}), /응답 구조/);
 assert.doesNotMatch(JSON.stringify({sanitizedSymbols, sanitizedHexa, sanitizedHexaStat}), /must-not-pass|javascript:|account_id/);
-assert.deepEqual(Object.keys(nexonCharacterDetailInternals.DETAIL_RESOURCES), ['equipment', 'symbol', 'hexa', 'hexa-stat']);
+assert.deepEqual(Object.keys(nexonCharacterDetailInternals.DETAIL_RESOURCES), ['equipment', 'set-effect', 'symbol', 'hexa', 'hexa-stat']);
 assert.equal(nexonCharacterDetailInternals.DETAIL_RESOURCES.equipment.path, '/maplestory/v1/character/item-equipment');
+assert.equal(nexonCharacterDetailInternals.DETAIL_RESOURCES['set-effect'].path, '/maplestory/v1/character/set-effect');
 assert.equal(nexonCharacterDetailInternals.DETAIL_RESOURCES.symbol.path, '/maplestory/v1/character/symbol-equipment');
 assert.equal(nexonCharacterDetailInternals.DETAIL_RESOURCES.hexa.path, '/maplestory/v1/character/hexamatrix');
 assert.equal(nexonCharacterDetailInternals.DETAIL_RESOURCES['hexa-stat'].path, '/maplestory/v1/character/hexamatrix-stat');
@@ -2148,6 +2197,19 @@ assert.equal(capturedHexaSkillUrl.searchParams.get('ocid'), selectedOcid);
 assert.equal(capturedHexaSkillUrl.searchParams.get('character_skill_grade'), '6');
 assert.equal([...capturedHexaSkillUrl.searchParams.keys()].sort().join(','), 'character_skill_grade,ocid');
 assert.equal(capturedHexaSkillRequest.headers['x-nxopen-api-key'], 'private-hexa-key');
+let capturedSetEffectRequest = null;
+globalThis.fetch = async (target, options) => {
+  capturedSetEffectRequest = {target: String(target), headers: options.headers};
+  return {ok: true, status: 200, json: async () => structuredClone(setEffectPayloadFixture)};
+};
+await nexonCharacterDetailInternals.requestNexonDetail(nexonCharacterDetailInternals.DETAIL_RESOURCES['set-effect'], selectedOcid, 'private-set-effect-key');
+globalThis.fetch = originalDetailFetch;
+const capturedSetEffectUrl = new URL(capturedSetEffectRequest.target);
+assert.equal(capturedSetEffectUrl.pathname, '/maplestory/v1/character/set-effect');
+assert.equal(capturedSetEffectUrl.searchParams.get('ocid'), selectedOcid);
+assert.equal(capturedSetEffectUrl.searchParams.has('date'), false);
+assert.equal([...capturedSetEffectUrl.searchParams.keys()].join(','), 'ocid');
+assert.equal(capturedSetEffectRequest.headers['x-nxopen-api-key'], 'private-set-effect-key');
 const hexaEnrichmentSource = nexonCharacterDetailApiSource.slice(nexonCharacterDetailApiSource.indexOf('function enrichHexaWithSkills'), nexonCharacterDetailApiSource.indexOf('function sanitizeHexaStatCore'));
 assert.match(hexaEnrichmentSource, /exactSkills\.get\(name\)/);
 assert.doesNotMatch(hexaEnrichmentSource, /includes\(|startsWith\(|endsWith\(/);
@@ -2187,6 +2249,22 @@ detailNow += nexonCharacterDetailInternals.DETAIL_CACHE_TTL_MS + 1;
 await invokeDetail();
 assert.equal(detailRequestCount, 3, 'expired server cache must refetch');
 assert.doesNotMatch(JSON.stringify(detailFirst.body), /private-detail-user|must-not-pass/);
+
+let setEffectRequestConfig = null;
+const setEffectDetailHandler = nexonCharacterDetailInternals.createNexonCharacterDetailHandler({
+  createAdminClient: () => ({}),
+  authenticateRequest: async () => ({id: 'set-effect-user'}),
+  loadUserNexonCredential: async () => ({apiKey: 'set-effect-private-key', credentialRevision: 'set-effect-revision'}),
+  requestNexonDetail: async config => { setEffectRequestConfig = config; return structuredClone(setEffectPayloadFixture); },
+  now: () => detailNow
+});
+const setEffectDetailResponse = nexonApiTestResponse();
+await setEffectDetailHandler({method: 'GET', query: {resource: 'set-effect', ocid: selectedOcid}}, setEffectDetailResponse);
+assert.equal(setEffectDetailResponse.statusCode, 200);
+assert.equal(setEffectDetailResponse.body.resource, 'set-effect');
+assert.equal(setEffectDetailResponse.body.data.setEffects.length, 2);
+assert.equal(setEffectRequestConfig.path, '/maplestory/v1/character/set-effect');
+assert.doesNotMatch(JSON.stringify(setEffectDetailResponse.body), /set-effect-private-key|must-not-pass|account_id/);
 
 const invalidDetailResource = nexonApiTestResponse();
 await detailHandler({method: 'GET', query: {resource: 'symbols', ocid: selectedOcid}}, invalidDetailResource);
@@ -2288,6 +2366,10 @@ assert.notEqual(
   nexonCharacterDetailInternals.detailCacheKey('user-one', 'revision-one', selectedOcid, 'symbol')
 );
 assert.notEqual(
+  nexonCharacterDetailInternals.detailCacheKey('user-one', 'revision-one', selectedOcid, 'equipment'),
+  nexonCharacterDetailInternals.detailCacheKey('user-one', 'revision-one', selectedOcid, 'set-effect')
+);
+assert.notEqual(
   nexonCharacterDetailInternals.detailCacheKey('user-one', 'revision-one', selectedOcid, 'symbol'),
   nexonCharacterDetailInternals.detailCacheKey('user-one', 'revision-one', 'fedcba9876543210', 'symbol')
 );
@@ -2301,7 +2383,8 @@ assert.equal(nexonCharacterDetailInternals.detailCache.has('entry-0'), false);
 nexonCharacterDetailInternals.detailCache.clear();
 
 context.__equipmentData = {...structuredClone(sanitizedEquipment), fetchedAt: '2026-10-03T12:00:00.000Z'};
-run("nexonCredentialAuthBridge={isSignedIn:()=>true,getAccessToken:async()=>'detail-session-token'};nexonCredentialState={status:'ready',hasCredential:true,editing:false,message:''};selectedWeek='';state={currentWeek:'2026-10-01~2026-10-07',weeklyHistory:{},characters:[__hubCharacter]};clearNexonDetailRuntimeCache();nexonDetailRuntimeCache.set(nexonDetailCacheKey('equipment',__hubCharacter.nexonCharacter.ocid),{status:'ready',data:__equipmentData,receivedAt:Date.now()})");
+context.__setEffectData = {...structuredClone(sanitizedSetEffects), fetchedAt: '2026-10-03T12:00:00.000Z'};
+run("nexonCredentialAuthBridge={isSignedIn:()=>true,getAccessToken:async()=>'detail-session-token'};nexonCredentialState={status:'ready',hasCredential:true,editing:false,message:''};selectedWeek='';state={currentWeek:'2026-10-01~2026-10-07',weeklyHistory:{},characters:[__hubCharacter]};clearNexonDetailRuntimeCache();nexonDetailRuntimeCache.set(nexonDetailCacheKey('equipment',__hubCharacter.nexonCharacter.ocid),{status:'ready',data:__equipmentData,receivedAt:Date.now()});nexonDetailRuntimeCache.set(nexonDetailCacheKey('set-effect',__hubCharacter.nexonCharacter.ocid),{status:'ready',data:__setEffectData,receivedAt:Date.now()})");
 const hubEquipmentMarkup = run('renderCharacterHubEquipment(__hubCharacter)');
 assert.match(hubEquipmentMarkup, /장비 프리셋/);
 assert.match(hubEquipmentMarkup, /현재 장비 · 프리셋 2/);
@@ -2325,8 +2408,28 @@ assert.match(hubEquipmentMarkup, /class="equipment-option-breakdown-inline"/);
 assert.match(hubEquipmentMarkup, /class="source-base"/);
 assert.match(hubEquipmentMarkup, /class="source-add"/);
 assert.doesNotMatch(hubEquipmentMarkup, />옵션 구성<|equipment-source-group/);
+assert.match(hubEquipmentMarkup, /id="equipmentSetEffectTitle">세트 효과/);
+assert.match(hubEquipmentMarkup, /에테르넬 메이지 세트/);
+assert.match(hubEquipmentMarkup, /칠흑의 보스 세트/);
+assert.match(hubEquipmentMarkup, /4세트 적용/);
+assert.match(hubEquipmentMarkup, /현재 적용 효과/);
+assert.match(hubEquipmentMarkup, /전체 단계 보기/);
+assert.match(hubEquipmentMarkup, /INT : \+15, 마력 : \+5/);
+assert.match(hubEquipmentMarkup, /class="set-effect-active-badge">적용/);
+assert.ok(hubEquipmentMarkup.indexOf('equipment-desktop-viewer') < hubEquipmentMarkup.indexOf('equipment-set-effects'));
 assert.ok(hubEquipmentMarkup.indexOf('테스트 무기') < hubEquipmentMarkup.indexOf('미래 장비'), 'unknown equipment slots should render last');
 assert.equal(run('equipmentUsesInlineDetail()'), false, 'non-desktop environments must retain the detail dialog fallback');
+const setEffectCardMarkup = run('renderSetEffectCard(__setEffectData.setEffects[0])');
+assert.match(setEffectCardMarkup, /<b>2세트<\/b><small class="set-effect-active-badge">적용<\/small>/);
+assert.match(setEffectCardMarkup, /<b>4세트<\/b><small class="set-effect-active-badge">적용<\/small>/);
+assert.match(setEffectCardMarkup, /<div class="set-effect-step inactive"><div><b>5세트<\/b><\/div>/);
+assert.match(setEffectCardMarkup, /<div class="set-effect-step inactive"><div><b>6세트<\/b><\/div>/);
+assert.doesNotMatch(run("renderSetEffectStep({setCount:5,option:'비활성'},false)"), /set-effect-active-badge/);
+const escapedSetEffectOption = run("renderSetEffectStep({setCount:2,option:'<img src=x onerror=alert(1)>'},true)");
+assert.match(escapedSetEffectOption, /&lt;img src=x onerror=alert\(1\)&gt;/);
+assert.doesNotMatch(escapedSetEffectOption, /<img/);
+assert.match(source.slice(source.indexOf('function renderSetEffectCard'), source.indexOf('function renderSetEffectSection')), /activeCounts\.has\(effect\.setCount\)/);
+assert.doesNotMatch(source.slice(source.indexOf('function renderSetEffectCard'), source.indexOf('function renderSetEffectSection')), /effect\.setCount\s*<=\s*setEffect\.totalSetCount/);
 context.__equipmentWithDragon = structuredClone(context.__equipmentData);
 context.__equipmentWithDragon.dragonEquipment = [{slot:'드래곤 마스크',part:'드래곤 장비',name:'용 장비 테스트',icon:'',potential:{grade:'',options:[]},additionalPotential:{grade:'',options:[]},soul:{name:'',option:''},options:{total:{}}}];
 run("nexonDetailRuntimeCache.set(nexonDetailCacheKey('equipment',__hubCharacter.nexonCharacter.ocid),{status:'ready',data:__equipmentWithDragon,receivedAt:Date.now()})");
@@ -2349,10 +2452,22 @@ run("nexonCredentialAuthBridge={isSignedIn:()=>true,getAccessToken:async()=>'det
 assert.match(run('renderCharacterHubEquipment(__hubCharacter)'), /NEXON 개인 API Key를 등록/);
 assert.match(run('renderCharacterHubEquipment(__hubCharacter)'), /data-equipment-open-settings/);
 run("nexonCredentialState={status:'ready',hasCredential:true,editing:false,message:''};selectedWeek='2026-09-24~2026-09-30';state.weeklyHistory[selectedWeek]={weekId:selectedWeek,characters:[__hubCharacter],accountWeeklyActivities:[],incomes:[]};nexonDetailRuntimeCache.set(nexonDetailCacheKey('equipment',__hubCharacter.nexonCharacter.ocid),{status:'ready',data:__equipmentData,receivedAt:Date.now()})");
-assert.match(run('renderCharacterHubEquipment(__hubCharacter)'), /과거 주차 스냅샷이 아닌 현재 NEXON 조회 결과/);
-run("selectedWeek='';nexonDetailRuntimeCache.set(nexonDetailCacheKey('equipment',__hubCharacter.nexonCharacter.ocid),{status:'error',error:{status:429,category:'rate_limited'},receivedAt:Date.now()})");
-assert.match(run('renderCharacterHubEquipment(__hubCharacter)'), /호출 한도를 초과/);
-assert.match(run('renderCharacterHubEquipment(__hubCharacter)'), /data-equipment-retry/);
+const pastEquipmentMarkup = run('renderCharacterHubEquipment(__hubCharacter)');
+assert.match(pastEquipmentMarkup, /장비 및 세트 효과 정보는 현재 NEXON 캐릭터 기준/);
+assert.equal((pastEquipmentMarkup.match(/과거 주차의 스냅샷이 아닙니다/g) || []).length, 1);
+run("selectedWeek='';nexonDetailRuntimeCache.set(nexonDetailCacheKey('equipment',__hubCharacter.nexonCharacter.ocid),{status:'error',error:{status:429,category:'rate_limited'},receivedAt:Date.now()});nexonDetailRuntimeCache.set(nexonDetailCacheKey('set-effect',__hubCharacter.nexonCharacter.ocid),{status:'ready',data:__setEffectData,receivedAt:Date.now()})");
+const equipmentFailureSetEffectSuccess = run('renderCharacterHubEquipment(__hubCharacter)');
+assert.match(equipmentFailureSetEffectSuccess, /호출 한도를 초과/);
+assert.match(equipmentFailureSetEffectSuccess, /data-equipment-retry/);
+assert.match(equipmentFailureSetEffectSuccess, /에테르넬 메이지 세트/);
+run("nexonDetailRuntimeCache.set(nexonDetailCacheKey('equipment',__hubCharacter.nexonCharacter.ocid),{status:'ready',data:__equipmentData,receivedAt:Date.now()});nexonDetailRuntimeCache.set(nexonDetailCacheKey('set-effect',__hubCharacter.nexonCharacter.ocid),{status:'error',error:{status:502,message:'세트 효과 테스트 실패'},receivedAt:Date.now()})");
+const equipmentSuccessSetEffectFailure = run('renderCharacterHubEquipment(__hubCharacter)');
+assert.match(equipmentSuccessSetEffectFailure, /테스트 무기/);
+assert.match(equipmentSuccessSetEffectFailure, /세트 효과를 불러오지 못했습니다/);
+assert.match(equipmentSuccessSetEffectFailure, /data-set-effect-retry/);
+run("nexonDetailRuntimeCache.set(nexonDetailCacheKey('set-effect',__hubCharacter.nexonCharacter.ocid),{status:'ready',data:{setEffects:[],fetchedAt:'2026-10-03T12:00:00.000Z'},receivedAt:Date.now()})");
+assert.match(run('renderCharacterHubEquipment(__hubCharacter)'), /적용 중인 세트 효과가 없습니다/);
+run("nexonDetailRuntimeCache.set(nexonDetailCacheKey('set-effect',__hubCharacter.nexonCharacter.ocid),{status:'ready',data:__setEffectData,receivedAt:Date.now()})");
 assert.match(run("renderEquipmentOptionRows({str:'130',attack_power:'347',dex:'0'})"), /STR/);
 assert.doesNotMatch(run("renderEquipmentOptionRows({str:'130',attack_power:'347',dex:'0'})"), /DEX/);
 const preservedEquipmentOptions = run("renderEquipmentOptionRows({str:'-12',boss_damage:'40%',equipment_level_decrease:'123.45%',unknown_raw_key:'999',dex:'0'})");
@@ -2459,10 +2574,34 @@ await run("fetchNexonCharacterDetail('equipment',__hubCharacter.nexonCharacter.o
 assert.equal(clientDetailFetchCount, 1, 'fresh client detail cache must avoid refetch');
 assert.equal(run("nexonDetailCacheEntry('equipment',__hubCharacter.nexonCharacter.ocid).status"), 'ready');
 run('clearNexonDetailRuntimeCache()');
+let equipmentTabResources = [];
+context.fetch = async (target, options) => {
+  const url = new URL(String(target), 'https://example.test');
+  const resource = url.searchParams.get('resource');
+  equipmentTabResources.push(resource);
+  assert.equal(options.headers.Authorization, 'Bearer detail-session-token');
+  const data = resource === 'equipment' ? sanitizedEquipment : sanitizedSetEffects;
+  return {ok: true, status: 200, json: async () => ({ok: true, resource, fetchedAt: '2026-10-03T12:00:00.000Z', data: structuredClone(data)})};
+};
+context.document = {querySelector: () => null, querySelectorAll: () => []};
+run("selectedWeek='';selectedHubCharacterId=__hubCharacter.id;state={currentWeek:'2026-10-01~2026-10-07',weeklyHistory:{},characters:[__hubCharacter]};activeCharacterHubTab='overview'");
+await run('ensureCharacterHubEquipment()');
+assert.deepEqual(equipmentTabResources, [], 'non-equipment tabs must not request equipment or set effects');
+run("activeCharacterHubTab='equipment'");
+await run('ensureCharacterHubEquipment()');
+assert.deepEqual(equipmentTabResources.sort(), ['equipment', 'set-effect']);
+assert.equal(run("nexonDetailCacheEntry('equipment',__hubCharacter.nexonCharacter.ocid).status"), 'ready');
+assert.equal(run("nexonDetailCacheEntry('set-effect',__hubCharacter.nexonCharacter.ocid).status"), 'ready');
+equipmentTabResources = [];
+await run("ensureCharacterHubEquipment({force:true,resources:['set-effect']})");
+assert.deepEqual(equipmentTabResources, ['set-effect'], 'set effect retry must not refetch equipment');
+context.document = undefined;
+run('clearNexonDetailRuntimeCache()');
 assert.equal(run('nexonDetailRuntimeCache.size'), 0);
 assert.equal(run('nexonEquipmentItemSelection.size'), 0);
-assert.doesNotMatch(JSON.stringify(json('state')), /테스트 무기|item_equipment|equipmentData/);
+assert.doesNotMatch(JSON.stringify(json('state')), /테스트 무기|item_equipment|equipmentData|setEffects|set_effect|에테르넬 메이지/);
 assert.match(source.slice(source.indexOf('async function ensureCharacterHubEquipment'), source.indexOf('const NEXON_EQUIPMENT_SLOT_ORDER')), /activeCharacterHubTab !== 'equipment'/);
+assert.match(source.slice(source.indexOf('async function ensureCharacterHubEquipment'), source.indexOf('const NEXON_EQUIPMENT_SLOT_ORDER')), /Promise\.allSettled\(requests\)/);
 assert.doesNotMatch(source.slice(source.indexOf('function renderCharacterHubEquipment'), source.indexOf('const EQUIPMENT_OPTION_LABELS')), /fetchNexonCharacterDetail\(/);
 assert.match(source, /equipment-inline-detail[\s\S]*renderEquipmentDetailMarkup\(selectedItem\)/);
 assert.match(source, /function openEquipmentDetail\(item\)[\s\S]*renderEquipmentDetailMarkup\(item\)/);
@@ -2544,7 +2683,7 @@ assert.match(source.slice(source.indexOf('async function ensureCharacterHubGrowt
 assert.doesNotMatch(source.slice(source.indexOf('function renderCharacterHubGrowth'), source.indexOf('function characterHubBossRows')), /fetchNexonCharacterDetail\(/);
 assert.doesNotMatch(JSON.stringify(json('state')), /아케인심볼|디바이드 VI|character_hexa|symbol_equipment/);
 assert.doesNotMatch(JSON.stringify(json('state')), /skillMetadata|skill_description|skill_icon/);
-assert.doesNotMatch(cloudSource, /symbol-equipment|hexamatrix|hexa-stat|nexonDetailRuntimeCache|skillMetadata/);
+assert.doesNotMatch(cloudSource, /symbol-equipment|hexamatrix|hexa-stat|set-effect|setEffects|nexonDetailRuntimeCache|skillMetadata/);
 let proxyValidationStatus = 0, proxyValidationBody = null;
 await schedulerTestHandler(
   {method: 'GET', query: {ocid: 'invalid ocid'}},
@@ -2747,12 +2886,18 @@ const compactOptionCss = css.slice(css.indexOf('.equipment-option-list{'), css.i
 assert.doesNotMatch(compactOptionCss, /justify-content:space-between|grid-template-columns|min-width:[1-9]\d*px|overflow-x:auto|white-space:nowrap/);
 assert.match(css, /@media\(max-width:430px\)[\s\S]*\.equipment-option-row\{gap:3px 7px\}/);
 assert.match(css, /@media\(max-width:430px\)[\s\S]*\.equipment-option-breakdown-inline\{flex-basis:100%\}/);
+assert.match(css, /\.set-effect-grid\{display:grid;grid-template-columns:minmax\(0,1fr\)/);
+assert.match(css, /@media\(min-width:1100px\)[\s\S]*\.set-effect-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)\}/);
+assert.match(css, /\.set-effect-step p\{[^}]*white-space:normal;overflow-wrap:anywhere;word-break:break-word/);
+assert.match(css, /@media\(max-width:430px\)[\s\S]*\.set-effect-step\{grid-template-columns:1fr/);
+const setEffectCss = css.slice(css.indexOf('.equipment-set-effects'), css.indexOf('.equipment-desktop-viewer'));
+assert.doesNotMatch(setEffectCss, /overflow-x:auto|white-space:nowrap[^}]*set_option/);
 assert.match(source, /const NEXON_DETAIL_CLIENT_TTL_MS = 5 \* 60 \* 1000/);
 assert.match(source, /headers: \{Authorization: `Bearer \$\{token\}`\}/);
 assert.match(source, /clearNexonDetailRuntimeCache\(\);[\s\S]*nexonCredentialState = \{\.\.\.result, status: 'saved'/);
 assert.match(source, /await nexonCredentialRequest\('DELETE'\);[\s\S]*clearNexonDetailRuntimeCache\(\)/);
 assert.match(source, /if \(!signedIn\) \{[\s\S]*clearNexonDetailRuntimeCache\(\)/);
-assert.doesNotMatch(cloudSource, /nexon-character-detail|item_equipment|nexonDetailRuntimeCache/);
+assert.doesNotMatch(cloudSource, /nexon-character-detail|item_equipment|set-effect|setEffects|nexonDetailRuntimeCache/);
 assert.equal(run('STATE_VERSION'), 9);
 assert.doesNotMatch(html, /data-tab="character"/);
 assert.match(html, /id="homeRecentRecords"/);

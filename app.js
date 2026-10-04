@@ -1294,16 +1294,20 @@ async function fetchNexonCharacterDetail(resource, ocid, {force = false} = {}) {
   nexonDetailRuntimeCache.set(key, {status: 'loading', promise, receivedAt: Date.now()});
   return promise;
 }
-async function ensureCharacterHubEquipment({force = false} = {}) {
+const NEXON_EQUIPMENT_RESOURCES = Object.freeze(['equipment', 'set-effect']);
+async function ensureCharacterHubEquipment({force = false, resources = NEXON_EQUIPMENT_RESOURCES} = {}) {
   if (activeCharacterHubTab !== 'equipment') return;
   const character = selectedHubCharacter(viewData());
   const ocid = character?.nexonCharacter?.ocid;
   if (!ocid || !nexonCredentialAuthBridge?.isSignedIn?.() || !nexonCredentialState.hasCredential) return;
-  const existing = nexonDetailCacheEntry('equipment', ocid);
-  if (!force && ['loading', 'ready'].includes(existing?.status)) return existing?.promise || existing?.data;
-  const request = fetchNexonCharacterDetail('equipment', ocid, {force});
+  const pending = resources.filter(resource => {
+    const entry = nexonDetailCacheEntry(resource, ocid);
+    return force || !['loading', 'ready'].includes(entry?.status);
+  });
+  if (!pending.length) return;
+  const requests = pending.map(resource => fetchNexonCharacterDetail(resource, ocid, {force}));
   renderCharacterHub(viewData());
-  try { await request; } catch {}
+  await Promise.allSettled(requests);
   if (activeCharacterHubTab === 'equipment' && selectedHubCharacter()?.id === character.id) renderCharacterHub(viewData());
 }
 const NEXON_GROWTH_RESOURCES = Object.freeze(['symbol', 'hexa', 'hexa-stat']);
@@ -1420,14 +1424,49 @@ function renderEquipmentExtraSection(entries, selectedRef, title = '추가 장�
   if (!entries.length) return '';
   return `<section class="equipment-extra-section"><h5>${escapeHtml(title)} <small>${entries.length}개</small></h5><div class="equipment-extra-list">${entries.map(entry => renderEquipmentSlot(entry, entry.item?.slot || entry.item?.part || '기타 장비', selectedRef)).join('')}</div></section>`;
 }
+function renderSetEffectStep(effect, active = false) {
+  return `<div class="set-effect-step ${active ? 'active' : 'inactive'}"><div><b>${escapeHtml(`${effect.setCount}세트`)}</b>${active ? '<small class="set-effect-active-badge">적용</small>' : ''}</div><p>${escapeHtml(effect.option)}</p></div>`;
+}
+function renderSetEffectCard(setEffect) {
+  const activeEffects = Array.isArray(setEffect?.activeEffects) ? setEffect.activeEffects : [];
+  const allEffects = Array.isArray(setEffect?.allEffects) ? setEffect.allEffects : [];
+  const activeCounts = new Set(activeEffects.map(effect => effect.setCount));
+  const hasInactiveStage = allEffects.some(effect => !activeCounts.has(effect.setCount));
+  const count = Number.isInteger(setEffect?.totalSetCount) && setEffect.totalSetCount > 0 ? `<strong>${setEffect.totalSetCount}세트 적용</strong>` : '';
+  const activeMarkup = activeEffects.length
+    ? activeEffects.map(effect => renderSetEffectStep(effect, true)).join('')
+    : '<p class="empty compact-empty">현재 적용 중인 단계가 없습니다.</p>';
+  const fullMarkup = hasInactiveStage
+    ? `<details class="set-effect-all"><summary>전체 단계 보기</summary><div>${allEffects.map(effect => renderSetEffectStep(effect, activeCounts.has(effect.setCount))).join('')}</div></details>`
+    : '';
+  return `<article class="set-effect-card"><header><h5>${escapeHtml(setEffect?.setName || '이름 없는 세트')}</h5>${count}</header><section class="set-effect-active"><h6>현재 적용 효과</h6>${activeMarkup}</section>${fullMarkup}</article>`;
+}
+function renderSetEffectSection(entry) {
+  let body = '';
+  if (!entry || entry.status === 'loading') {
+    body = '<div class="set-effect-state" aria-busy="true"><span class="equipment-loading" aria-hidden="true"></span><p>세트 효과를 불러오는 중…</p></div>';
+  } else if (entry.status === 'error') {
+    body = `<div class="set-effect-state"><p>세트 효과를 불러오지 못했습니다.</p><small>${escapeHtml(nexonDetailErrorMessage(entry.error, '세트 효과'))}</small><button type="button" class="ghost compact" data-set-effect-retry>다시 시도</button></div>`;
+  } else {
+    const setEffects = Array.isArray(entry.data?.setEffects) ? entry.data.setEffects : [];
+    body = setEffects.length
+      ? `<div class="set-effect-grid">${setEffects.map(renderSetEffectCard).join('')}</div>`
+      : '<p class="empty compact-empty set-effect-empty">적용 중인 세트 효과가 없습니다.</p>';
+  }
+  const fetchedAt = entry?.status === 'ready' ? nexonCheckedLabel(entry.data?.fetchedAt) : '';
+  return `<section class="equipment-set-effects" aria-labelledby="equipmentSetEffectTitle"><div class="set-effect-section-head"><div><h4 id="equipmentSetEffectTitle">세트 효과</h4><p>현재 실제 적용 장비 기준${fetchedAt ? ` · ${escapeHtml(fetchedAt)}` : ''}</p></div></div>${body}</section>`;
+}
 function renderCharacterHubEquipment(character) {
   const profile = character?.nexonCharacter;
   if (!profile?.ocid) return '<div class="character-hub-equipment-state"><h3>장비</h3><p class="muted">NEXON 캐릭터를 연동하면 현재 장비를 확인할 수 있습니다.</p></div>';
   if (!nexonCredentialAuthBridge?.isSignedIn?.()) return '<div class="character-hub-equipment-state"><h3>장비</h3><p class="muted">장비 정보는 메기 계정에 로그인한 뒤 확인할 수 있습니다.</p></div>';
   if (!nexonCredentialState.hasCredential) return '<div class="character-hub-equipment-state"><h3>장비</h3><p class="muted">장비 정보를 보려면 NEXON 개인 API Key를 등록해주세요.</p><button type="button" class="ghost compact" data-equipment-open-settings>설정에서 API Key 등록</button></div>';
   const entry = nexonDetailCacheEntry('equipment', profile.ocid);
-  if (!entry || entry.status === 'loading') return '<div class="character-hub-equipment-state" aria-busy="true"><span class="equipment-loading" aria-hidden="true"></span><p>장비 정보를 불러오는 중…</p></div>';
-  if (entry.status === 'error') return `<div class="character-hub-equipment-state"><h3>장비 정보를 불러오지 못했습니다.</h3><p class="muted">${escapeHtml(nexonDetailErrorMessage(entry.error, '장비'))}</p><button type="button" class="ghost compact" data-equipment-retry>다시 시도</button></div>`;
+  const setEffectEntry = nexonDetailCacheEntry('set-effect', profile.ocid);
+  const historyNotice = isPast() ? '<p class="notice equipment-history-notice">장비 및 세트 효과 정보는 현재 NEXON 캐릭터 기준이며, 조회 중인 과거 주차의 스냅샷이 아닙니다.</p>' : '';
+  const setEffectMarkup = renderSetEffectSection(setEffectEntry);
+  if (!entry || entry.status === 'loading') return `<div class="character-hub-equipment">${historyNotice}<div class="character-hub-equipment-state" aria-busy="true"><span class="equipment-loading" aria-hidden="true"></span><p>장비 정보를 불러오는 중…</p></div>${setEffectMarkup}</div>`;
+  if (entry.status === 'error') return `<div class="character-hub-equipment">${historyNotice}<div class="character-hub-equipment-state"><h3>장비 정보를 불러오지 못했습니다.</h3><p class="muted">${escapeHtml(nexonDetailErrorMessage(entry.error, '장비'))}</p><button type="button" class="ghost compact" data-equipment-retry>다시 시도</button></div>${setEffectMarkup}</div>`;
   nexonEquipmentDialogItems.clear();
   const equipment = entry.data || {}, view = selectedEquipmentView(profile.ocid, equipment);
   const selectOptions = equipmentPresetOptions(equipment).map(item => `<option value="${item.value}" ${item.value === view.selection ? 'selected' : ''} ${item.disabled ? 'disabled' : ''}>${escapeHtml(item.label)}</option>`).join('');
@@ -1443,7 +1482,7 @@ function renderCharacterHubEquipment(character) {
   const dragonMobile = dragonEntries.length ? `<section class="equipment-section"><h4>용 장비 <small>${dragonEntries.length}개</small></h4>${renderEquipmentCards(dragonEntries, selectedRef)}</section>` : '';
   const mechanicMobile = mechanicEntries.length ? `<section class="equipment-section"><h4>메카닉 장비 <small>${mechanicEntries.length}개</small></h4>${renderEquipmentCards(mechanicEntries, selectedRef)}</section>` : '';
   const specialDesktop = `${renderEquipmentExtraSection(dragonEntries, selectedRef, '용 장비')}${renderEquipmentExtraSection(mechanicEntries, selectedRef, '메카닉 장비')}`;
-  return `<div class="character-hub-equipment"><div class="equipment-toolbar"><div><h3>장비</h3><p class="muted">NEXON 현재 조회 기준${fetchedAt ? ` · ${escapeHtml(fetchedAt)}` : ''}</p></div><label>장비 프리셋<select data-equipment-preset aria-label="장비 프리셋 선택">${selectOptions}</select><small>적용 중 · ${escapeHtml(equipmentPresetOptions(equipment).find(item => item.value === view.selection)?.label || '현재 장비')}</small></label></div>${isPast() ? '<p class="notice equipment-history-notice">장비는 과거 주차 스냅샷이 아닌 현재 NEXON 조회 결과입니다.</p>' : ''}${titleMarkup}<div class="equipment-mobile-list"><section class="equipment-section"><h4>장착 장비 <small>${view.items.length}개</small></h4>${renderEquipmentCards(mainEntries, selectedRef)}</section>${dragonMobile}${mechanicMobile}</div><div class="equipment-desktop-viewer"><div class="equipment-loadout"><div class="equipment-loadout-head"><h4>장착 장비</h4><small>슬롯을 선택하면 오른쪽에서 상세 옵션을 확인할 수 있습니다.</small></div>${renderEquipmentSlotBoard(mainEntries, selectedRef)}${renderEquipmentExtraSection(extraEntries, selectedRef)}${specialDesktop}</div><aside class="equipment-inline-detail" aria-label="선택 장비 상세" aria-live="polite">${selectedItem ? renderEquipmentDetailMarkup(selectedItem) : '<p class="empty compact-empty">선택할 장비가 없습니다.</p>'}</aside></div></div>`;
+  return `<div class="character-hub-equipment"><div class="equipment-toolbar"><div><h3>장비</h3><p class="muted">NEXON 현재 조회 기준${fetchedAt ? ` · ${escapeHtml(fetchedAt)}` : ''}</p></div><label>장비 프리셋<select data-equipment-preset aria-label="장비 프리셋 선택">${selectOptions}</select><small>적용 중 · ${escapeHtml(equipmentPresetOptions(equipment).find(item => item.value === view.selection)?.label || '현재 장비')}</small></label></div>${historyNotice}${titleMarkup}<div class="equipment-mobile-list"><section class="equipment-section"><h4>장착 장비 <small>${view.items.length}개</small></h4>${renderEquipmentCards(mainEntries, selectedRef)}</section>${dragonMobile}${mechanicMobile}</div><div class="equipment-desktop-viewer"><div class="equipment-loadout"><div class="equipment-loadout-head"><h4>장착 장비</h4><small>슬롯을 선택하면 오른쪽에서 상세 옵션을 확인할 수 있습니다.</small></div>${renderEquipmentSlotBoard(mainEntries, selectedRef)}${renderEquipmentExtraSection(extraEntries, selectedRef)}${specialDesktop}</div><aside class="equipment-inline-detail" aria-label="선택 장비 상세" aria-live="polite">${selectedItem ? renderEquipmentDetailMarkup(selectedItem) : '<p class="empty compact-empty">선택할 장비가 없습니다.</p>'}</aside></div>${setEffectMarkup}</div>`;
 }
 const EQUIPMENT_OPTION_LABELS = Object.freeze({
   str: 'STR', dex: 'DEX', int: 'INT', luk: 'LUK', max_hp: '최대 HP', max_mp: '최대 MP',
@@ -2807,7 +2846,8 @@ function init() {
       else openEquipmentDetail(item);
       return;
     }
-    if (e.target.closest('[data-equipment-retry]')) { ensureCharacterHubEquipment({force: true}); return; }
+    if (e.target.closest('[data-equipment-retry]')) { ensureCharacterHubEquipment({force: true, resources: ['equipment']}); return; }
+    if (e.target.closest('[data-set-effect-retry]')) { ensureCharacterHubEquipment({force: true, resources: ['set-effect']}); return; }
     const growthRetry = e.target.closest('[data-growth-retry]');
     if (growthRetry) { ensureCharacterHubGrowth({force: true, resources: [growthRetry.dataset.growthRetry]}); return; }
     if (e.target.closest('[data-equipment-open-settings]')) {

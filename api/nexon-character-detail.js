@@ -20,6 +20,11 @@ const DETAIL_RESOURCES = Object.freeze({
     ttl: DETAIL_CACHE_TTL_MS,
     sanitize: sanitizeEquipmentPayload
   }),
+  'set-effect': Object.freeze({
+    path: '/maplestory/v1/character/set-effect',
+    ttl: DETAIL_CACHE_TTL_MS,
+    sanitize: sanitizeSetEffectPayload
+  }),
   symbol: Object.freeze({
     path: '/maplestory/v1/character/symbol-equipment',
     ttl: DETAIL_CACHE_TTL_MS,
@@ -186,6 +191,47 @@ function sanitizeEquipmentPayload(payload) {
       2: sanitizeTitle(payload.item_equipment_preset_2_title),
       3: sanitizeTitle(payload.item_equipment_preset_3_title)
     }
+  };
+}
+
+function sanitizeSetEffectStep(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw invalidDetailResponse('INVALID_SET_EFFECT_RESPONSE', '세트 효과');
+  }
+  const setCount = safeInteger(value.set_count);
+  if (!Number.isInteger(setCount) || setCount < 0 || typeof value.set_option !== 'string') {
+    throw invalidDetailResponse('INVALID_SET_EFFECT_RESPONSE', '세트 효과');
+  }
+  return {
+    setCount,
+    option: safeText(value.set_option, 2000)
+  };
+}
+
+function sanitizeSetEffect(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw invalidDetailResponse('INVALID_SET_EFFECT_RESPONSE', '세트 효과');
+  }
+  const setName = safeText(value.set_name, 160);
+  const totalSetCount = safeInteger(value.total_set_count);
+  if (!setName || !Number.isInteger(totalSetCount) || totalSetCount < 0) {
+    throw invalidDetailResponse('INVALID_SET_EFFECT_RESPONSE', '세트 효과');
+  }
+  return {
+    setName,
+    totalSetCount,
+    activeEffects: requireArray(value.set_effect_info, 'INVALID_SET_EFFECT_RESPONSE', '세트 효과').map(sanitizeSetEffectStep),
+    allEffects: requireArray(value.set_option_full, 'INVALID_SET_EFFECT_RESPONSE', '세트 효과').map(sanitizeSetEffectStep)
+  };
+}
+
+function sanitizeSetEffectPayload(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || !Object.hasOwn(payload, 'set_effect')) {
+    throw invalidDetailResponse('INVALID_SET_EFFECT_RESPONSE', '세트 효과');
+  }
+  return {
+    date: safeText(payload.date, 40),
+    setEffects: requireArray(payload.set_effect, 'INVALID_SET_EFFECT_RESPONSE', '세트 효과').map(sanitizeSetEffect)
   };
 }
 
@@ -507,6 +553,9 @@ export const nexonCharacterDetailInternals = {
   sanitizeHexaStatCore,
   sanitizeHexaStatPayload,
   sanitizeOptionObject,
+  sanitizeSetEffect,
+  sanitizeSetEffectPayload,
+  sanitizeSetEffectStep,
   sanitizeSymbolItem,
   sanitizeSymbolPayload,
   sanitizeTitle,
