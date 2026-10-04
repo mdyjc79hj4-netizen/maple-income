@@ -12,7 +12,23 @@ const detailCache = new Map();
 const DETAIL_RESOURCES = Object.freeze({
   equipment: Object.freeze({
     path: '/maplestory/v1/character/item-equipment',
+    ttl: DETAIL_CACHE_TTL_MS,
     sanitize: sanitizeEquipmentPayload
+  }),
+  symbol: Object.freeze({
+    path: '/maplestory/v1/character/symbol-equipment',
+    ttl: DETAIL_CACHE_TTL_MS,
+    sanitize: sanitizeSymbolPayload
+  }),
+  hexa: Object.freeze({
+    path: '/maplestory/v1/character/hexamatrix',
+    ttl: DETAIL_CACHE_TTL_MS,
+    sanitize: sanitizeHexaPayload
+  }),
+  'hexa-stat': Object.freeze({
+    path: '/maplestory/v1/character/hexamatrix-stat',
+    ttl: DETAIL_CACHE_TTL_MS,
+    sanitize: sanitizeHexaStatPayload
   })
 });
 
@@ -168,6 +184,124 @@ function sanitizeEquipmentPayload(payload) {
   };
 }
 
+function invalidDetailResponse(code, label) {
+  return Object.assign(new Error(`NEXON ${label} 응답 구조가 올바르지 않습니다.`), {status: 502, code});
+}
+
+function requireArray(value, code, label) {
+  if (!Array.isArray(value)) throw invalidDetailResponse(code, label);
+  return value;
+}
+
+function sanitizeSymbolItem(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalidDetailResponse('INVALID_SYMBOL_RESPONSE', '심볼');
+  const item = {
+    name: safeText(value.symbol_name, 160),
+    icon: safeImageUrl(value.symbol_icon),
+    description: safeText(value.symbol_description, 500),
+    otherEffect: safeText(value.symbol_other_effect_description, 500),
+    force: safeOptionValue(value.symbol_force),
+    level: safeInteger(value.symbol_level),
+    stats: {
+      str: safeOptionValue(value.symbol_str),
+      dex: safeOptionValue(value.symbol_dex),
+      int: safeOptionValue(value.symbol_int),
+      luk: safeOptionValue(value.symbol_luk),
+      hp: safeOptionValue(value.symbol_hp),
+      dropRate: safeOptionValue(value.symbol_drop_rate),
+      mesoRate: safeOptionValue(value.symbol_meso_rate),
+      expRate: safeOptionValue(value.symbol_exp_rate)
+    },
+    growth: safeInteger(value.symbol_growth_count),
+    requiredGrowth: safeInteger(value.symbol_require_growth_count)
+  };
+  item.stats = Object.fromEntries(Object.entries(item.stats).filter(([, stat]) => stat !== null));
+  if (!item.name) throw invalidDetailResponse('INVALID_SYMBOL_RESPONSE', '심볼');
+  return item;
+}
+
+function sanitizeSymbolPayload(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || !Object.hasOwn(payload, 'symbol')) {
+    throw invalidDetailResponse('INVALID_SYMBOL_RESPONSE', '심볼');
+  }
+  return {
+    date: safeText(payload.date, 40),
+    characterClass: safeText(payload.character_class, 80),
+    symbols: requireArray(payload.symbol, 'INVALID_SYMBOL_RESPONSE', '심볼').map(sanitizeSymbolItem).filter(Boolean)
+  };
+}
+
+function sanitizeHexaCore(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalidDetailResponse('INVALID_HEXA_RESPONSE', 'HEXA 코어');
+  if (!Array.isArray(value.linked_skill)) throw invalidDetailResponse('INVALID_HEXA_RESPONSE', 'HEXA 코어');
+  const core = {
+    name: safeText(value.hexa_core_name, 160),
+    level: safeInteger(value.hexa_core_level),
+    eventLevel: safeInteger(value.hexa_core_event_level),
+    type: safeText(value.hexa_core_type, 80),
+    linkedSkills: value.linked_skill.map(skill => {
+      if (!skill || typeof skill !== 'object' || Array.isArray(skill)) throw invalidDetailResponse('INVALID_HEXA_RESPONSE', 'HEXA 코어');
+      return safeText(skill.hexa_skill_id, 160);
+    }).filter(Boolean)
+  };
+  if (!core.name) throw invalidDetailResponse('INVALID_HEXA_RESPONSE', 'HEXA 코어');
+  return core;
+}
+
+function sanitizeHexaPayload(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || !Object.hasOwn(payload, 'character_hexa_core_equipment')) {
+    throw invalidDetailResponse('INVALID_HEXA_RESPONSE', 'HEXA 코어');
+  }
+  return {
+    date: safeText(payload.date, 40),
+    cores: requireArray(payload.character_hexa_core_equipment, 'INVALID_HEXA_RESPONSE', 'HEXA 코어').map(sanitizeHexaCore).filter(Boolean)
+  };
+}
+
+function sanitizeHexaStatCore(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalidDetailResponse('INVALID_HEXA_STAT_RESPONSE', 'HEXA 스탯');
+  const core = {
+    slotId: safeText(value.slot_id, 80),
+    mainStatName: safeText(value.main_stat_name, 120),
+    subStatName1: safeText(value.sub_stat_name_1, 120),
+    subStatName2: safeText(value.sub_stat_name_2, 120),
+    mainStatLevel: safeInteger(value.main_stat_level),
+    subStatLevel1: safeInteger(value.sub_stat_level_1),
+    subStatLevel2: safeInteger(value.sub_stat_level_2),
+    grade: safeInteger(value.stat_grade)
+  };
+  if (!core.slotId && !core.mainStatName && !core.subStatName1 && !core.subStatName2) throw invalidDetailResponse('INVALID_HEXA_STAT_RESPONSE', 'HEXA 스탯');
+  return core;
+}
+
+function sanitizeHexaStatList(payload, key) {
+  return requireArray(payload[key], 'INVALID_HEXA_STAT_RESPONSE', 'HEXA 스탯').map(sanitizeHexaStatCore).filter(Boolean);
+}
+
+function sanitizeHexaStatPayload(payload) {
+  const keys = [
+    'character_hexa_stat_core', 'character_hexa_stat_core_2', 'character_hexa_stat_core_3',
+    'preset_hexa_stat_core', 'preset_hexa_stat_core_2', 'preset_hexa_stat_core_3'
+  ];
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || keys.some(key => !Object.hasOwn(payload, key))) {
+    throw invalidDetailResponse('INVALID_HEXA_STAT_RESPONSE', 'HEXA 스탯');
+  }
+  return {
+    date: safeText(payload.date, 40),
+    characterClass: safeText(payload.character_class, 80),
+    current: {
+      1: sanitizeHexaStatList(payload, 'character_hexa_stat_core'),
+      2: sanitizeHexaStatList(payload, 'character_hexa_stat_core_2'),
+      3: sanitizeHexaStatList(payload, 'character_hexa_stat_core_3')
+    },
+    presets: {
+      1: sanitizeHexaStatList(payload, 'preset_hexa_stat_core'),
+      2: sanitizeHexaStatList(payload, 'preset_hexa_stat_core_2'),
+      3: sanitizeHexaStatList(payload, 'preset_hexa_stat_core_3')
+    }
+  };
+}
+
 function sanitizeUpstreamText(value) {
   if (typeof value !== 'string') return '';
   return value
@@ -237,7 +371,7 @@ function detailCacheKey(userId, credentialRevision, ocid, resource) {
 
 function pruneDetailCache(now = Date.now()) {
   for (const [key, value] of detailCache) {
-    if (!value || now - value.cachedAt >= DETAIL_CACHE_TTL_MS) detailCache.delete(key);
+    if (!value || now - value.cachedAt >= (value.ttl || DETAIL_CACHE_TTL_MS)) detailCache.delete(key);
   }
   while (detailCache.size > DETAIL_CACHE_MAX_ENTRIES) detailCache.delete(detailCache.keys().next().value);
 }
@@ -265,7 +399,7 @@ function createNexonCharacterDetailHandler(dependencies = {}) {
       pruneDetailCache(timestamp);
       const cacheKey = detailCacheKey(user.id, credentialRevision, ocid, resource);
       const cached = detailCache.get(cacheKey);
-      if (cached && timestamp - cached.cachedAt < DETAIL_CACHE_TTL_MS) {
+      if (cached && timestamp - cached.cachedAt < config.ttl) {
         detailCache.delete(cacheKey);
         detailCache.set(cacheKey, cached);
         return send(res, 200, {...cached.body, cached: true});
@@ -274,7 +408,7 @@ function createNexonCharacterDetailHandler(dependencies = {}) {
       const payload = await requestDetail(config, ocid, apiKey);
       const data = config.sanitize(payload);
       const body = {ok: true, resource, ocid, fetchedAt: new Date(timestamp).toISOString(), cached: false, data};
-      detailCache.set(cacheKey, {cachedAt: timestamp, body});
+      detailCache.set(cacheKey, {cachedAt: timestamp, ttl: config.ttl, body});
       pruneDetailCache(timestamp);
       return send(res, 200, body);
     } catch (error) {
@@ -315,7 +449,13 @@ export const nexonCharacterDetailInternals = {
   safeText,
   sanitizeEquipmentItem,
   sanitizeEquipmentPayload,
+  sanitizeHexaCore,
+  sanitizeHexaPayload,
+  sanitizeHexaStatCore,
+  sanitizeHexaStatPayload,
   sanitizeOptionObject,
+  sanitizeSymbolItem,
+  sanitizeSymbolPayload,
   sanitizeTitle,
   sanitizeUpstreamText,
   upstreamErrorDetails,

@@ -1257,12 +1257,12 @@ function clearNexonDetailRuntimeCache() {
   nexonEquipmentItemSelection.clear();
   nexonEquipmentDialogItems.clear();
 }
-function nexonDetailErrorMessage(error) {
-  if (error?.status === 401 || error?.code === 'AUTH_REQUIRED') return '장비 정보는 메기 계정에 로그인한 뒤 확인할 수 있습니다.';
-  if (error?.status === 409 || error?.code === 'NEXON_CREDENTIAL_REQUIRED') return '장비 정보를 보려면 NEXON 개인 API Key를 등록해주세요.';
+function nexonDetailErrorMessage(error, label = '상세') {
+  if (error?.status === 401 || error?.code === 'AUTH_REQUIRED') return `${label} 정보는 메기 계정에 로그인한 뒤 확인할 수 있습니다.`;
+  if (error?.status === 409 || error?.code === 'NEXON_CREDENTIAL_REQUIRED') return `${label} 정보를 보려면 NEXON 개인 API Key를 등록해주세요.`;
   if (error?.status === 429 || error?.category === 'rate_limited') return 'NEXON API 호출 한도를 초과했습니다. 잠시 후 다시 시도해주세요.';
-  if (error?.category === 'data_preparing') return 'NEXON 장비 데이터가 아직 준비 중입니다. 잠시 후 다시 시도해주세요.';
-  return error?.message || 'NEXON 장비 정보를 불러오지 못했습니다.';
+  if (error?.category === 'data_preparing') return `NEXON ${label} 데이터가 아직 준비 중입니다. 잠시 후 다시 시도해주세요.`;
+  return error?.message || `NEXON ${label} 정보를 불러오지 못했습니다.`;
 }
 async function fetchNexonCharacterDetail(resource, ocid, {force = false} = {}) {
   const key = nexonDetailCacheKey(resource, ocid);
@@ -1305,6 +1305,22 @@ async function ensureCharacterHubEquipment({force = false} = {}) {
   renderCharacterHub(viewData());
   try { await request; } catch {}
   if (activeCharacterHubTab === 'equipment' && selectedHubCharacter()?.id === character.id) renderCharacterHub(viewData());
+}
+const NEXON_GROWTH_RESOURCES = Object.freeze(['symbol', 'hexa', 'hexa-stat']);
+async function ensureCharacterHubGrowth({force = false, resources = NEXON_GROWTH_RESOURCES} = {}) {
+  if (activeCharacterHubTab !== 'growth') return;
+  const character = selectedHubCharacter(viewData());
+  const ocid = character?.nexonCharacter?.ocid;
+  if (!ocid || !nexonCredentialAuthBridge?.isSignedIn?.() || !nexonCredentialState.hasCredential) return;
+  const pending = resources.filter(resource => {
+    const entry = nexonDetailCacheEntry(resource, ocid);
+    return force || !['loading', 'ready'].includes(entry?.status);
+  });
+  if (!pending.length) return;
+  const requests = pending.map(resource => fetchNexonCharacterDetail(resource, ocid, {force}));
+  renderCharacterHub(viewData());
+  await Promise.allSettled(requests);
+  if (activeCharacterHubTab === 'growth' && selectedHubCharacter()?.id === character.id) renderCharacterHub(viewData());
 }
 const NEXON_EQUIPMENT_SLOT_ORDER = Object.freeze([
   '모자', '얼굴장식', '눈장식', '귀고리', '상의', '한벌옷', '하의', '신발', '장갑', '망토',
@@ -1411,7 +1427,7 @@ function renderCharacterHubEquipment(character) {
   if (!nexonCredentialState.hasCredential) return '<div class="character-hub-equipment-state"><h3>장비</h3><p class="muted">장비 정보를 보려면 NEXON 개인 API Key를 등록해주세요.</p><button type="button" class="ghost compact" data-equipment-open-settings>설정에서 API Key 등록</button></div>';
   const entry = nexonDetailCacheEntry('equipment', profile.ocid);
   if (!entry || entry.status === 'loading') return '<div class="character-hub-equipment-state" aria-busy="true"><span class="equipment-loading" aria-hidden="true"></span><p>장비 정보를 불러오는 중…</p></div>';
-  if (entry.status === 'error') return `<div class="character-hub-equipment-state"><h3>장비 정보를 불러오지 못했습니다.</h3><p class="muted">${escapeHtml(nexonDetailErrorMessage(entry.error))}</p><button type="button" class="ghost compact" data-equipment-retry>다시 시도</button></div>`;
+  if (entry.status === 'error') return `<div class="character-hub-equipment-state"><h3>장비 정보를 불러오지 못했습니다.</h3><p class="muted">${escapeHtml(nexonDetailErrorMessage(entry.error, '장비'))}</p><button type="button" class="ghost compact" data-equipment-retry>다시 시도</button></div>`;
   nexonEquipmentDialogItems.clear();
   const equipment = entry.data || {}, view = selectedEquipmentView(profile.ocid, equipment);
   const selectOptions = equipmentPresetOptions(equipment).map(item => `<option value="${item.value}" ${item.value === view.selection ? 'selected' : ''} ${item.disabled ? 'disabled' : ''}>${escapeHtml(item.label)}</option>`).join('');
@@ -1544,6 +1560,86 @@ function renderCharacterHubOverview(character, data) {
 function renderCharacterHubStats(character) {
   return `<div class="character-hub-stats">${nexonSpecSummary(character)}${nexonStatDetails(character)}</div>`;
 }
+const SYMBOL_STAT_LABELS = Object.freeze({
+  str: 'STR', dex: 'DEX', int: 'INT', luk: 'LUK', hp: 'HP',
+  dropRate: '드롭률', mesoRate: '메소 획득량', expRate: '경험치 획득량'
+});
+function growthHasValue(value) {
+  return value !== null && value !== undefined && String(value).trim() !== '' && Number(value) !== 0;
+}
+function symbolScope(name) {
+  const normalized = String(name || '').replace(/\s+/gu, ' ').trim();
+  if (/^그랜드\s*어센틱심볼/u.test(normalized)) return {id: 'grand-authentic', label: '그랜드 어센틱심볼'};
+  if (/^어센틱심볼/u.test(normalized)) return {id: 'authentic', label: '어센틱심볼'};
+  if (/^아케인심볼/u.test(normalized)) return {id: 'arcane', label: '아케인심볼'};
+  return {id: 'other', label: '기타 심볼'};
+}
+function growthImage(url, className) {
+  const image = safeNexonImageUrl(url);
+  return image ? `<img class="${escapeHtml(className)}" src="${escapeHtml(image)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<span class="growth-icon-placeholder" aria-hidden="true">◇</span>';
+}
+function renderSymbolCard(symbol) {
+  const stats = Object.entries(symbol?.stats || {}).filter(([, value]) => growthHasValue(value));
+  const growth = Number.isInteger(symbol?.growth) ? Math.max(0, symbol.growth) : null;
+  const required = Number.isInteger(symbol?.requiredGrowth) ? Math.max(0, symbol.requiredGrowth) : null;
+  const maxed = required === 0 && growth !== null;
+  const progress = growth !== null && required !== null
+    ? maxed
+      ? '<span class="symbol-growth-max">MAX</span>'
+      : `<span class="symbol-growth-copy">${growth.toLocaleString('ko-KR')} / ${required.toLocaleString('ko-KR')}</span><progress value="${Math.min(growth, required)}" max="${required || 1}" aria-label="${escapeHtml(symbol.name)} 성장치"></progress>`
+    : '';
+  const force = growthHasValue(symbol?.force) ? `<span><small>포스</small><b>${escapeHtml(String(symbol.force))}</b></span>` : '';
+  const otherEffect = symbol?.otherEffect ? `<p class="symbol-other-effect">${escapeHtml(symbol.otherEffect)}</p>` : '';
+  return `<article class="symbol-card">${growthImage(symbol?.icon, 'symbol-icon')}<div class="symbol-card-copy"><small>Lv. ${Number.isInteger(symbol?.level) ? symbol.level : '-'}</small><b>${escapeHtml(symbol?.name || '이름 없는 심볼')}</b></div><div class="symbol-card-values">${force}${stats.map(([key, value]) => `<span><small>${escapeHtml(SYMBOL_STAT_LABELS[key] || key)}</small><b>${escapeHtml(String(value))}${['dropRate', 'mesoRate', 'expRate'].includes(key) && !String(value).includes('%') ? '%' : ''}</b></span>`).join('')}</div>${otherEffect}<div class="symbol-growth">${progress}</div></article>`;
+}
+function renderSymbolGrowth(data) {
+  const groups = new Map();
+  for (const symbol of data?.symbols || []) {
+    const scope = symbolScope(symbol.name);
+    if (!groups.has(scope.id)) groups.set(scope.id, {label: scope.label, symbols: []});
+    groups.get(scope.id).symbols.push(symbol);
+  }
+  if (!groups.size) return '<p class="empty compact-empty">장착한 심볼이 없습니다.</p>';
+  return `<div class="growth-symbol-groups">${[...groups.values()].map(group => `<section class="growth-subsection"><h4>${escapeHtml(group.label)}</h4><div class="symbol-grid">${group.symbols.map(renderSymbolCard).join('')}</div></section>`).join('')}</div>`;
+}
+function renderHexaGrowth(data) {
+  const groups = new Map();
+  for (const core of data?.cores || []) {
+    const type = core.type || '기타 코어';
+    if (!groups.has(type)) groups.set(type, []);
+    groups.get(type).push(core);
+  }
+  if (!groups.size) return '<p class="empty compact-empty">장착한 HEXA 코어가 없습니다.</p>';
+  return `<div class="growth-hexa-groups">${[...groups].map(([type, cores]) => `<section class="growth-subsection"><h4>${escapeHtml(type)}</h4><div class="hexa-core-grid">${cores.map(core => `<article class="hexa-core-card"><div><small>${escapeHtml(core.type || 'HEXA 코어')}</small><b>${escapeHtml(core.name)}</b></div><strong>Lv. ${Number.isInteger(core.level) ? core.level : '-'}</strong>${Number.isInteger(core.eventLevel) && core.eventLevel > 0 ? `<span class="hexa-event-level">이벤트 Lv. ${core.eventLevel}</span>` : ''}${core.linkedSkills?.length ? `<p>${core.linkedSkills.map(skill => escapeHtml(skill)).join(' · ')}</p>` : ''}</article>`).join('')}</div></section>`).join('')}</div>`;
+}
+function renderHexaStatCore(core, stage) {
+  const stats = [
+    [core.mainStatName, core.mainStatLevel, '메인'],
+    [core.subStatName1, core.subStatLevel1, '서브'],
+    [core.subStatName2, core.subStatLevel2, '서브']
+  ].filter(([name]) => name);
+  return `<article class="hexa-stat-card"><header><span>HEXA 스탯 ${stage}</span>${Number.isInteger(core.grade) ? `<strong>${core.grade}등급</strong>` : ''}</header><small>슬롯 ${escapeHtml(core.slotId || '-')}</small><dl>${stats.map(([name, level, role]) => `<div><dt><small>${role}</small>${escapeHtml(name)}</dt><dd>Lv. ${Number.isInteger(level) ? level : '-'}</dd></div>`).join('')}</dl></article>`;
+}
+function renderHexaStatGrowth(data) {
+  const stages = [1, 2, 3].map(stage => ({stage, cores: Array.isArray(data?.current?.[stage]) ? data.current[stage] : []}));
+  if (!stages.some(item => item.cores.length)) return '<p class="empty compact-empty">적용 중인 HEXA 스탯이 없습니다.</p>';
+  return `<div class="hexa-stat-grid">${stages.flatMap(item => item.cores.map(core => renderHexaStatCore(core, item.stage))).join('')}</div>`;
+}
+function renderGrowthResourceSection(resource, title, description, renderer, ocid) {
+  const entry = nexonDetailCacheEntry(resource, ocid);
+  let body = '';
+  if (!entry || entry.status === 'loading') body = '<div class="growth-resource-state" aria-busy="true"><span class="equipment-loading" aria-hidden="true"></span><p>불러오는 중…</p></div>';
+  else if (entry.status === 'error') body = `<div class="growth-resource-state"><p>${escapeHtml(nexonDetailErrorMessage(entry.error, title))}</p><button type="button" class="ghost compact" data-growth-retry="${escapeHtml(resource)}">다시 시도</button></div>`;
+  else body = renderer(entry.data || {});
+  return `<section class="character-hub-section growth-resource" data-growth-resource="${escapeHtml(resource)}"><div class="character-hub-section-head"><div><h3>${escapeHtml(title)}</h3><p class="muted">${escapeHtml(description)}</p></div></div>${body}</section>`;
+}
+function renderCharacterHubGrowth(character) {
+  const profile = character?.nexonCharacter;
+  if (!profile?.ocid) return '<div class="character-hub-equipment-state"><h3>성장</h3><p class="muted">NEXON 캐릭터를 연동하면 심볼과 HEXA 정보를 확인할 수 있습니다.</p></div>';
+  if (!nexonCredentialAuthBridge?.isSignedIn?.()) return '<div class="character-hub-equipment-state"><h3>성장</h3><p class="muted">성장 정보는 메기 계정에 로그인한 뒤 확인할 수 있습니다.</p></div>';
+  if (!nexonCredentialState.hasCredential) return '<div class="character-hub-equipment-state"><h3>성장</h3><p class="muted">성장 정보를 보려면 NEXON 개인 API Key를 등록해주세요.</p><button type="button" class="ghost compact" data-equipment-open-settings>설정에서 API Key 등록</button></div>';
+  return `<div class="character-hub-growth">${isPast() ? '<p class="notice growth-history-notice">성장 정보는 과거 주차 스냅샷이 아닌 현재 NEXON 조회 결과입니다.</p>' : ''}${renderGrowthResourceSection('symbol', '심볼', '현재 장착한 심볼과 성장치', renderSymbolGrowth, profile.ocid)}${renderGrowthResourceSection('hexa', 'HEXA 코어', '현재 장착한 코어와 연결 스킬', renderHexaGrowth, profile.ocid)}${renderGrowthResourceSection('hexa-stat', 'HEXA 스탯', '현재 적용 중인 I · II · III 설정', renderHexaStatGrowth, profile.ocid)}</div>`;
+}
 function characterHubBossRows(character, data, monthly = false) {
   const weekId = data?.weekId || data?.currentWeek || selectedWeek || '';
   const bosses = normalizeBosses(character.bosses).filter(boss => isMonthlyBoss(boss) === monthly);
@@ -1583,6 +1679,8 @@ function renderCharacterHub(data = viewData()) {
     ? renderCharacterHubStats(character)
     : activeCharacterHubTab === 'equipment'
       ? renderCharacterHubEquipment(character)
+    : activeCharacterHubTab === 'growth'
+      ? renderCharacterHubGrowth(character)
     : activeCharacterHubTab === 'content'
       ? renderCharacterHubContent(character, data)
       : renderCharacterHubOverview(character, data);
@@ -2644,11 +2742,12 @@ function init() {
     if (card) openCharacterHub(card.dataset.character);
   });
   $('#characterHubBack').addEventListener('click', () => activatePage('summary'));
-  $('#characterHubSelect').addEventListener('change', e => { selectedHubCharacterId = e.target.value; renderCharacterHub(viewData()); ensureCharacterHubEquipment(); });
+  $('#characterHubSelect').addEventListener('change', e => { selectedHubCharacterId = e.target.value; renderCharacterHub(viewData()); ensureCharacterHubEquipment(); ensureCharacterHubGrowth(); });
   $$('[data-character-hub-tab]').forEach(button => button.addEventListener('click', () => {
     activeCharacterHubTab = button.dataset.characterHubTab;
     renderCharacterHub(viewData());
     ensureCharacterHubEquipment();
+    ensureCharacterHubGrowth();
   }));
   $('#characterHubTab').addEventListener('click', e => {
     const equipmentItem = e.target.closest('[data-equipment-item]');
@@ -2661,6 +2760,8 @@ function init() {
       return;
     }
     if (e.target.closest('[data-equipment-retry]')) { ensureCharacterHubEquipment({force: true}); return; }
+    const growthRetry = e.target.closest('[data-growth-retry]');
+    if (growthRetry) { ensureCharacterHubGrowth({force: true, resources: [growthRetry.dataset.growthRetry]}); return; }
     if (e.target.closest('[data-equipment-open-settings]')) {
       activatePage('settings');
       const route = $('[data-settings-route="nexon"]');

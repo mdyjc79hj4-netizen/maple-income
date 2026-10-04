@@ -2051,8 +2051,62 @@ assert.equal(nexonCharacterDetailInternals.safeInteger('22'), 22);
 assert.equal(nexonCharacterDetailInternals.safeInteger('2.5'), null);
 assert.equal(nexonCharacterDetailInternals.safeDecimal('96.42'), 96.42);
 assert.equal(nexonCharacterDetailInternals.safeImageUrl('data:text/html,bad'), '');
-assert.deepEqual(Object.keys(nexonCharacterDetailInternals.DETAIL_RESOURCES), ['equipment']);
+const symbolPayloadFixture = {
+  date: '2026-10-03T00:00+09:00', character_class: '아델',
+  symbol: [{
+    symbol_name: '아케인심볼 : 소멸의 여로', symbol_icon: 'https://example.com/symbol.png', symbol_description: '심볼 설명',
+    symbol_other_effect_description: '부가 효과', symbol_force: '220', symbol_level: 20, symbol_str: '2200', symbol_dex: '0',
+    symbol_int: '0', symbol_luk: '0', symbol_hp: '0', symbol_drop_rate: '0', symbol_meso_rate: '0', symbol_exp_rate: '0',
+    symbol_growth_count: 0, symbol_require_growth_count: 0, secret: 'must-not-pass'
+  }, {
+    symbol_name: '어센틱심볼 : 세르니움', symbol_icon: 'javascript:alert(1)', symbol_force: '100', symbol_level: 5,
+    symbol_str: '500', symbol_dex: '0', symbol_int: '0', symbol_luk: '0', symbol_hp: '0', symbol_drop_rate: '0', symbol_meso_rate: '0', symbol_exp_rate: '0',
+    symbol_growth_count: 12, symbol_require_growth_count: 36
+  }]
+};
+const hexaPayloadFixture = {
+  date: '2026-10-03T00:00+09:00',
+  character_hexa_core_equipment: [{
+    hexa_core_name: '디바이드 VI', hexa_core_level: 12, hexa_core_event_level: 2, hexa_core_type: '마스터리 코어',
+    linked_skill: [{hexa_skill_id: '디바이드'}, {hexa_skill_id: '크리에이션'}], icon: 'must-not-pass'
+  }]
+};
+const hexaStatCoreFixture = {
+  slot_id: '0', main_stat_name: '보스 데미지', sub_stat_name_1: '공격력/마력', sub_stat_name_2: '크리티컬 데미지',
+  main_stat_level: 10, sub_stat_level_1: 7, sub_stat_level_2: 3, stat_grade: 20, account_id: 'must-not-pass'
+};
+const hexaStatPayloadFixture = {
+  date: '2026-10-03T00:00+09:00', character_class: '아델',
+  character_hexa_stat_core: [hexaStatCoreFixture],
+  character_hexa_stat_core_2: [{...hexaStatCoreFixture, slot_id: '1', main_stat_name: '방어율 무시'}],
+  character_hexa_stat_core_3: [{...hexaStatCoreFixture, slot_id: '2', main_stat_name: '데미지'}],
+  preset_hexa_stat_core: [{...hexaStatCoreFixture, slot_id: 'preset-0'}], preset_hexa_stat_core_2: [], preset_hexa_stat_core_3: []
+};
+const sanitizedSymbols = nexonCharacterDetailInternals.sanitizeSymbolPayload(symbolPayloadFixture);
+const sanitizedHexa = nexonCharacterDetailInternals.sanitizeHexaPayload(hexaPayloadFixture);
+const sanitizedHexaStat = nexonCharacterDetailInternals.sanitizeHexaStatPayload(hexaStatPayloadFixture);
+assert.equal(sanitizedSymbols.symbols.length, 2);
+assert.equal(sanitizedSymbols.symbols[0].name, '아케인심볼 : 소멸의 여로');
+assert.equal(sanitizedSymbols.symbols[1].icon, '');
+assert.equal(sanitizedSymbols.symbols[0].growth, 0);
+assert.equal(sanitizedHexa.cores[0].name, '디바이드 VI');
+assert.deepEqual(sanitizedHexa.cores[0].linkedSkills, ['디바이드', '크리에이션']);
+assert.equal(sanitizedHexaStat.current[1][0].mainStatName, '보스 데미지');
+assert.equal(sanitizedHexaStat.current[2][0].mainStatName, '방어율 무시');
+assert.equal(sanitizedHexaStat.current[3][0].mainStatName, '데미지');
+assert.equal(sanitizedHexaStat.presets[1][0].slotId, 'preset-0');
+assert.deepEqual(nexonCharacterDetailInternals.sanitizeSymbolPayload({symbol: []}).symbols, []);
+assert.deepEqual(nexonCharacterDetailInternals.sanitizeHexaPayload({character_hexa_core_equipment: []}).cores, []);
+assert.throws(() => nexonCharacterDetailInternals.sanitizeSymbolPayload({symbol: {}}), /응답 구조/);
+assert.throws(() => nexonCharacterDetailInternals.sanitizeHexaPayload({character_hexa_core_equipment: [{}]}), /응답 구조/);
+assert.throws(() => nexonCharacterDetailInternals.sanitizeHexaStatPayload({...hexaStatPayloadFixture, character_hexa_stat_core_2: {}}), /응답 구조/);
+assert.doesNotMatch(JSON.stringify({sanitizedSymbols, sanitizedHexa, sanitizedHexaStat}), /must-not-pass|javascript:|account_id/);
+assert.deepEqual(Object.keys(nexonCharacterDetailInternals.DETAIL_RESOURCES), ['equipment', 'symbol', 'hexa', 'hexa-stat']);
 assert.equal(nexonCharacterDetailInternals.DETAIL_RESOURCES.equipment.path, '/maplestory/v1/character/item-equipment');
+assert.equal(nexonCharacterDetailInternals.DETAIL_RESOURCES.symbol.path, '/maplestory/v1/character/symbol-equipment');
+assert.equal(nexonCharacterDetailInternals.DETAIL_RESOURCES.hexa.path, '/maplestory/v1/character/hexamatrix');
+assert.equal(nexonCharacterDetailInternals.DETAIL_RESOURCES['hexa-stat'].path, '/maplestory/v1/character/hexamatrix-stat');
+assert.ok(Object.values(nexonCharacterDetailInternals.DETAIL_RESOURCES).every(resource => resource.ttl === nexonCharacterDetailInternals.DETAIL_CACHE_TTL_MS));
 assert.doesNotMatch(nexonCharacterDetailApiSource, /searchParams\.set\(['"]date|[?&]date=/);
 assert.doesNotMatch(JSON.stringify(sanitizedEquipment), /must-not-pass|apiKey|hidden_secret|javascript:/);
 
@@ -2134,9 +2188,36 @@ await upstreamDetailHandler({method: 'GET', query: {resource: 'equipment', ocid:
 assert.equal(upstreamDetailResponse.statusCode, 429);
 assert.equal(upstreamDetailResponse.body.category, 'rate_limited');
 assert.doesNotMatch(JSON.stringify(upstreamDetailResponse.body), /server-only-key|0123456789abcdef/);
+const growthPayloadByPath = new Map([
+  ['/maplestory/v1/character/symbol-equipment', symbolPayloadFixture],
+  ['/maplestory/v1/character/hexamatrix', hexaPayloadFixture],
+  ['/maplestory/v1/character/hexamatrix-stat', hexaStatPayloadFixture]
+]);
+const growthDetailHandler = nexonCharacterDetailInternals.createNexonCharacterDetailHandler({
+  createAdminClient: () => ({}),
+  authenticateRequest: async () => ({id: 'growth-detail-user'}),
+  loadUserNexonCredential: async () => ({apiKey: 'growth-server-key', credentialRevision: 'growth-revision'}),
+  requestNexonDetail: async config => structuredClone(growthPayloadByPath.get(config.path)),
+  now: () => detailNow
+});
+for (const resource of ['symbol', 'hexa', 'hexa-stat']) {
+  const response = nexonApiTestResponse();
+  await growthDetailHandler({method: 'GET', query: {resource, ocid: selectedOcid}}, response);
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.resource, resource);
+  assert.equal(response.body.ok, true);
+}
 assert.notEqual(
   nexonCharacterDetailInternals.detailCacheKey('user-one', 'revision-one', selectedOcid, 'equipment'),
   nexonCharacterDetailInternals.detailCacheKey('user-one', 'revision-two', selectedOcid, 'equipment')
+);
+assert.notEqual(
+  nexonCharacterDetailInternals.detailCacheKey('user-one', 'revision-one', selectedOcid, 'equipment'),
+  nexonCharacterDetailInternals.detailCacheKey('user-one', 'revision-one', selectedOcid, 'symbol')
+);
+assert.notEqual(
+  nexonCharacterDetailInternals.detailCacheKey('user-one', 'revision-one', selectedOcid, 'symbol'),
+  nexonCharacterDetailInternals.detailCacheKey('user-one', 'revision-one', 'fedcba9876543210', 'symbol')
 );
 nexonCharacterDetailInternals.detailCache.clear();
 for (let index = 0; index < nexonCharacterDetailInternals.DETAIL_CACHE_MAX_ENTRIES + 5; index += 1) {
@@ -2313,6 +2394,68 @@ assert.match(source.slice(source.indexOf('async function ensureCharacterHubEquip
 assert.doesNotMatch(source.slice(source.indexOf('function renderCharacterHubEquipment'), source.indexOf('const EQUIPMENT_OPTION_LABELS')), /fetchNexonCharacterDetail\(/);
 assert.match(source, /equipment-inline-detail[\s\S]*renderEquipmentDetailMarkup\(selectedItem\)/);
 assert.match(source, /function openEquipmentDetail\(item\)[\s\S]*renderEquipmentDetailMarkup\(item\)/);
+context.__symbolData = {...structuredClone(sanitizedSymbols), fetchedAt: '2026-10-03T12:00:00.000Z'};
+context.__hexaData = {...structuredClone(sanitizedHexa), fetchedAt: '2026-10-03T12:00:00.000Z'};
+context.__hexaStatData = {...structuredClone(sanitizedHexaStat), fetchedAt: '2026-10-03T12:00:00.000Z'};
+run("selectedWeek='';nexonCredentialAuthBridge={isSignedIn:()=>true,getAccessToken:async()=>'detail-session-token'};nexonCredentialState={status:'ready',hasCredential:true,editing:false,message:''};clearNexonDetailRuntimeCache();nexonDetailRuntimeCache.set(nexonDetailCacheKey('symbol',__hubCharacter.nexonCharacter.ocid),{status:'ready',data:__symbolData,receivedAt:Date.now()});nexonDetailRuntimeCache.set(nexonDetailCacheKey('hexa',__hubCharacter.nexonCharacter.ocid),{status:'ready',data:__hexaData,receivedAt:Date.now()});nexonDetailRuntimeCache.set(nexonDetailCacheKey('hexa-stat',__hubCharacter.nexonCharacter.ocid),{status:'ready',data:__hexaStatData,receivedAt:Date.now()})");
+const hubGrowthMarkup = run('renderCharacterHubGrowth(__hubCharacter)');
+assert.deepEqual(json("symbolScope('그랜드 어센틱심볼 : 탈라하트')"), {id:'grand-authentic',label:'그랜드 어센틱심볼'});
+assert.deepEqual(json("symbolScope('어센틱심볼 : 세르니움')"), {id:'authentic',label:'어센틱심볼'});
+assert.deepEqual(json("symbolScope('아케인심볼 : 소멸의 여로')"), {id:'arcane',label:'아케인심볼'});
+assert.deepEqual(json("symbolScope('미래 심볼')"), {id:'other',label:'기타 심볼'});
+assert.match(hubGrowthMarkup, /data-growth-resource="symbol"/);
+assert.match(hubGrowthMarkup, /아케인심볼 : 소멸의 여로/);
+assert.match(hubGrowthMarkup, /어센틱심볼 : 세르니움/);
+assert.match(hubGrowthMarkup, /symbol-growth-max">MAX/);
+assert.match(hubGrowthMarkup, /12 \/ 36/);
+assert.match(hubGrowthMarkup, /디바이드 VI/);
+assert.match(hubGrowthMarkup, /디바이드 · 크리에이션/);
+assert.match(hubGrowthMarkup, /HEXA 스탯 1/);
+assert.match(hubGrowthMarkup, /HEXA 스탯 2/);
+assert.match(hubGrowthMarkup, /HEXA 스탯 3/);
+assert.match(hubGrowthMarkup, /보스 데미지/);
+assert.doesNotMatch(hubGrowthMarkup, /must-not-pass|javascript:/);
+run("nexonDetailRuntimeCache.set(nexonDetailCacheKey('hexa',__hubCharacter.nexonCharacter.ocid),{status:'error',error:{status:502,message:'HEXA만 실패'},receivedAt:Date.now()})");
+const partialGrowthMarkup = run('renderCharacterHubGrowth(__hubCharacter)');
+assert.match(partialGrowthMarkup, /아케인심볼 : 소멸의 여로/);
+assert.match(partialGrowthMarkup, /HEXA만 실패/);
+assert.match(partialGrowthMarkup, /data-growth-retry="hexa"/);
+assert.match(partialGrowthMarkup, /HEXA 스탯 1/);
+run("nexonDetailRuntimeCache.set(nexonDetailCacheKey('hexa',__hubCharacter.nexonCharacter.ocid),{status:'ready',data:__hexaData,receivedAt:Date.now()});selectedWeek='2026-09-24~2026-09-30'");
+assert.match(run('renderCharacterHubGrowth(__hubCharacter)'), /과거 주차 스냅샷이 아닌 현재 NEXON 조회 결과/);
+run("selectedWeek='';nexonCredentialAuthBridge=null");
+assert.match(run('renderCharacterHubGrowth(__hubCharacter)'), /메기 계정에 로그인/);
+run("nexonCredentialAuthBridge={isSignedIn:()=>true,getAccessToken:async()=>'detail-session-token'};nexonCredentialState={status:'ready',hasCredential:false,editing:false,message:''}");
+assert.match(run('renderCharacterHubGrowth(__hubCharacter)'), /NEXON 개인 API Key를 등록/);
+assert.match(run("renderCharacterHubGrowth({id:'no-ocid',name:'미연동',bosses:[],weeklyActivities:[]})"), /NEXON 캐릭터를 연동/);
+run("nexonCredentialState={status:'ready',hasCredential:true,editing:false,message:''};clearNexonDetailRuntimeCache()");
+let growthClientFetches = [];
+context.fetch = async target => {
+  const url = new URL(String(target), 'https://example.test');
+  const resource = url.searchParams.get('resource');
+  growthClientFetches.push(resource);
+  if (resource === 'hexa') return {ok: false, status: 502, json: async () => ({ok: false, message: '코어 실패'})};
+  const data = resource === 'symbol' ? sanitizedSymbols : sanitizedHexaStat;
+  return {ok: true, status: 200, json: async () => ({ok: true, resource, fetchedAt: '2026-10-03T12:00:00.000Z', data: structuredClone(data)})};
+};
+await Promise.allSettled([
+  run("fetchNexonCharacterDetail('symbol',__hubCharacter.nexonCharacter.ocid)"),
+  run("fetchNexonCharacterDetail('hexa',__hubCharacter.nexonCharacter.ocid)"),
+  run("fetchNexonCharacterDetail('hexa-stat',__hubCharacter.nexonCharacter.ocid)")
+]);
+assert.deepEqual(growthClientFetches.sort(), ['hexa', 'hexa-stat', 'symbol']);
+assert.equal(run("nexonDetailCacheEntry('symbol',__hubCharacter.nexonCharacter.ocid).status"), 'ready');
+assert.equal(run("nexonDetailCacheEntry('hexa',__hubCharacter.nexonCharacter.ocid).status"), 'error');
+assert.equal(run("nexonDetailCacheEntry('hexa-stat',__hubCharacter.nexonCharacter.ocid).status"), 'ready');
+context.__secondHubCharacter = {...structuredClone(context.__hubCharacter), id:'second-hub', name:'두번째', nexonCharacter:{...structuredClone(context.__hubCharacter.nexonCharacter), ocid:'fedcba9876543210'}};
+run("nexonDetailRuntimeCache.set(nexonDetailCacheKey('symbol',__secondHubCharacter.nexonCharacter.ocid),{status:'ready',data:{...__symbolData,symbols:[{...__symbolData.symbols[0],name:'두번째 캐릭터 심볼'}]},receivedAt:Date.now()})");
+assert.match(run('renderCharacterHubGrowth(__secondHubCharacter)'), /두번째 캐릭터 심볼/);
+assert.doesNotMatch(run('renderCharacterHubGrowth(__secondHubCharacter)'), /어센틱심볼 : 세르니움/);
+assert.match(source.slice(source.indexOf('async function ensureCharacterHubGrowth'), source.indexOf('const NEXON_EQUIPMENT_SLOT_ORDER')), /activeCharacterHubTab !== 'growth'/);
+assert.match(source.slice(source.indexOf('async function ensureCharacterHubGrowth'), source.indexOf('const NEXON_EQUIPMENT_SLOT_ORDER')), /Promise\.allSettled\(requests\)/);
+assert.doesNotMatch(source.slice(source.indexOf('function renderCharacterHubGrowth'), source.indexOf('function characterHubBossRows')), /fetchNexonCharacterDetail\(/);
+assert.doesNotMatch(JSON.stringify(json('state')), /아케인심볼|디바이드 VI|character_hexa|symbol_equipment/);
+assert.doesNotMatch(cloudSource, /symbol-equipment|hexamatrix|hexa-stat|nexonDetailRuntimeCache/);
 let proxyValidationStatus = 0, proxyValidationBody = null;
 await schedulerTestHandler(
   {method: 'GET', query: {ocid: 'invalid ocid'}},
@@ -2446,15 +2589,26 @@ assert.match(html, /data-page="history" id="historyTab"/);
 assert.match(html, /data-page="character" id="characterHubTab"/);
 assert.match(html, /id="characterHubBack"/);
 assert.match(html, /id="characterHubSelect" aria-label="캐릭터 허브 캐릭터 선택"/);
-assert.equal((html.match(/data-character-hub-tab=/g) || []).length, 4);
+assert.equal((html.match(/data-character-hub-tab=/g) || []).length, 5);
 assert.match(html, /data-character-hub-tab="overview"[^>]*aria-selected="true"/);
 assert.match(html, /data-character-hub-tab="stats"/);
 assert.match(html, /data-character-hub-tab="equipment"/);
+assert.match(html, /data-character-hub-tab="growth"/);
 assert.match(html, /data-character-hub-tab="content"/);
+assert.ok(html.indexOf('data-character-hub-tab="equipment"') < html.indexOf('data-character-hub-tab="growth"'));
+assert.ok(html.indexOf('data-character-hub-tab="growth"') < html.indexOf('data-character-hub-tab="content"'));
 assert.match(html, /id="equipmentDetailDialog"/);
 assert.match(html, /id="equipmentDetailBody"/);
-assert.match(css, /\.character-hub-tabs\{grid-template-columns:repeat\(4,1fr\)/);
 assert.match(css, /\.equipment-grid\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+assert.match(css, /\.character-hub-tabs\{grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/);
+assert.match(css, /\.symbol-grid\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+assert.match(css, /@media\(min-width:600px\)[\s\S]*\.symbol-grid\{grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
+assert.match(css, /@media\(min-width:1000px\)[\s\S]*\.symbol-grid\{grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/);
+assert.match(css, /\.hexa-core-grid\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+assert.match(css, /@media\(min-width:1000px\)[\s\S]*\.hexa-core-grid\{grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
+assert.match(css, /\.hexa-stat-grid\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
+assert.match(css, /@media\(max-width:430px\)[\s\S]*\.hexa-stat-grid\{grid-template-columns:1fr\}/);
+assert.doesNotMatch(css.slice(css.indexOf('.character-hub-growth'), css.indexOf('.equipment-loading')), /overflow-x:auto|white-space:nowrap|min-width:[1-9]\d*px/);
 assert.match(css, /@media\(min-width:600px\)[\s\S]*\.equipment-grid\{grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
 assert.match(css, /@media\(min-width:1000px\)[\s\S]*\.equipment-grid\{grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/);
 assert.match(css, /@media\(min-width:1100px\)[\s\S]*\.equipment-desktop-viewer\{display:grid;grid-template-columns:/);
