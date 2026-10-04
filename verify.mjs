@@ -2461,7 +2461,11 @@ assert.match(css, /@media\(min-width:1100px\)[\s\S]*\.equipment-desktop-viewer\{
 assert.match(css, /\.equipment-slot-grid\{display:grid;grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/);
 assert.match(css, /\.equipment-inline-detail\{[^}]*overflow-x:hidden;overflow-y:auto/);
 assert.match(css, /\.equipment-detail-dialog\{[^}]*overflow-x:hidden;overflow-y:auto/);
-assert.match(css, /\.equipment-option-row\{display:flex;flex-wrap:wrap;align-items:baseline;gap:3px 8px/);
+assert.match(css, /dl div\{display:flex;justify-content:space-between;gap:10px\}/);
+assert.match(css, /\.equipment-option-list \.equipment-option-row\{display:flex;flex-wrap:wrap;justify-content:flex-start;align-items:baseline;column-gap:8px;row-gap:3px/);
+const equipmentOptionRowRule = css.slice(css.indexOf('.equipment-option-list .equipment-option-row{'), css.indexOf('.equipment-option-row:last-child'));
+assert.match(equipmentOptionRowRule, /justify-content:flex-start/);
+assert.doesNotMatch(equipmentOptionRowRule, /justify-content:space-between|margin-left:auto|width:100%|grid-template-columns|min-width:[1-9]\d*px/);
 assert.match(css, /\.equipment-option-row dt\{[^}]*flex:0 0 auto;[^}]*white-space:normal;overflow-wrap:anywhere/);
 assert.match(css, /\.equipment-option-value-cluster\{display:inline-flex;flex:0 1 auto;[^}]*flex-wrap:wrap;[^}]*justify-content:flex-start/);
 assert.match(css, /--equip-option-total:/);
