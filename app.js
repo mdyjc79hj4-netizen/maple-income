@@ -1343,12 +1343,28 @@ function selectedEquipmentView(ocid, equipment) {
   const title = selection === 'current' ? equipment?.title : equipment?.presetTitles?.[selection];
   return {selection, items: sortNexonEquipment(preset), title};
 }
-function equipmentBadge(item) {
+const EQUIPMENT_POTENTIAL_GRADES = Object.freeze({
+  '레전드리': {tone: 'legendary', marker: 'L'},
+  '유니크': {tone: 'unique', marker: 'U'},
+  '에픽': {tone: 'epic', marker: 'E'},
+  '레어': {tone: 'rare', marker: 'R'}
+});
+function equipmentPotentialGrade(grade) {
+  const label = typeof grade === 'string' ? grade.trim() : '';
+  const definition = EQUIPMENT_POTENTIAL_GRADES[label];
+  return {label, tone: definition?.tone || 'neutral', marker: definition?.marker || ''};
+}
+function equipmentGradeBadge(grade, prefix = '') {
+  const normalized = equipmentPotentialGrade(grade);
+  if (!normalized.label) return '';
+  return `<small class="equipment-grade-badge grade-${normalized.tone}">${prefix ? `${escapeHtml(prefix)} ` : ''}${escapeHtml(normalized.label)}</small>`;
+}
+function equipmentBadge(item, includeStarforce = true) {
   const labels = [];
-  if (Number.isInteger(item?.starforce) && item.starforce > 0) labels.push(`${item.starforce}성`);
-  if (item?.potential?.grade) labels.push(item.potential.grade);
-  if (item?.additionalPotential?.grade) labels.push(`에디 ${item.additionalPotential.grade}`);
-  return labels.slice(0, 3).map(label => `<small>${escapeHtml(label)}</small>`).join('');
+  if (includeStarforce && Number.isInteger(item?.starforce) && item.starforce > 0) labels.push(`<small>${item.starforce}성</small>`);
+  if (item?.potential?.grade) labels.push(equipmentGradeBadge(item.potential.grade));
+  if (item?.additionalPotential?.grade) labels.push(equipmentGradeBadge(item.additionalPotential.grade, '에디'));
+  return labels.filter(Boolean).slice(0, 3).join('');
 }
 function equipmentImage(item, className = '') {
   const icon = typeof item?.icon === 'string' && /^https?:\/\//i.test(item.icon) ? item.icon : '';
@@ -1457,19 +1473,27 @@ function renderEquipmentOptionRows(options, sources = null) {
 function renderEquipmentDetailSection(title, content, tone = '') {
   return content ? `<section class="equipment-detail-section${tone ? ` equipment-detail-${escapeHtml(tone)}` : ''}"><h3>${escapeHtml(title)}</h3>${content}</section>` : '';
 }
+function renderEquipmentPotentialSection(label, potential) {
+  const options = Array.isArray(potential?.options) ? potential.options : [];
+  if (!options.length) return '';
+  const grade = equipmentPotentialGrade(potential?.grade);
+  const title = `${label}${grade.label ? ` · ${grade.label}` : ''}`;
+  const marker = grade.marker ? `<span class="equipment-potential-grade-mark" aria-hidden="true">${grade.marker}</span>` : '';
+  return `<section class="equipment-detail-section equipment-detail-potential-grade grade-${grade.tone}"><h3>${marker}${escapeHtml(title)}</h3>${options.map(value => `<p>${escapeHtml(value)}</p>`).join('')}</section>`;
+}
 function renderEquipmentDetailMarkup(item) {
-  const potential = Array.isArray(item?.potential?.options) ? item.potential.options : [];
-  const additionalPotential = Array.isArray(item?.additionalPotential?.options) ? item.additionalPotential.options : [];
+  const starforce = Number.isInteger(item?.starforce) && item.starforce > 0 ? item.starforce : 0;
+  const scrollUpgrade = Number.isInteger(item?.scrollUpgrade) && item.scrollUpgrade > 0 ? item.scrollUpgrade : 0;
   const enhancements = [
-    [Number.isInteger(item.starforce), '스타포스', `${item.starforce}성`],
-    [Number.isInteger(item.scrollUpgrade), '업그레이드', `${item.scrollUpgrade}회`],
-    [Number.isInteger(item.exceptionalUpgrade), '익셉셔널', `${item.exceptionalUpgrade}회`],
-    [Number.isInteger(item.specialRingLevel), '특수 반지 Lv.', String(item.specialRingLevel)]
+    [Number.isInteger(item.exceptionalUpgrade) && item.exceptionalUpgrade > 0, '익셉셔널', `${item.exceptionalUpgrade}회`],
+    [Number.isInteger(item.specialRingLevel) && item.specialRingLevel > 0, '특수 반지 Lv.', String(item.specialRingLevel)]
   ].filter(([visible]) => visible);
-  const badges = equipmentBadge(item);
+  const badges = equipmentBadge(item, false);
   const totalOptions = renderEquipmentOptionRows(item.options?.total, item.options) || '<p class="equipment-option-empty">표시할 최종 옵션이 없습니다.</p>';
   const soul = [item.soul?.name, item.soul?.option].filter(Boolean).map(value => `<p>${escapeHtml(value)}</p>`).join('');
-  return `<header class="equipment-detail-head">${equipmentImage(item, 'equipment-detail-icon')}<div><small>${escapeHtml(item.slot || item.part || '기타 장비')}</small><b>${escapeHtml(item.name || '이름 없는 장비')}</b>${badges ? `<span class="equipment-detail-badges">${badges}</span>` : ''}${item.description ? `<p>${escapeHtml(item.description)}</p>` : ''}</div></header>${renderEquipmentDetailSection('강화 정보', enhancements.length ? `<dl class="equipment-enhancement-list">${enhancements.map(([, label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>` : '', 'enhancement')}${renderEquipmentDetailSection(item.potential?.grade ? `잠재능력 · ${item.potential.grade}` : '잠재능력', potential.map(value => `<p>${escapeHtml(value)}</p>`).join(''), 'potential')}${renderEquipmentDetailSection(item.additionalPotential?.grade ? `에디셔널 잠재능력 · ${item.additionalPotential.grade}` : '에디셔널 잠재능력', additionalPotential.map(value => `<p>${escapeHtml(value)}</p>`).join(''), 'additional')}${renderEquipmentDetailSection('최종 옵션', totalOptions, 'total')}${renderEquipmentDetailSection('소울', soul, 'soul')}${item.expiresAt ? `<p class="muted equipment-expiry">유효기간 ${escapeHtml(item.expiresAt)}</p>` : ''}`;
+  const starforceMarkup = starforce ? `<span class="equipment-starforce-summary"><span aria-hidden="true">★</span> ${starforce}성</span>` : '';
+  const name = `${escapeHtml(item.name || '이름 없는 장비')}${scrollUpgrade ? ` <span class="equipment-scroll-upgrade">(+${scrollUpgrade})</span>` : ''}`;
+  return `<header class="equipment-detail-head">${equipmentImage(item, 'equipment-detail-icon')}<div><small>${escapeHtml(item.slot || item.part || '기타 장비')}</small>${starforceMarkup}<b>${name}</b>${badges ? `<span class="equipment-detail-badges">${badges}</span>` : ''}${item.description ? `<p>${escapeHtml(item.description)}</p>` : ''}</div></header>${renderEquipmentDetailSection('강화 정보', enhancements.length ? `<dl class="equipment-enhancement-list">${enhancements.map(([, label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>` : '', 'enhancement')}${renderEquipmentPotentialSection('잠재능력', item.potential)}${renderEquipmentPotentialSection('에디셔널 잠재능력', item.additionalPotential)}${renderEquipmentDetailSection('최종 옵션', totalOptions, 'total')}${renderEquipmentDetailSection('소울', soul, 'soul')}${item.expiresAt ? `<p class="muted equipment-expiry">유효기간 ${escapeHtml(item.expiresAt)}</p>` : ''}`;
 }
 function openEquipmentDetail(item) {
   const dialog = $('#equipmentDetailDialog');
