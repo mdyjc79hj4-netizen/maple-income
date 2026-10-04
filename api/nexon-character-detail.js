@@ -9,6 +9,11 @@ const DETAIL_CACHE_TTL_MS = 10 * 60 * 1000;
 const DETAIL_CACHE_MAX_ENTRIES = 500;
 const detailCache = new Map();
 
+const HEXA_SKILL_RESOURCE = Object.freeze({
+  path: '/maplestory/v1/character/skill',
+  query: Object.freeze({character_skill_grade: '6'})
+});
+
 const DETAIL_RESOURCES = Object.freeze({
   equipment: Object.freeze({
     path: '/maplestory/v1/character/item-equipment',
@@ -258,6 +263,36 @@ function sanitizeHexaPayload(payload) {
   };
 }
 
+function sanitizeHexaSkill(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalidDetailResponse('INVALID_HEXA_SKILL_RESPONSE', '6차 스킬');
+  const skill = {
+    name: safeText(value.skill_name, 160),
+    icon: safeImageUrl(value.skill_icon),
+    description: safeText(value.skill_description, 1200)
+  };
+  if (!skill.name) throw invalidDetailResponse('INVALID_HEXA_SKILL_RESPONSE', '6차 스킬');
+  return skill;
+}
+
+function sanitizeHexaSkillPayload(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || !Object.hasOwn(payload, 'character_skill')) {
+    throw invalidDetailResponse('INVALID_HEXA_SKILL_RESPONSE', '6차 스킬');
+  }
+  return requireArray(payload.character_skill, 'INVALID_HEXA_SKILL_RESPONSE', '6차 스킬').map(sanitizeHexaSkill);
+}
+
+function enrichHexaWithSkills(data, skills) {
+  const exactSkills = new Map((Array.isArray(skills) ? skills : []).map(skill => [skill.name, skill]));
+  return {
+    ...data,
+    cores: (data?.cores || []).map(core => {
+      const exactNames = [...new Set([core.name, ...(core.linkedSkills || [])].filter(Boolean))];
+      const skillMetadata = exactNames.map(name => exactSkills.get(name)).filter(Boolean);
+      return {...core, skillMetadata};
+    })
+  };
+}
+
 function sanitizeHexaStatCore(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalidDetailResponse('INVALID_HEXA_STAT_RESPONSE', 'HEXA 스탯');
   const core = {
@@ -336,6 +371,9 @@ function upstreamErrorDetails(payload, status) {
 async function requestNexonDetail(config, ocid, apiKey) {
   const target = new URL(config.path, NEXON_BASE_URL);
   target.searchParams.set('ocid', ocid);
+  for (const [key, value] of Object.entries(config.query || {})) {
+    if (value !== null && value !== undefined && String(value) !== '') target.searchParams.set(key, String(value));
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8_000);
   try {
@@ -406,7 +444,18 @@ function createNexonCharacterDetailHandler(dependencies = {}) {
       }
 
       const payload = await requestDetail(config, ocid, apiKey);
-      const data = config.sanitize(payload);
+      let data = config.sanitize(payload);
+      if (resource === 'hexa') {
+        try {
+          const skillPayload = await requestDetail(HEXA_SKILL_RESOURCE, ocid, apiKey);
+          data = enrichHexaWithSkills(data, sanitizeHexaSkillPayload(skillPayload));
+        } catch (error) {
+          data = enrichHexaWithSkills(data, []);
+          console.warn('NEXON HEXA skill metadata unavailable', {
+            endpoint: 'character/skill', status: Number(error?.status) || 502, code: safeText(error?.code, 80) || 'INVALID_HEXA_SKILL_RESPONSE'
+          });
+        }
+      }
       const body = {ok: true, resource, ocid, fetchedAt: new Date(timestamp).toISOString(), cached: false, data};
       detailCache.set(cacheKey, {cachedAt: timestamp, ttl: config.ttl, body});
       pruneDetailCache(timestamp);
@@ -437,10 +486,12 @@ export const nexonCharacterDetailInternals = {
   DETAIL_CACHE_MAX_ENTRIES,
   DETAIL_CACHE_TTL_MS,
   DETAIL_RESOURCES,
+  HEXA_SKILL_RESOURCE,
   OPTION_KEYS,
   createNexonCharacterDetailHandler,
   detailCache,
   detailCacheKey,
+  enrichHexaWithSkills,
   pruneDetailCache,
   requestNexonDetail,
   safeDecimal,
@@ -451,6 +502,8 @@ export const nexonCharacterDetailInternals = {
   sanitizeEquipmentPayload,
   sanitizeHexaCore,
   sanitizeHexaPayload,
+  sanitizeHexaSkill,
+  sanitizeHexaSkillPayload,
   sanitizeHexaStatCore,
   sanitizeHexaStatPayload,
   sanitizeOptionObject,

@@ -1602,6 +1602,28 @@ function renderSymbolGrowth(data) {
   if (!groups.size) return '<p class="empty compact-empty">장착한 심볼이 없습니다.</p>';
   return `<div class="growth-symbol-groups">${[...groups.values()].map(group => `<section class="growth-subsection"><h4>${escapeHtml(group.label)}</h4><div class="symbol-grid">${group.symbols.map(renderSymbolCard).join('')}</div></section>`).join('')}</div>`;
 }
+function hexaCoreSkillMetadata(core) {
+  return (Array.isArray(core?.skillMetadata) ? core.skillMetadata : []).filter(skill => skill && typeof skill === 'object' && skill.name);
+}
+function renderHexaCoreCard(core, cardId) {
+  const name = core?.name || '이름 없는 HEXA 코어';
+  const level = Number.isInteger(core?.level) ? core.level : '-';
+  const metadata = hexaCoreSkillMetadata(core);
+  const icon = metadata.map(skill => safeNexonImageUrl(skill.icon)).find(Boolean) || '';
+  const descriptions = metadata.filter(skill => typeof skill.description === 'string' && skill.description.trim());
+  const descriptionId = `hexa-core-description-${cardId}`;
+  const tooltip = descriptions.length
+    ? `<span id="${escapeHtml(descriptionId)}" class="hexa-core-tooltip" role="tooltip"><strong>${escapeHtml(name)}</strong><small>Lv. ${escapeHtml(level)}</small>${descriptions.map(skill => `<span class="hexa-core-tooltip-skill"><b>${escapeHtml(skill.name)}</b><span data-hexa-skill-description data-hexa-skill-name="${escapeHtml(skill.name)}">${escapeHtml(skill.description)}</span></span>`).join('')}</span>`
+    : '';
+  const element = descriptions.length ? 'button' : 'article';
+  const attributes = descriptions.length
+    ? ` type="button" data-hexa-description data-hexa-core-name="${escapeHtml(name)}" data-hexa-core-level="${escapeHtml(level)}" aria-label="${escapeHtml(name)} Lv. ${escapeHtml(level)} 설명 보기" aria-describedby="${escapeHtml(descriptionId)}"`
+    : ` title="${escapeHtml(name)}"`;
+  const image = `<span class="hexa-core-icon-wrap${icon ? ' has-image' : ''}" aria-hidden="true">${icon ? `<img data-hexa-core-image src="${escapeHtml(icon)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}<span class="growth-icon-placeholder hexa-core-placeholder">◇</span></span>`;
+  const eventLevel = Number.isInteger(core?.eventLevel) && core.eventLevel > 0 ? `<span class="hexa-event-level">이벤트 Lv. ${core.eventLevel}</span>` : '';
+  const linkedSkills = core?.linkedSkills?.length ? `<span class="hexa-linked-skills">${core.linkedSkills.map(skill => escapeHtml(skill)).join(' · ')}</span>` : '';
+  return `<${element} class="hexa-core-card${descriptions.length ? ' has-description' : ''}"${attributes}>${image}<span class="hexa-core-copy"><b title="${escapeHtml(name)}">${escapeHtml(name)}</b><strong>Lv. ${escapeHtml(level)}</strong>${eventLevel}</span>${linkedSkills}${tooltip}</${element}>`;
+}
 function renderHexaGrowth(data) {
   const groups = new Map();
   for (const core of data?.cores || []) {
@@ -1610,7 +1632,27 @@ function renderHexaGrowth(data) {
     groups.get(type).push(core);
   }
   if (!groups.size) return '<p class="empty compact-empty">장착한 HEXA 코어가 없습니다.</p>';
-  return `<div class="growth-hexa-groups">${[...groups].map(([type, cores]) => `<section class="growth-subsection"><h4>${escapeHtml(type)}</h4><div class="hexa-core-grid">${cores.map(core => `<article class="hexa-core-card"><div><small>${escapeHtml(core.type || 'HEXA 코어')}</small><b>${escapeHtml(core.name)}</b></div><strong>Lv. ${Number.isInteger(core.level) ? core.level : '-'}</strong>${Number.isInteger(core.eventLevel) && core.eventLevel > 0 ? `<span class="hexa-event-level">이벤트 Lv. ${core.eventLevel}</span>` : ''}${core.linkedSkills?.length ? `<p>${core.linkedSkills.map(skill => escapeHtml(skill)).join(' · ')}</p>` : ''}</article>`).join('')}</div></section>`).join('')}</div>`;
+  return `<div class="growth-hexa-groups">${[...groups].map(([type, cores], groupIndex) => `<section class="growth-subsection"><h4>${escapeHtml(type)}</h4><div class="hexa-core-grid">${cores.map((core, coreIndex) => renderHexaCoreCard(core, `${groupIndex}-${coreIndex}`)).join('')}</div></section>`).join('')}</div>`;
+}
+function openHexaCoreDescription(button) {
+  const dialog = $('#hexaCoreDetailDialog');
+  if (!dialog || !button?.matches?.('[data-hexa-description]')) return;
+  const descriptions = [...button.querySelectorAll('[data-hexa-skill-description]')];
+  if (!descriptions.length) return;
+  $('#hexaCoreDetailTitle').textContent = button.dataset.hexaCoreName || 'HEXA 코어';
+  $('#hexaCoreDetailLevel').textContent = `Lv. ${button.dataset.hexaCoreLevel || '-'}`;
+  const body = $('#hexaCoreDetailBody');
+  body.textContent = '';
+  for (const source of descriptions) {
+    const section = document.createElement('section');
+    const title = document.createElement('b');
+    const description = document.createElement('p');
+    title.textContent = source.dataset.hexaSkillName || '';
+    description.textContent = source.textContent || '';
+    section.append(title, description);
+    body.append(section);
+  }
+  dialog.showModal();
 }
 function renderHexaStatCore(core, stage) {
   const stats = [
@@ -2733,6 +2775,10 @@ function init() {
       image.hidden = true;
       if (avatar) avatar.hidden = true;
     }
+    if (image?.matches?.('[data-hexa-core-image]')) {
+      image.hidden = true;
+      image.closest('.hexa-core-icon-wrap')?.classList.remove('has-image');
+    }
   }, true);
   loadState(); watchSyncBadge(); renderIncomeForm(true); render(); if (!storageBlocked) message('이 기기에 자동 저장됩니다.');
   $('#weekSelect').addEventListener('change', e => { selectedWeek = e.target.value; render(); });
@@ -2750,6 +2796,8 @@ function init() {
     ensureCharacterHubGrowth();
   }));
   $('#characterHubTab').addEventListener('click', e => {
+    const hexaDescription = e.target.closest('[data-hexa-description]');
+    if (hexaDescription) { openHexaCoreDescription(hexaDescription); return; }
     const equipmentItem = e.target.closest('[data-equipment-item]');
     if (equipmentItem) {
       const ref = equipmentItem.dataset.equipmentItem, item = nexonEquipmentDialogItems.get(ref);

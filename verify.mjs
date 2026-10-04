@@ -2069,6 +2069,25 @@ const hexaPayloadFixture = {
   character_hexa_core_equipment: [{
     hexa_core_name: '디바이드 VI', hexa_core_level: 12, hexa_core_event_level: 2, hexa_core_type: '마스터리 코어',
     linked_skill: [{hexa_skill_id: '디바이드'}, {hexa_skill_id: '크리에이션'}], icon: 'must-not-pass'
+  }, {
+    hexa_core_name: '메타데이터 없는 코어', hexa_core_level: 5, hexa_core_event_level: 0, hexa_core_type: '스킬 코어',
+    linked_skill: [{hexa_skill_id: '등록되지 않은 연결 스킬'}]
+  }]
+};
+const hexaSkillPayloadFixture = {
+  date: '2026-10-03T00:00+09:00', character_class: '아델', character_skill_grade: '6',
+  character_skill: [{
+    skill_name: '디바이드 VI', skill_description: '공식 <코어> 설명', skill_level: 12, skill_effect: '', skill_effect_next: '',
+    skill_icon: 'https://example.com/divide-vi.png', secret: 'must-not-pass'
+  }, {
+    skill_name: '디바이드', skill_description: '연결 스킬 공식 설명', skill_level: 30, skill_effect: '', skill_effect_next: '',
+    skill_icon: 'https://example.com/divide.png'
+  }, {
+    skill_name: '크리에이션', skill_description: '', skill_level: 30, skill_effect: '', skill_effect_next: '',
+    skill_icon: 'javascript:alert(1)'
+  }, {
+    skill_name: '메타데이터 없는 코어 강화', skill_description: '부분 문자열로 연결되면 안 됨', skill_level: 1, skill_effect: '', skill_effect_next: '',
+    skill_icon: 'https://example.com/fuzzy.png'
   }]
 };
 const hexaStatCoreFixture = {
@@ -2084,6 +2103,8 @@ const hexaStatPayloadFixture = {
 };
 const sanitizedSymbols = nexonCharacterDetailInternals.sanitizeSymbolPayload(symbolPayloadFixture);
 const sanitizedHexa = nexonCharacterDetailInternals.sanitizeHexaPayload(hexaPayloadFixture);
+const sanitizedHexaSkills = nexonCharacterDetailInternals.sanitizeHexaSkillPayload(hexaSkillPayloadFixture);
+const enrichedHexa = nexonCharacterDetailInternals.enrichHexaWithSkills(sanitizedHexa, sanitizedHexaSkills);
 const sanitizedHexaStat = nexonCharacterDetailInternals.sanitizeHexaStatPayload(hexaStatPayloadFixture);
 assert.equal(sanitizedSymbols.symbols.length, 2);
 assert.equal(sanitizedSymbols.symbols[0].name, '아케인심볼 : 소멸의 여로');
@@ -2091,6 +2112,10 @@ assert.equal(sanitizedSymbols.symbols[1].icon, '');
 assert.equal(sanitizedSymbols.symbols[0].growth, 0);
 assert.equal(sanitizedHexa.cores[0].name, '디바이드 VI');
 assert.deepEqual(sanitizedHexa.cores[0].linkedSkills, ['디바이드', '크리에이션']);
+assert.equal(sanitizedHexaSkills[0].icon, 'https://example.com/divide-vi.png');
+assert.equal(sanitizedHexaSkills[2].icon, '');
+assert.deepEqual(enrichedHexa.cores[0].skillMetadata.map(skill => skill.name), ['디바이드 VI', '디바이드', '크리에이션']);
+assert.deepEqual(enrichedHexa.cores[1].skillMetadata, [], 'HEXA metadata matching must be exact, not substring based');
 assert.equal(sanitizedHexaStat.current[1][0].mainStatName, '보스 데미지');
 assert.equal(sanitizedHexaStat.current[2][0].mainStatName, '방어율 무시');
 assert.equal(sanitizedHexaStat.current[3][0].mainStatName, '데미지');
@@ -2099,6 +2124,7 @@ assert.deepEqual(nexonCharacterDetailInternals.sanitizeSymbolPayload({symbol: []
 assert.deepEqual(nexonCharacterDetailInternals.sanitizeHexaPayload({character_hexa_core_equipment: []}).cores, []);
 assert.throws(() => nexonCharacterDetailInternals.sanitizeSymbolPayload({symbol: {}}), /응답 구조/);
 assert.throws(() => nexonCharacterDetailInternals.sanitizeHexaPayload({character_hexa_core_equipment: [{}]}), /응답 구조/);
+assert.throws(() => nexonCharacterDetailInternals.sanitizeHexaSkillPayload({character_skill: {}}), /응답 구조/);
 assert.throws(() => nexonCharacterDetailInternals.sanitizeHexaStatPayload({...hexaStatPayloadFixture, character_hexa_stat_core_2: {}}), /응답 구조/);
 assert.doesNotMatch(JSON.stringify({sanitizedSymbols, sanitizedHexa, sanitizedHexaStat}), /must-not-pass|javascript:|account_id/);
 assert.deepEqual(Object.keys(nexonCharacterDetailInternals.DETAIL_RESOURCES), ['equipment', 'symbol', 'hexa', 'hexa-stat']);
@@ -2106,6 +2132,25 @@ assert.equal(nexonCharacterDetailInternals.DETAIL_RESOURCES.equipment.path, '/ma
 assert.equal(nexonCharacterDetailInternals.DETAIL_RESOURCES.symbol.path, '/maplestory/v1/character/symbol-equipment');
 assert.equal(nexonCharacterDetailInternals.DETAIL_RESOURCES.hexa.path, '/maplestory/v1/character/hexamatrix');
 assert.equal(nexonCharacterDetailInternals.DETAIL_RESOURCES['hexa-stat'].path, '/maplestory/v1/character/hexamatrix-stat');
+assert.equal(nexonCharacterDetailInternals.HEXA_SKILL_RESOURCE.path, '/maplestory/v1/character/skill');
+assert.equal(nexonCharacterDetailInternals.HEXA_SKILL_RESOURCE.query.character_skill_grade, '6');
+const originalDetailFetch = globalThis.fetch;
+let capturedHexaSkillRequest = null;
+globalThis.fetch = async (target, options) => {
+  capturedHexaSkillRequest = {target: String(target), headers: options.headers};
+  return {ok: true, status: 200, json: async () => structuredClone(hexaSkillPayloadFixture)};
+};
+await nexonCharacterDetailInternals.requestNexonDetail(nexonCharacterDetailInternals.HEXA_SKILL_RESOURCE, selectedOcid, 'private-hexa-key');
+globalThis.fetch = originalDetailFetch;
+const capturedHexaSkillUrl = new URL(capturedHexaSkillRequest.target);
+assert.equal(capturedHexaSkillUrl.pathname, '/maplestory/v1/character/skill');
+assert.equal(capturedHexaSkillUrl.searchParams.get('ocid'), selectedOcid);
+assert.equal(capturedHexaSkillUrl.searchParams.get('character_skill_grade'), '6');
+assert.equal([...capturedHexaSkillUrl.searchParams.keys()].sort().join(','), 'character_skill_grade,ocid');
+assert.equal(capturedHexaSkillRequest.headers['x-nxopen-api-key'], 'private-hexa-key');
+const hexaEnrichmentSource = nexonCharacterDetailApiSource.slice(nexonCharacterDetailApiSource.indexOf('function enrichHexaWithSkills'), nexonCharacterDetailApiSource.indexOf('function sanitizeHexaStatCore'));
+assert.match(hexaEnrichmentSource, /exactSkills\.get\(name\)/);
+assert.doesNotMatch(hexaEnrichmentSource, /includes\(|startsWith\(|endsWith\(/);
 assert.ok(Object.values(nexonCharacterDetailInternals.DETAIL_RESOURCES).every(resource => resource.ttl === nexonCharacterDetailInternals.DETAIL_CACHE_TTL_MS));
 assert.doesNotMatch(nexonCharacterDetailApiSource, /searchParams\.set\(['"]date|[?&]date=/);
 assert.doesNotMatch(JSON.stringify(sanitizedEquipment), /must-not-pass|apiKey|hidden_secret|javascript:/);
@@ -2191,13 +2236,18 @@ assert.doesNotMatch(JSON.stringify(upstreamDetailResponse.body), /server-only-ke
 const growthPayloadByPath = new Map([
   ['/maplestory/v1/character/symbol-equipment', symbolPayloadFixture],
   ['/maplestory/v1/character/hexamatrix', hexaPayloadFixture],
+  ['/maplestory/v1/character/skill', hexaSkillPayloadFixture],
   ['/maplestory/v1/character/hexamatrix-stat', hexaStatPayloadFixture]
 ]);
+let requestedHexaSkillConfig = null;
 const growthDetailHandler = nexonCharacterDetailInternals.createNexonCharacterDetailHandler({
   createAdminClient: () => ({}),
   authenticateRequest: async () => ({id: 'growth-detail-user'}),
   loadUserNexonCredential: async () => ({apiKey: 'growth-server-key', credentialRevision: 'growth-revision'}),
-  requestNexonDetail: async config => structuredClone(growthPayloadByPath.get(config.path)),
+  requestNexonDetail: async config => {
+    if (config.path === '/maplestory/v1/character/skill') requestedHexaSkillConfig = config;
+    return structuredClone(growthPayloadByPath.get(config.path));
+  },
   now: () => detailNow
 });
 for (const resource of ['symbol', 'hexa', 'hexa-stat']) {
@@ -2206,7 +2256,29 @@ for (const resource of ['symbol', 'hexa', 'hexa-stat']) {
   assert.equal(response.statusCode, 200);
   assert.equal(response.body.resource, resource);
   assert.equal(response.body.ok, true);
+  if (resource === 'hexa') {
+    assert.equal(response.body.data.cores[0].skillMetadata[0].name, '디바이드 VI');
+    assert.deepEqual(response.body.data.cores[1].skillMetadata, []);
+  }
 }
+assert.equal(requestedHexaSkillConfig?.query?.character_skill_grade, '6');
+const originalConsoleWarn = console.warn;
+console.warn = () => {};
+const hexaMetadataFallbackHandler = nexonCharacterDetailInternals.createNexonCharacterDetailHandler({
+  createAdminClient: () => ({}),
+  authenticateRequest: async () => ({id: 'hexa-metadata-fallback-user'}),
+  loadUserNexonCredential: async () => ({apiKey: 'fallback-server-key', credentialRevision: 'fallback-revision'}),
+  requestNexonDetail: async config => {
+    if (config.path === '/maplestory/v1/character/hexamatrix') return structuredClone(hexaPayloadFixture);
+    throw Object.assign(new Error('6차 스킬 metadata 실패'), {status: 502, code: 'UPSTREAM_ERROR'});
+  },
+  now: () => detailNow
+});
+const hexaMetadataFallbackResponse = nexonApiTestResponse();
+await hexaMetadataFallbackHandler({method: 'GET', query: {resource: 'hexa', ocid: selectedOcid}}, hexaMetadataFallbackResponse);
+console.warn = originalConsoleWarn;
+assert.equal(hexaMetadataFallbackResponse.statusCode, 200, 'skill metadata failure must not fail HEXA core data');
+assert.deepEqual(hexaMetadataFallbackResponse.body.data.cores[0].skillMetadata, []);
 assert.notEqual(
   nexonCharacterDetailInternals.detailCacheKey('user-one', 'revision-one', selectedOcid, 'equipment'),
   nexonCharacterDetailInternals.detailCacheKey('user-one', 'revision-two', selectedOcid, 'equipment')
@@ -2395,7 +2467,7 @@ assert.doesNotMatch(source.slice(source.indexOf('function renderCharacterHubEqui
 assert.match(source, /equipment-inline-detail[\s\S]*renderEquipmentDetailMarkup\(selectedItem\)/);
 assert.match(source, /function openEquipmentDetail\(item\)[\s\S]*renderEquipmentDetailMarkup\(item\)/);
 context.__symbolData = {...structuredClone(sanitizedSymbols), fetchedAt: '2026-10-03T12:00:00.000Z'};
-context.__hexaData = {...structuredClone(sanitizedHexa), fetchedAt: '2026-10-03T12:00:00.000Z'};
+context.__hexaData = {...structuredClone(enrichedHexa), fetchedAt: '2026-10-03T12:00:00.000Z'};
 context.__hexaStatData = {...structuredClone(sanitizedHexaStat), fetchedAt: '2026-10-03T12:00:00.000Z'};
 run("selectedWeek='';nexonCredentialAuthBridge={isSignedIn:()=>true,getAccessToken:async()=>'detail-session-token'};nexonCredentialState={status:'ready',hasCredential:true,editing:false,message:''};clearNexonDetailRuntimeCache();nexonDetailRuntimeCache.set(nexonDetailCacheKey('symbol',__hubCharacter.nexonCharacter.ocid),{status:'ready',data:__symbolData,receivedAt:Date.now()});nexonDetailRuntimeCache.set(nexonDetailCacheKey('hexa',__hubCharacter.nexonCharacter.ocid),{status:'ready',data:__hexaData,receivedAt:Date.now()});nexonDetailRuntimeCache.set(nexonDetailCacheKey('hexa-stat',__hubCharacter.nexonCharacter.ocid),{status:'ready',data:__hexaStatData,receivedAt:Date.now()})");
 const hubGrowthMarkup = run('renderCharacterHubGrowth(__hubCharacter)');
@@ -2410,6 +2482,22 @@ assert.match(hubGrowthMarkup, /symbol-growth-max">MAX/);
 assert.match(hubGrowthMarkup, /12 \/ 36/);
 assert.match(hubGrowthMarkup, /디바이드 VI/);
 assert.match(hubGrowthMarkup, /디바이드 · 크리에이션/);
+const describedHexaMarkup = run("renderHexaCoreCard(__hexaData.cores[0],'described')");
+const fallbackHexaMarkup = run("renderHexaCoreCard(__hexaData.cores[1],'fallback')");
+assert.match(describedHexaMarkup, /data-hexa-core-image[^>]*https:\/\/example\.com\/divide-vi\.png/);
+assert.match(describedHexaMarkup, /data-hexa-description/);
+assert.match(describedHexaMarkup, /role="tooltip"/);
+assert.match(describedHexaMarkup, /aria-describedby="hexa-core-description-described"/);
+assert.match(describedHexaMarkup, /공식 &lt;코어&gt; 설명/);
+assert.match(describedHexaMarkup, /디바이드 VI/);
+assert.match(describedHexaMarkup, /Lv\. 12/);
+assert.match(fallbackHexaMarkup, /hexa-core-placeholder/);
+assert.match(fallbackHexaMarkup, /메타데이터 없는 코어/);
+assert.match(fallbackHexaMarkup, /Lv\. 5/);
+assert.doesNotMatch(fallbackHexaMarkup, /data-hexa-description|role="tooltip"|data-hexa-core-image/);
+assert.doesNotMatch(describedHexaMarkup + fallbackHexaMarkup, /설명 없음|준비 중/);
+assert.match(source, /description\.textContent = source\.textContent/);
+assert.match(source, /image\?\.matches\?\.\('\[data-hexa-core-image\]'\)/);
 assert.match(hubGrowthMarkup, /HEXA 스탯 1/);
 assert.match(hubGrowthMarkup, /HEXA 스탯 2/);
 assert.match(hubGrowthMarkup, /HEXA 스탯 3/);
@@ -2455,7 +2543,8 @@ assert.match(source.slice(source.indexOf('async function ensureCharacterHubGrowt
 assert.match(source.slice(source.indexOf('async function ensureCharacterHubGrowth'), source.indexOf('const NEXON_EQUIPMENT_SLOT_ORDER')), /Promise\.allSettled\(requests\)/);
 assert.doesNotMatch(source.slice(source.indexOf('function renderCharacterHubGrowth'), source.indexOf('function characterHubBossRows')), /fetchNexonCharacterDetail\(/);
 assert.doesNotMatch(JSON.stringify(json('state')), /아케인심볼|디바이드 VI|character_hexa|symbol_equipment/);
-assert.doesNotMatch(cloudSource, /symbol-equipment|hexamatrix|hexa-stat|nexonDetailRuntimeCache/);
+assert.doesNotMatch(JSON.stringify(json('state')), /skillMetadata|skill_description|skill_icon/);
+assert.doesNotMatch(cloudSource, /symbol-equipment|hexamatrix|hexa-stat|nexonDetailRuntimeCache|skillMetadata/);
 let proxyValidationStatus = 0, proxyValidationBody = null;
 await schedulerTestHandler(
   {method: 'GET', query: {ocid: 'invalid ocid'}},
@@ -2599,6 +2688,8 @@ assert.ok(html.indexOf('data-character-hub-tab="equipment"') < html.indexOf('dat
 assert.ok(html.indexOf('data-character-hub-tab="growth"') < html.indexOf('data-character-hub-tab="content"'));
 assert.match(html, /id="equipmentDetailDialog"/);
 assert.match(html, /id="equipmentDetailBody"/);
+assert.match(html, /id="hexaCoreDetailDialog"/);
+assert.match(html, /id="hexaCoreDetailBody"/);
 assert.match(css, /\.equipment-grid\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
 assert.match(css, /\.character-hub-tabs\{grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/);
 assert.match(css, /\.symbol-grid\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
@@ -2606,6 +2697,12 @@ assert.match(css, /@media\(min-width:600px\)[\s\S]*\.symbol-grid\{grid-template-
 assert.match(css, /@media\(min-width:1000px\)[\s\S]*\.symbol-grid\{grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/);
 assert.match(css, /\.hexa-core-grid\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
 assert.match(css, /@media\(min-width:1000px\)[\s\S]*\.hexa-core-grid\{grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
+assert.match(css, /\.hexa-core-icon-wrap\{[^}]*width:52px;height:52px/);
+assert.match(css, /\.hexa-core-copy>b\{[^}]*-webkit-line-clamp:2/);
+assert.match(css, /@media\(hover:hover\) and \(pointer:fine\)\{[^}]*\.hexa-core-card\.has-description:hover \.hexa-core-tooltip,[^}]*:focus-visible/);
+assert.match(css, /\.hexa-core-tooltip\{[^}]*width:min\(320px,calc\(100vw - 32px\)\)[^}]*white-space:normal/);
+assert.match(css, /@media\(max-width:430px\)[\s\S]*\.hexa-core-card\{grid-template-columns:46px minmax\(0,1fr\)/);
+assert.match(css, /@media\(max-width:430px\)[\s\S]*\.hexa-core-tooltip\{display:none!important\}/);
 assert.match(css, /\.hexa-stat-grid\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
 assert.match(css, /@media\(max-width:430px\)[\s\S]*\.hexa-stat-grid\{grid-template-columns:1fr\}/);
 assert.doesNotMatch(css.slice(css.indexOf('.character-hub-growth'), css.indexOf('.equipment-loading')), /overflow-x:auto|white-space:nowrap|min-width:[1-9]\d*px/);
