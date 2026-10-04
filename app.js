@@ -1443,6 +1443,9 @@ const EQUIPMENT_OPTION_SOURCES = Object.freeze([
   {key: 'add', label: '추가옵션', tone: 'add'},
   {key: 'exceptional', label: '익셉셔널', tone: 'exceptional'}
 ]);
+const EQUIPMENT_PERCENT_OPTION_KEYS = new Set([
+  'max_hp_rate', 'max_mp_rate', 'boss_damage', 'ignore_monster_armor', 'all_stat', 'damage'
+]);
 function equipmentHasValue(value) {
   if (typeof value === 'number') return Number.isFinite(value) && value !== 0;
   if (typeof value !== 'string') return false;
@@ -1451,27 +1454,35 @@ function equipmentHasValue(value) {
   const numeric = text.replace(/,/g, '').replace(/%$/u, '');
   return !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/u.test(numeric) || Number(numeric) !== 0;
 }
-function equipmentOptionDisplayValue(value, signed = false) {
-  const text = String(value ?? '').trim();
+function equipmentOptionDisplayValue(value, signed = false, percent = false) {
+  const sourceText = String(value ?? '').trim();
+  const text = percent && sourceText && !/%$/u.test(sourceText) ? `${sourceText}%` : sourceText;
   if (!signed || !text || /^[+-]/u.test(text)) return text;
   const numeric = text.replace(/,/g, '').replace(/%$/u, '');
   return /^(?:\d+(?:\.\d*)?|\.\d+)$/u.test(numeric) ? `+${text}` : text;
+}
+function equipmentOptionAccessibleValue(value) {
+  return String(value || '').replace(/%/gu, '퍼센트');
 }
 function renderEquipmentOptionRows(options, sources = null) {
   const rows = Object.entries(options || {}).filter(([key, value]) => Object.hasOwn(EQUIPMENT_OPTION_LABELS, key) && equipmentHasValue(value));
   if (!rows.length) return '';
   return `<dl class="equipment-option-list">${rows.map(([key, value]) => {
-    const total = equipmentOptionDisplayValue(value, true);
-    const components = sources ? EQUIPMENT_OPTION_SOURCES.map(source => ({...source, value: sources?.[source.key]?.[key]})).filter(source => equipmentHasValue(source.value)) : [];
+    const percent = EQUIPMENT_PERCENT_OPTION_KEYS.has(key);
+    const total = equipmentOptionDisplayValue(value, true, percent);
+    const components = sources ? EQUIPMENT_OPTION_SOURCES
+      .map(source => ({...source, value: sources?.[source.key]?.[key]}))
+      .filter(source => equipmentHasValue(source.value) || (key === 'all_stat' && source.key === 'base' && source.value !== null && source.value !== undefined && String(source.value).trim() !== '')) : [];
     const showBreakdown = components.some(source => source.key !== 'base');
-    const breakdownLabel = components.map(source => `${source.label} ${equipmentOptionDisplayValue(source.value, source.key !== 'base')}`).join(', ');
-    const breakdown = showBreakdown ? `<span class="equipment-option-breakdown-inline" title="${escapeHtml(breakdownLabel)}" aria-hidden="true">(<span class="source-${components[0].tone}">${escapeHtml(equipmentOptionDisplayValue(components[0].value, components[0].key !== 'base'))}</span>${components.slice(1).map(source => `<span class="source-${source.tone}">${escapeHtml(equipmentOptionDisplayValue(source.value, source.key !== 'base'))}</span>`).join('')})</span>` : '';
-    const accessibleValue = `최종 ${total}${showBreakdown ? `, ${breakdownLabel}` : ''}`;
-    return `<div class="equipment-option-row"><dt>${escapeHtml(EQUIPMENT_OPTION_LABELS[key])}</dt><dd><span class="sr-only">${escapeHtml(accessibleValue)}</span><span class="equipment-option-total" aria-hidden="true">${escapeHtml(total)}</span>${breakdown}</dd></div>`;
+    const displayComponents = components.map(source => ({...source, displayValue: equipmentOptionDisplayValue(source.value, source.key !== 'base', percent)}));
+    const breakdownLabel = displayComponents.map(source => `${source.label} ${source.displayValue}`).join(', ');
+    const breakdown = showBreakdown ? `<span class="equipment-option-breakdown-inline" title="${escapeHtml(breakdownLabel)}" aria-hidden="true">(${displayComponents.map(source => `<span class="source-${source.tone}">${escapeHtml(source.displayValue)}</span>`).join('')})</span>` : '';
+    const accessibleValue = `최종 ${equipmentOptionAccessibleValue(total)}${showBreakdown ? `, ${equipmentOptionAccessibleValue(breakdownLabel)}` : ''}`;
+    return `<div class="equipment-option-row"><dt>${escapeHtml(EQUIPMENT_OPTION_LABELS[key])}</dt><dd class="equipment-option-value-cluster"><span class="sr-only">${escapeHtml(accessibleValue)}</span><span class="equipment-option-total" aria-hidden="true">${escapeHtml(total)}</span>${breakdown}</dd></div>`;
   }).join('')}</dl>`;
 }
 function renderEquipmentDetailSection(title, content, tone = '') {
-  return content ? `<section class="equipment-detail-section${tone ? ` equipment-detail-${escapeHtml(tone)}` : ''}"><h3>${escapeHtml(title)}</h3>${content}</section>` : '';
+  return content ? `<section class="equipment-detail-section${tone ? ` equipment-detail-${escapeHtml(tone)}` : ''}">${title ? `<h3>${escapeHtml(title)}</h3>` : ''}${content}</section>` : '';
 }
 function renderEquipmentPotentialSection(label, potential) {
   const options = Array.isArray(potential?.options) ? potential.options : [];
@@ -1489,11 +1500,11 @@ function renderEquipmentDetailMarkup(item) {
     [Number.isInteger(item.specialRingLevel) && item.specialRingLevel > 0, '특수 반지 Lv.', String(item.specialRingLevel)]
   ].filter(([visible]) => visible);
   const badges = equipmentBadge(item, false);
-  const totalOptions = renderEquipmentOptionRows(item.options?.total, item.options) || '<p class="equipment-option-empty">표시할 최종 옵션이 없습니다.</p>';
+  const totalOptions = renderEquipmentOptionRows(item.options?.total, item.options) || '<p class="equipment-option-empty">표시할 옵션이 없습니다.</p>';
   const soul = [item.soul?.name, item.soul?.option].filter(Boolean).map(value => `<p>${escapeHtml(value)}</p>`).join('');
   const starforceMarkup = starforce ? `<span class="equipment-starforce-summary"><span aria-hidden="true">★</span> ${starforce}성</span>` : '';
   const name = `${escapeHtml(item.name || '이름 없는 장비')}${scrollUpgrade ? ` <span class="equipment-scroll-upgrade">(+${scrollUpgrade})</span>` : ''}`;
-  return `<header class="equipment-detail-head">${equipmentImage(item, 'equipment-detail-icon')}<div><small>${escapeHtml(item.slot || item.part || '기타 장비')}</small>${starforceMarkup}<b>${name}</b>${badges ? `<span class="equipment-detail-badges">${badges}</span>` : ''}${item.description ? `<p>${escapeHtml(item.description)}</p>` : ''}</div></header>${renderEquipmentDetailSection('강화 정보', enhancements.length ? `<dl class="equipment-enhancement-list">${enhancements.map(([, label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>` : '', 'enhancement')}${renderEquipmentPotentialSection('잠재능력', item.potential)}${renderEquipmentPotentialSection('에디셔널 잠재능력', item.additionalPotential)}${renderEquipmentDetailSection('최종 옵션', totalOptions, 'total')}${renderEquipmentDetailSection('소울', soul, 'soul')}${item.expiresAt ? `<p class="muted equipment-expiry">유효기간 ${escapeHtml(item.expiresAt)}</p>` : ''}`;
+  return `<header class="equipment-detail-head">${equipmentImage(item, 'equipment-detail-icon')}<div><small>${escapeHtml(item.slot || item.part || '기타 장비')}</small>${starforceMarkup}<b>${name}</b>${badges ? `<span class="equipment-detail-badges">${badges}</span>` : ''}${item.description ? `<p>${escapeHtml(item.description)}</p>` : ''}</div></header>${renderEquipmentDetailSection('강화 정보', enhancements.length ? `<dl class="equipment-enhancement-list">${enhancements.map(([, label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>` : '', 'enhancement')}${renderEquipmentPotentialSection('잠재능력', item.potential)}${renderEquipmentPotentialSection('에디셔널 잠재능력', item.additionalPotential)}${renderEquipmentDetailSection('', totalOptions, 'total')}${renderEquipmentDetailSection('소울', soul, 'soul')}${item.expiresAt ? `<p class="muted equipment-expiry">유효기간 ${escapeHtml(item.expiresAt)}</p>` : ''}`;
 }
 function openEquipmentDetail(item) {
   const dialog = $('#equipmentDetailDialog');

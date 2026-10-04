@@ -212,14 +212,13 @@ input[type=checkbox]{accent-color:var(--accent);width:21px;min-height:21px;heigh
 .equipment-grade-badge.grade-rare,.equipment-detail-potential-grade.grade-rare{--potential-grade-color:var(--potential-grade-rare);--potential-grade-soft:var(--potential-grade-rare-soft)}
 .equipment-grade-badge.grade-neutral,.equipment-detail-potential-grade.grade-neutral{--potential-grade-color:var(--potential-grade-neutral);--potential-grade-soft:var(--potential-grade-neutral-soft)}
 .equipment-detail-total{margin-top:14px;padding-top:13px;border-top:1px solid var(--line-strong)}
-.equipment-detail-total .equipment-option-list div{grid-template-columns:minmax(70px,.38fr) minmax(0,1fr)}
-.equipment-detail-total .equipment-option-list dd{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:flex-end;gap:2px 8px;color:var(--text);font-size:13px}
+.equipment-detail-total .equipment-option-list dd{color:var(--text);font-size:13px}
 .equipment-detail-section .equipment-detail-chip{margin:0 5px 5px 0;font-size:10px}
 .equipment-enhancement-list{display:grid;margin:0;gap:3px}.equipment-enhancement-list div{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;padding:3px 0}.equipment-enhancement-list dd{font-weight:650;text-align:right}
-.equipment-option-list{display:grid;width:100%;margin:0;gap:0;overflow:hidden}.equipment-option-list div{display:grid;grid-template-columns:minmax(0,1fr) minmax(64px,40%);align-items:start;gap:10px;padding:6px 0;border-bottom:1px solid var(--line)}.equipment-option-list div:last-child{border-bottom:0}.equipment-option-list dt{min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:keep-all}.equipment-option-list dd{min-width:0;font-weight:650;font-variant-numeric:tabular-nums;text-align:right;white-space:normal;overflow-wrap:anywhere;word-break:break-word}
+.equipment-option-list{display:grid;width:100%;margin:0;gap:0;overflow:hidden}.equipment-option-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:3px 8px;padding:6px 0;border-bottom:1px solid var(--line)}.equipment-option-row:last-child{border-bottom:0}.equipment-option-row dt{flex:0 0 auto;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:keep-all}.equipment-option-value-cluster{display:inline-flex;flex:0 1 auto;min-width:0;flex-wrap:wrap;align-items:baseline;justify-content:flex-start;gap:2px 6px;font-weight:650;font-variant-numeric:tabular-nums;text-align:left;white-space:normal;overflow-wrap:anywhere;word-break:break-word}
 .equipment-option-empty{color:var(--muted)}
 .equipment-option-total{color:var(--equip-option-total);font-weight:750}
-.equipment-option-breakdown-inline{display:inline-flex;max-width:100%;flex-wrap:wrap;justify-content:flex-end;gap:0 4px;color:var(--muted);font-size:11px;font-weight:650;white-space:normal;overflow-wrap:anywhere}
+.equipment-option-breakdown-inline{display:inline-flex;max-width:100%;flex-wrap:wrap;justify-content:flex-start;gap:0 4px;color:var(--muted);font-size:11px;font-weight:650;white-space:normal;overflow-wrap:anywhere}
 .equipment-option-breakdown-inline .source-base{color:var(--equip-option-base)}
 .equipment-option-breakdown-inline .source-starforce{color:var(--equip-option-starforce)}
 .equipment-option-breakdown-inline .source-scroll{color:var(--equip-option-scroll)}
@@ -816,8 +815,7 @@ button.equipment-slot:hover{border-color:var(--line-strong);background:var(--hov
 .equipment-card-icon,.equipment-card .equipment-icon-placeholder{width:40px;height:40px}
 .equipment-detail-dialog{width:calc(100vw - 20px);max-width:calc(100vw - 20px);padding:15px;overflow-x:hidden}
 .equipment-detail-head{grid-template-columns:52px minmax(0,1fr);gap:10px}.equipment-detail-head .equipment-detail-icon,.equipment-detail-head .equipment-icon-placeholder{width:52px;height:52px}
-.equipment-option-list div{grid-template-columns:minmax(0,1fr) minmax(60px,38%);gap:8px}
-.equipment-detail-total .equipment-option-list div{grid-template-columns:minmax(66px,.42fr) minmax(0,1fr)}.equipment-detail-total .equipment-option-list dd{row-gap:3px}.equipment-option-breakdown-inline{flex-basis:100%}.equipment-detail-potential-grade{padding:9px 8px 8px}
+.equipment-option-row{gap:3px 7px}.equipment-option-value-cluster{max-width:100%;row-gap:3px}.equipment-option-breakdown-inline{flex-basis:100%}.equipment-detail-potential-grade{padding:9px 8px 8px}
 .character-hub-overview{grid-template-columns:1fr}
 .character-hub-overview>.character-hub-section:first-child{grid-column:auto}
 .character-hub-section{padding:11px}
