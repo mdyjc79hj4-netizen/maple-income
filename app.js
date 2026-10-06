@@ -782,6 +782,7 @@ function emptyState(now = new Date()) {
 }
 function stateHasMeaningfulUserData(data) {
   if (!data || typeof data !== 'object') return false;
+  if (!Number.isNaN(Date.parse(data.sync?.weeklyHistoryResetAt || ''))) return true;
   if ((data.incomes || []).length || Object.keys(data.weeklyHistory || {}).length || (data.presets || []).length) return true;
   if ((data.unassignedIncomes || []).length || (data.recoveredWeeks || []).length) return true;
   const settings = data.settings && typeof data.settings === 'object' ? data.settings : {};
@@ -2709,11 +2710,42 @@ function validateImportedState(data) {
   for (const preset of data.presets) if (!preset || typeof preset.name !== 'string' || !Array.isArray(preset.bosses)) throw new Error('손상된 사용자 프리셋이 있습니다.');
   return true;
 }
+function activateImportedWeeklyHistory(data, now = new Date()) {
+  const sync = data.sync && typeof data.sync === 'object' && !Array.isArray(data.sync) ? copy(data.sync) : {};
+  sync.revisions = sync.revisions && typeof sync.revisions === 'object' && !Array.isArray(sync.revisions) ? sync.revisions : {};
+  sync.revisions.weeklyHistory = sync.revisions.weeklyHistory && typeof sync.revisions.weeklyHistory === 'object' && !Array.isArray(sync.revisions.weeklyHistory)
+    ? {...sync.revisions.weeklyHistory}
+    : {};
+  sync.tombstones = sync.tombstones && typeof sync.tombstones === 'object' && !Array.isArray(sync.tombstones) ? sync.tombstones : {};
+  sync.tombstones.weeklyHistory = {};
+  const previousReset = Date.parse(sync.weeklyHistoryResetAt || '');
+  const restoredAt = new Date(Math.max(now.getTime(), Number.isNaN(previousReset) ? 0 : previousReset + 1)).toISOString();
+  for (const [key, snapshot] of Object.entries(data.weeklyHistory || {})) {
+    sync.revisions.weeklyHistory[String(snapshot?.weekId || key)] = restoredAt;
+  }
+  data.sync = sync;
+  return data;
+}
 function prepareImportedState(text, now = new Date()) {
   let parsed;
   try { parsed = JSON.parse(text); } catch { throw new Error('JSON 파일을 읽을 수 없습니다.'); }
   const migrated = migrateState(parsed, now); validateImportedState(migrated); validatePresetIntegrity();
+  activateImportedWeeklyHistory(migrated, now);
   return migrated;
+}
+function resetAllData(data, now = new Date()) {
+  const next = emptyState(now);
+  const sync = data?.sync && typeof data.sync === 'object' && !Array.isArray(data.sync) ? copy(data.sync) : {};
+  const historyRevisions = sync.revisions?.weeklyHistory && typeof sync.revisions.weeklyHistory === 'object'
+    ? Object.values(sync.revisions.weeklyHistory)
+    : [];
+  const resetCandidates = [now.getTime(), Date.parse(sync.weeklyHistoryResetAt || '') + 1,
+    ...historyRevisions.map(value => Date.parse(value || '') + 1)].filter(Number.isFinite);
+  sync.weeklyHistoryResetAt = new Date(Math.max(...resetCandidates)).toISOString();
+  sync.tombstones = sync.tombstones && typeof sync.tombstones === 'object' && !Array.isArray(sync.tombstones) ? sync.tombstones : {};
+  sync.tombstones.weeklyHistory = {};
+  next.sync = sync;
+  return next;
 }
 function resetCurrentWeek(data, now = new Date()) {
   data.incomes = [];
@@ -3141,7 +3173,7 @@ function init() {
     if (button.dataset.presetAction === 'delete' && confirm(`사용자 프리셋 '${preset.name}'을 삭제할까요? 캐릭터의 현재 보스 구성은 유지됩니다.`)) transaction(next => { next.presets = next.presets.filter(item => item.id !== preset.id); });
   });
   $('#resetWeek').addEventListener('click', () => { if (!isPast() && confirm('이번 주 보스 완료 체크와 수익 기록만 초기화할까요? 캐릭터 구성, 프리셋, 과거 주차는 유지됩니다.')) transaction(resetCurrentWeek); });
-  $('#resetAll').addEventListener('click', () => { if (!isPast() && confirm('현재 데이터와 과거 주차를 모두 초기화할까요? 먼저 백업을 권장합니다. 이전 버전 원본 백업은 유지됩니다.')) { try { persist(emptyState()); selectedWeek = ''; selectedBossCharacterId = ''; renderIncomeForm(true); render(); message('전체 데이터를 초기화했습니다.'); } catch (error) { message(error.message, true); } } });
+  $('#resetAll').addEventListener('click', () => { if (!isPast() && confirm('현재 데이터와 과거 주차를 모두 초기화할까요? 먼저 백업을 권장합니다. 이전 버전 원본 백업은 유지됩니다.')) { try { persist(resetAllData(state)); selectedWeek = ''; selectedBossCharacterId = ''; renderIncomeForm(true); render(); message('전체 데이터를 초기화했습니다.'); } catch (error) { message(error.message, true); } } });
   window.addEventListener('focus', checkWeek);
   window.addEventListener('storage', e => {
     if (e.key === KEY) { loadState(); render(); renderIncomeForm(); message('다른 탭에서 저장한 변경을 반영했습니다.'); }

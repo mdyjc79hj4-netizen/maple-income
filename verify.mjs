@@ -918,6 +918,7 @@ assert.equal(run("historyFilter='gather'; historyMatches({item:'씨앗',category
 assert.equal(cloudSyncInternals.meaningfulLocalData({characters: [{name: '본캐', bosses: []}], incomes: [], weeklyHistory: {}, presets: [], settings: {}}), false);
 assert.equal(cloudSyncInternals.meaningfulLocalData({version: 7, migrationNote: 'schema', characters: [{name: '본캐', bosses: []}], incomes: [], weeklyHistory: {}, presets: [], settings: {defaultSaleFeeRate: 0.05}}), false);
 assert.equal(cloudSyncInternals.meaningfulLocalData({characters: [{name: '본캐', bosses: []}], incomes: [{id: 'i1'}], weeklyHistory: {}, presets: [], settings: {}}), true);
+assert.equal(cloudSyncInternals.meaningfulLocalData({characters: [{name: '본캐', bosses: []}], incomes: [], weeklyHistory: {}, presets: [], settings: {}, sync: {weeklyHistoryResetAt: '2026-10-03T00:00:00.000Z'}}), true);
 assert.equal(run("stateHasMeaningfulUserData(emptyState(new Date('2026-09-24T12:00:00')))"), false);
 assert.equal(run("stateHasMeaningfulUserData({...emptyState(new Date('2026-09-24T12:00:00')),settings:{defaultSaleFeeRate:0.03}})"), true);
 assert.equal(run("stateHasMeaningfulUserData({...emptyState(new Date('2026-09-24T12:00:00')),incomes:[{id:'user-income'}]})"), true);
@@ -1072,6 +1073,120 @@ for (const group of ['incomes', 'characters', 'bosses', 'accountActivities', 'ac
 assert.match(cloudSource, /const base = normalizePayload\(loadBase\(\)\)/);
 assert.match(cloudSource, /normalizedRemote \|\| latest\.payload/);
 assert.match(source, /persist\(next, \{touch: rolled \|\| !parsed, notify: false\}\)/);
+
+// weeklyHistory is an append-only archive: a missing device copy never becomes a deletion.
+const archiveWeekId = '2026-09-24~2026-09-30';
+const archiveSnapshot = {
+  weekId: archiveWeekId,
+  incomes: Array.from({length: 44}, (_, index) => ({id: `archive-income-${index}`, item: '메소', category: 'hunt', amount: index + 1})),
+  characters: Array.from({length: 10}, (_, index) => ({
+    id: `archive-character-${index}`, name: `과거 캐릭터 ${index + 1}`,
+    bosses: [{bossId: 'lotus', difficulty: '하드', done: index === 0}],
+    weeklyActivities: [{id: 'guild', done: index === 0}]
+  })),
+  accountWeeklyActivities: [{id: 'epic-dungeon', done: true}],
+  totals: {total: 123456}
+};
+const archiveBase = {...clone(syncBase), weeklyHistory: {[archiveWeekId]: clone(archiveSnapshot)}};
+const archiveMissingLocal = {...clone(archiveBase), weeklyHistory: {}, updatedAt: '2026-10-01T01:00:00.000Z'};
+const archiveMissingRemote = {...clone(archiveBase), weeklyHistory: {}, updatedAt: '2026-10-01T02:00:00.000Z'};
+const historyFromRemote = cloudSyncInternals.mergeStates(
+  archiveBase, archiveMissingLocal, clone(archiveBase), '2026-10-01T03:00:00.000Z'
+).state;
+assert.ok(historyFromRemote.weeklyHistory[archiveWeekId]);
+assert.equal(historyFromRemote.weeklyHistory[archiveWeekId].incomes.length, 44);
+assert.equal(historyFromRemote.sync.tombstones.weeklyHistory[archiveWeekId], undefined);
+const historyFromLocal = cloudSyncInternals.mergeStates(
+  archiveBase, clone(archiveBase), archiveMissingRemote, '2026-10-01T03:00:00.000Z'
+).state;
+assert.ok(historyFromLocal.weeklyHistory[archiveWeekId]);
+assert.equal(historyFromLocal.weeklyHistory[archiveWeekId].characters.length, 10);
+assert.equal(historyFromLocal.sync.tombstones.weeklyHistory[archiveWeekId], undefined);
+
+// An incomplete same-week snapshot cannot erase richer archived collections.
+const reducedArchive = clone(archiveBase);
+reducedArchive.updatedAt = '2026-10-01T04:00:00.000Z';
+reducedArchive.weeklyHistory[archiveWeekId] = {
+  ...clone(archiveSnapshot),
+  incomes: [],
+  characters: clone(archiveSnapshot.characters.slice(0, 4))
+};
+const fullArchive = clone(archiveBase);
+fullArchive.updatedAt = '2026-10-01T03:00:00.000Z';
+const preservedArchive = cloudSyncInternals.mergeStates(
+  archiveBase, reducedArchive, fullArchive, '2026-10-01T05:00:00.000Z'
+).state.weeklyHistory[archiveWeekId];
+assert.equal(preservedArchive.incomes.length, 44);
+assert.equal(preservedArchive.characters.length, 10);
+assert.equal(preservedArchive.accountWeeklyActivities[0].done, true);
+assert.equal(preservedArchive.totals.total, 123456);
+
+// Archived incomes are unioned by id without duplicates, even when devices overlap.
+const archiveIncomeBase = {...clone(syncBase), weeklyHistory: {[archiveWeekId]: {weekId: archiveWeekId, incomes: [], characters: []}}};
+const archiveIncomeLocal = clone(archiveIncomeBase);
+archiveIncomeLocal.updatedAt = '2026-10-01T06:00:00.000Z';
+archiveIncomeLocal.weeklyHistory[archiveWeekId].incomes = [{id: 'A', amount: 1}, {id: 'B', amount: 2}];
+const archiveIncomeRemote = clone(archiveIncomeBase);
+archiveIncomeRemote.updatedAt = '2026-10-01T07:00:00.000Z';
+archiveIncomeRemote.weeklyHistory[archiveWeekId].incomes = [{id: 'A', amount: 1}, {id: 'B', amount: 2}, {id: 'C', amount: 3}];
+const archiveIncomeUnion = cloudSyncInternals.mergeStates(
+  archiveIncomeBase, archiveIncomeLocal, archiveIncomeRemote, '2026-10-01T08:00:00.000Z'
+).state.weeklyHistory[archiveWeekId].incomes;
+assert.deepEqual(archiveIncomeUnion.map(item => item.id).sort(), ['A', 'B', 'C']);
+assert.equal(new Set(archiveIncomeUnion.map(item => item.id)).size, archiveIncomeUnion.length);
+
+// Legacy weeklyHistory tombstones are ignored and removed when a real snapshot exists.
+const legacyHistoryTombstone = clone(archiveMissingLocal);
+legacyHistoryTombstone.sync = {
+  revisions: {weeklyHistory: {}},
+  tombstones: {weeklyHistory: {[archiveWeekId]: '2026-10-02T00:00:00.000Z'}}
+};
+const tombstoneSafeArchive = cloudSyncInternals.mergeStates(
+  archiveBase, legacyHistoryTombstone, fullArchive, '2026-10-02T01:00:00.000Z'
+).state;
+assert.ok(tombstoneSafeArchive.weeklyHistory[archiveWeekId]);
+assert.deepEqual(tombstoneSafeArchive.sync.tombstones.weeklyHistory, {});
+
+// Only the explicit full reset marker can remove older archived weeks.
+context.__archiveResetSource = clone(archiveBase);
+const explicitHistoryReset = json("resetAllData(__archiveResetSource, new Date('2026-10-03T00:00:00.000Z'))");
+assert.deepEqual(explicitHistoryReset.weeklyHistory, {});
+assert.equal(explicitHistoryReset.sync.weeklyHistoryResetAt, '2026-10-03T00:00:00.000Z');
+assert.equal(run('stateHasMeaningfulUserData(resetAllData(__archiveResetSource, new Date(\'2026-10-03T00:00:00.000Z\')))'), true);
+const archiveAfterExplicitReset = cloudSyncInternals.mergeStates(
+  archiveBase, explicitHistoryReset, fullArchive, '2026-10-03T01:00:00.000Z'
+).state;
+assert.equal(archiveAfterExplicitReset.weeklyHistory[archiveWeekId], undefined);
+assert.equal(archiveAfterExplicitReset.sync.weeklyHistoryResetAt, '2026-10-03T00:00:00.000Z');
+
+// A later JSON restore receives fresh history revisions and survives the earlier reset marker.
+context.__archiveBackup = JSON.stringify(archiveBase);
+const restoredArchive = json("prepareImportedState(__archiveBackup, new Date('2026-10-04T00:00:00.000Z'))");
+assert.equal(restoredArchive.sync.revisions.weeklyHistory[archiveWeekId], '2026-10-04T00:00:00.000Z');
+const restoredAfterReset = cloudSyncInternals.mergeStates(
+  explicitHistoryReset, restoredArchive, explicitHistoryReset, '2026-10-04T01:00:00.000Z'
+).state;
+assert.ok(restoredAfterReset.weeklyHistory[archiveWeekId]);
+assert.equal(restoredAfterReset.weeklyHistory[archiveWeekId].incomes.length, 44);
+
+// Rollover still creates the archive and change tracking records its week revision.
+const rolloverArchiveBase = {
+  ...clone(syncBase), currentWeek: '2026-09-24~2026-09-30', weeklyHistory: {},
+  incomes: [{id: 'rollover-income', item: '메소', category: 'hunt', amount: 100, weekId: '2026-09-24~2026-09-30'}]
+};
+context.__rolloverArchive = clone(rolloverArchiveBase);
+run("rollover(__rolloverArchive, new Date('2026-10-01T15:00:00.000Z'))");
+const rolloverArchive = json('__rolloverArchive');
+assert.ok(rolloverArchive.weeklyHistory['2026-09-24~2026-09-30']);
+assert.equal(rolloverArchive.weeklyHistory['2026-09-24~2026-09-30'].incomes[0].id, 'rollover-income');
+const rolloverPrepared = cloudSyncInternals.prepareStateForMerge(
+  rolloverArchive, rolloverArchiveBase, '2026-10-01T15:00:01.000Z'
+);
+assert.ok(rolloverPrepared.sync.revisions.weeklyHistory['2026-09-24~2026-09-30']);
+assert.match(cloudSource, /function markWeeklyHistoryChanges\(/);
+assert.match(cloudSource, /function mergeWeeklyHistory\(/);
+assert.doesNotMatch(cloudSource, /markCollectionChanges\(historyMap\(state\.weeklyHistory\)/);
+assert.match(source, /persist\(resetAllData\(state\)\)/);
 
 // Two devices add different records from the same remote version.
 const addLocal = clone(syncBase);

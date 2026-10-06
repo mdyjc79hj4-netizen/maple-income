@@ -41,6 +41,7 @@ async function contentHash(value) {
 function emptySync() {
   return {
     schema: 1,
+    weeklyHistoryResetAt: '',
     revisions: {root: '', settings: '', incomes: {}, characters: {}, bosses: {}, accountActivities: {}, activities: {}, presets: {}, weeklyHistory: {}},
     tombstones: {incomes: {}, characters: {}, bosses: {}, accountActivities: {}, activities: {}, presets: {}, weeklyHistory: {}},
     conflicts: []
@@ -52,6 +53,9 @@ function normalizeSync(value) {
   const source = asObject(value);
   const revisions = asObject(source.revisions);
   const tombstones = asObject(source.tombstones);
+  result.weeklyHistoryResetAt = typeof source.weeklyHistoryResetAt === 'string' && timestamp(source.weeklyHistoryResetAt)
+    ? new Date(timestamp(source.weeklyHistoryResetAt)).toISOString()
+    : '';
   result.revisions.root = typeof revisions.root === 'string' ? revisions.root : '';
   result.revisions.settings = typeof revisions.settings === 'string' ? revisions.settings : '';
   for (const key of ['incomes', 'characters', 'bosses', 'accountActivities', 'activities', 'presets', 'weeklyHistory']) {
@@ -64,6 +68,7 @@ function normalizeSync(value) {
 
 function meaningfulLocalData(state) {
   if (!state) return false;
+  if (timestamp(state.sync?.weeklyHistoryResetAt) > 0) return true;
   if (state.incomes?.length || Object.keys(state.weeklyHistory || {}).length || state.presets?.length) return true;
   if (state.accountWeeklyActivities?.some(activity => activity.done || activity.manualOverride != null || activity.apiCompleted)) return true;
   const settings = asObject(state.settings);
@@ -144,6 +149,17 @@ function markCollectionChanges(currentMap, baseMap, sync, group, changedAt, migr
   }
 }
 
+function markWeeklyHistoryChanges(currentMap, baseMap, sync, changedAt) {
+  // Past-week snapshots are append-only. Absence on one device is not a user deletion,
+  // and legacy history tombstones must not keep deleting recovered archives.
+  sync.tombstones.weeklyHistory = {};
+  for (const [id, value] of currentMap) {
+    if (!same(value, baseMap.get(id))) {
+      sync.revisions.weeklyHistory[id] = isoMax(sync.revisions.weeklyHistory[id], changedAt);
+    }
+  }
+}
+
 function prepareStateForMerge(input, baseInput = null, now = new Date().toISOString(), options = {}) {
   const state = copy(asObject(input));
   const base = copy(asObject(baseInput));
@@ -159,12 +175,15 @@ function prepareStateForMerge(input, baseInput = null, now = new Date().toISOStr
   const changedAt = timestamp(state.updatedAt) ? new Date(timestamp(state.updatedAt)).toISOString() : now;
 
   for (const group of Object.keys(sync.tombstones)) sync.tombstones[group] = {...baseSync.tombstones[group], ...sync.tombstones[group]};
+  sync.weeklyHistoryResetAt = timestamp(sync.weeklyHistoryResetAt) >= timestamp(baseSync.weeklyHistoryResetAt)
+    ? sync.weeklyHistoryResetAt
+    : baseSync.weeklyHistoryResetAt;
 
   if (!same(rootData(state), rootData(base))) sync.revisions.root = isoMax(sync.revisions.root, changedAt);
   if (!same(state.settings, base.settings || {})) sync.revisions.settings = isoMax(sync.revisions.settings, changedAt);
   for (const group of ['incomes', 'presets']) markCollectionChanges(mapBy(state[group]), mapBy(base[group]), sync, group, changedAt, migrationGuard);
   markCollectionChanges(mapBy(state.accountWeeklyActivities), mapBy(base.accountWeeklyActivities), sync, 'accountActivities', changedAt, migrationGuard);
-  markCollectionChanges(historyMap(state.weeklyHistory), historyMap(base.weeklyHistory), sync, 'weeklyHistory', changedAt, migrationGuard);
+  markWeeklyHistoryChanges(historyMap(state.weeklyHistory), historyMap(base.weeklyHistory), sync, changedAt);
 
   const characters = mapBy(state.characters);
   const baseCharacters = mapBy(base.characters);
@@ -262,6 +281,127 @@ function mergeRecord(baseValue, localValue, remoteValue, localRevision, remoteRe
   return result;
 }
 
+function archiveItemMap(items, key) {
+  const result = new Map();
+  for (const item of Array.isArray(items) ? items : []) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const explicitId = item[key];
+    const id = explicitId == null || explicitId === '' ? `legacy:${JSON.stringify(item)}` : String(explicitId);
+    if (!result.has(id)) result.set(id, item);
+  }
+  return result;
+}
+
+function withoutFields(value, fields) {
+  const result = {...asObject(value)};
+  for (const field of fields) delete result[field];
+  return result;
+}
+
+function mergeArchiveItems({baseItems, localItems, remoteItems, key, localRevision, remoteRevision, scope, conflicts, now, mergeItem}) {
+  const baseMap = archiveItemMap(baseItems, key);
+  const localMap = archiveItemMap(localItems, key);
+  const remoteMap = archiveItemMap(remoteItems, key);
+  const ids = new Set([...baseMap.keys(), ...localMap.keys(), ...remoteMap.keys()]);
+  const result = [];
+  for (const id of ids) {
+    const baseValue = baseMap.get(id);
+    const localValue = localMap.get(id);
+    const remoteValue = remoteMap.get(id);
+    const value = mergeItem
+      ? mergeItem(baseValue, localValue, remoteValue, id)
+      : mergeRecord(baseValue, localValue, remoteValue, localRevision, remoteRevision, scope, id, conflicts, now);
+    if (value != null) result.push(value);
+  }
+  return result;
+}
+
+function mergeArchiveCharacter(baseValue, localValue, remoteValue, localRevision, remoteRevision, id, conflicts, now) {
+  if (localValue == null) return copy(remoteValue);
+  if (remoteValue == null) return copy(localValue);
+  const nested = ['bosses', 'weeklyActivities'];
+  const result = mergeRecord(
+    withoutFields(baseValue, nested), withoutFields(localValue, nested), withoutFields(remoteValue, nested),
+    localRevision, remoteRevision, 'weeklyHistory.characters', id, conflicts, now
+  );
+  result.bosses = mergeArchiveItems({
+    baseItems: baseValue?.bosses, localItems: localValue?.bosses, remoteItems: remoteValue?.bosses,
+    key: 'bossId', localRevision, remoteRevision, scope: 'weeklyHistory.character.bosses', conflicts, now
+  });
+  result.weeklyActivities = mergeArchiveItems({
+    baseItems: baseValue?.weeklyActivities, localItems: localValue?.weeklyActivities, remoteItems: remoteValue?.weeklyActivities,
+    key: 'id', localRevision, remoteRevision, scope: 'weeklyHistory.character.activities', conflicts, now
+  });
+  return result;
+}
+
+function archiveRichness(snapshot) {
+  const value = asObject(snapshot);
+  const characters = Array.isArray(value.characters) ? value.characters : [];
+  return (Array.isArray(value.incomes) ? value.incomes.length : 0) * 1000
+    + characters.length * 100
+    + characters.reduce((sum, character) => sum
+      + (Array.isArray(character?.bosses) ? character.bosses.length : 0)
+      + (Array.isArray(character?.weeklyActivities) ? character.weeklyActivities.length : 0), 0)
+    + (Array.isArray(value.accountWeeklyActivities) ? value.accountWeeklyActivities.length : 0);
+}
+
+function mergeWeeklyHistorySnapshot(baseValue, localValue, remoteValue, localRevision, remoteRevision, id, conflicts, now) {
+  if (localValue == null) return copy(remoteValue);
+  if (remoteValue == null) return copy(localValue);
+  const nested = ['incomes', 'characters', 'accountWeeklyActivities'];
+  const result = mergeRecord(
+    withoutFields(baseValue, nested), withoutFields(localValue, nested), withoutFields(remoteValue, nested),
+    localRevision, remoteRevision, 'weeklyHistory', id, conflicts, now
+  );
+  result.incomes = mergeArchiveItems({
+    baseItems: baseValue?.incomes, localItems: localValue?.incomes, remoteItems: remoteValue?.incomes,
+    key: 'id', localRevision, remoteRevision, scope: 'weeklyHistory.incomes', conflicts, now
+  });
+  result.characters = mergeArchiveItems({
+    baseItems: baseValue?.characters, localItems: localValue?.characters, remoteItems: remoteValue?.characters,
+    key: 'id', localRevision, remoteRevision, scope: 'weeklyHistory.characters', conflicts, now,
+    mergeItem: (baseCharacter, localCharacter, remoteCharacter, characterId) => mergeArchiveCharacter(
+      baseCharacter, localCharacter, remoteCharacter, localRevision, remoteRevision, characterId, conflicts, now
+    )
+  });
+  result.accountWeeklyActivities = mergeArchiveItems({
+    baseItems: baseValue?.accountWeeklyActivities,
+    localItems: localValue?.accountWeeklyActivities,
+    remoteItems: remoteValue?.accountWeeklyActivities,
+    key: 'id', localRevision, remoteRevision, scope: 'weeklyHistory.accountActivities', conflicts, now
+  });
+  if (!same(localValue?.totals, remoteValue?.totals)) {
+    const richer = archiveRichness(localValue) >= archiveRichness(remoteValue) ? localValue : remoteValue;
+    if (richer?.totals != null) result.totals = copy(richer.totals);
+  }
+  return result;
+}
+
+function mergeWeeklyHistory({baseMap, localMap, remoteMap, localSync, remoteSync, conflicts, now}) {
+  const result = new Map();
+  const revisions = {};
+  const resetAt = timestamp(localSync.weeklyHistoryResetAt) >= timestamp(remoteSync.weeklyHistoryResetAt)
+    ? localSync.weeklyHistoryResetAt
+    : remoteSync.weeklyHistoryResetAt;
+  const ids = new Set([...baseMap.keys(), ...localMap.keys(), ...remoteMap.keys()]);
+  for (const id of ids) {
+    const localRevision = revisionFor(localSync, 'weeklyHistory', id);
+    const remoteRevision = revisionFor(remoteSync, 'weeklyHistory', id);
+    const newestItemRevision = isoMax(localRevision, remoteRevision);
+    if (timestamp(resetAt) > 0 && timestamp(newestItemRevision) <= timestamp(resetAt)) continue;
+    const value = mergeWeeklyHistorySnapshot(
+      baseMap.get(id), localMap.get(id), remoteMap.get(id),
+      localRevision, remoteRevision, id, conflicts, now
+    );
+    if (value != null) {
+      result.set(id, value);
+      revisions[id] = isoMax(localRevision, remoteRevision, now);
+    }
+  }
+  return {result, revisions, tombstones: {}, resetAt};
+}
+
 function mergeCollection({baseMap, localMap, remoteMap, localSync, remoteSync, group, scope = group, conflicts, now}) {
   const result = new Map();
   const revisions = {};
@@ -339,12 +479,13 @@ function mergeStates(baseInput, localInput, remoteInput, now = new Date().toISOS
   });
   sync.revisions.accountActivities = accountActivities.revisions;
   sync.tombstones.accountActivities = accountActivities.tombstones;
-  const history = mergeCollection({
+  const history = mergeWeeklyHistory({
     baseMap: historyMap(base.weeklyHistory), localMap: historyMap(local.weeklyHistory), remoteMap: historyMap(remote.weeklyHistory),
-    localSync, remoteSync, group: 'weeklyHistory', conflicts, now
+    localSync, remoteSync, conflicts, now
   });
   sync.revisions.weeklyHistory = history.revisions;
-  sync.tombstones.weeklyHistory = history.tombstones;
+  sync.tombstones.weeklyHistory = {};
+  sync.weeklyHistoryResetAt = history.resetAt;
 
   const baseCharacters = mapBy(base.characters);
   const localCharacters = mapBy(local.characters);
