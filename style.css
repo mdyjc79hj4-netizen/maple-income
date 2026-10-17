@@ -584,6 +584,30 @@ dialog{width:min(440px,calc(100% - 24px));max-height:85dvh;border:1px solid var(
 dialog::backdrop{background:var(--overlay);backdrop-filter:blur(3px)}
 .dialog-card{padding:20px;display:grid;gap:16px}
 .dialog-actions{display:flex;justify-content:flex-end;gap:8px}
+.site-footer{padding:18px 16px calc(104px + env(safe-area-inset-bottom));color:var(--muted);font-size:10px;text-align:center}
+.site-footer-inner{display:grid;justify-items:center;gap:6px;width:min(720px,100%);margin:0 auto}
+.site-footer-links{display:flex;justify-content:center;flex-wrap:wrap;gap:2px 12px}
+.site-footer-links a{display:inline-flex;align-items:center;min-height:32px;color:var(--text-secondary);text-decoration:none}
+.site-footer-links a:hover{text-decoration:underline}
+.site-footer-attribution{color:var(--text-secondary);font-weight:650}
+.site-footer-disclaimer{font-size:9px}
+.legal-dialog{width:min(760px,calc(100% - 24px));max-height:85dvh;overflow:hidden}
+.legal-dialog-card{grid-template-rows:auto minmax(0,1fr);gap:0;max-height:85dvh;padding:0}
+.legal-dialog-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:18px 20px 14px;border-bottom:1px solid var(--line);background:var(--panel)}
+.legal-dialog-head .eyebrow{margin-bottom:2px;font-size:10px}
+.legal-dialog-head .text-button{flex:0 0 auto}
+.legal-dialog-body{display:grid;gap:18px;min-height:0;padding:18px 20px 24px;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}
+.legal-dialog-body section{display:grid;gap:7px}
+.legal-dialog-body h3{color:var(--text-secondary);font-size:13px}
+.legal-dialog-body p,.legal-dialog-body li{color:var(--text-secondary);font-size:12px;line-height:1.65;overflow-wrap:anywhere}
+.legal-dialog-body ul{display:grid;gap:6px;margin:0;padding-left:19px}
+.legal-dialog-body a{overflow-wrap:anywhere}
+.legal-warning{display:grid;gap:5px;padding:12px 14px;border:1px solid var(--warning-border);border-radius:11px;background:var(--warning-bg)}
+.legal-warning strong{color:var(--amber);font-size:12px}
+.legal-external-link,.legal-link-list a{display:inline-flex;align-items:center;justify-content:center;width:max-content;max-width:100%;min-height:44px;padding:9px 12px;border:1px solid var(--line-strong);border-radius:9px;background:var(--surface-soft);color:var(--blue);font-size:12px;font-weight:650;text-decoration:none}
+.legal-link-list{display:flex;flex-wrap:wrap;gap:8px}
+.legal-attribution{color:var(--text)!important;font-weight:700}
+.legal-effective-date{color:var(--muted)!important;font-size:11px!important}
 .check-list{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .check-list label{display:flex;flex-wrap:nowrap;min-height:38px}
 .check-list label input{flex-basis:auto}
@@ -692,6 +716,8 @@ dialog::backdrop{background:var(--overlay);backdrop-filter:blur(3px)}
 .hexa-core-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
 body{padding-left:184px}
 .app{max-width:none;padding-bottom:0}
+.site-footer{padding:18px 32px 26px}
+.site-footer-inner{width:min(1400px,calc(100% - 64px))}
 .top,main{width:min(1400px,calc(100% - 64px));margin-left:auto;margin-right:auto}
 .onboarding-shell{margin-left:-184px}
 .tabs{top:0;bottom:0;left:0;transform:none;width:184px;grid-template-columns:1fr;align-content:start;gap:6px;padding:22px 12px;background:var(--sidebar);border-top:0;border-right:1px solid var(--line);box-shadow:none}
@@ -834,6 +860,7 @@ button.equipment-slot:hover{border-color:var(--line-strong);background:var(--hov
 
 @media(max-width:430px){
 .onboarding-shell{place-items:start center;padding:20px 16px 28px}.onboarding-brand{margin-bottom:24px}.onboarding-intro h1{font-size:31px}.onboarding-benefits{display:grid}.onboarding-stage-head h2{font-size:22px}
+.legal-dialog-head{padding:15px 15px 12px}.legal-dialog-body{padding:15px 15px 20px}.legal-link-list{display:grid}.legal-link-list a,.legal-external-link{width:100%}
 .onboarding-shell .nexon-credential-head{display:grid}.onboarding-shell .nexon-credential-badge{justify-self:start}.onboarding-shell .nexon-credential-security{font-size:10px}
 .settings-route-body{padding-left:7px;padding-right:7px}
 .home-progress{grid-template-columns:1fr}

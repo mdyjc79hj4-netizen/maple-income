@@ -2939,6 +2939,59 @@ assert.match(html, /data-cloud-choice="local"/);
 assert.match(html, /id="cloudOverwriteStep" class="hidden"/);
 assert.match(html, /data-cloud-overwrite="confirm"/);
 assert.ok(html.indexOf('클라우드 데이터 불러오기') < html.indexOf('이 기기 데이터 사용'));
+assert.equal((html.match(/class="site-footer"/g) || []).length, 1);
+assert.ok(html.indexOf('class="site-footer"') > html.indexOf('id="appShell"'));
+assert.ok(html.indexOf('class="site-footer"') < html.indexOf('id="characterDialog"'));
+for (const key of ['contact', 'privacy', 'terms', 'legal']) {
+  assert.match(html, new RegExp(`href="#${key}" data-legal-link="${key}"`));
+  assert.match(html, new RegExp(`data-legal-dialog="${key}" aria-labelledby="[^"]+"`));
+  assert.equal(run(`legalDialogKeyFromHash('#${key}')`), key);
+}
+assert.equal(run("legalDialogKeyFromHash('#unknown')"), '');
+const legalDialogMocks = Object.fromEntries(['contact', 'privacy', 'terms', 'legal'].map(key => [key, {
+  open: false, focused: false, dataset: {legalDialog: key},
+  showModal() { this.open = true; }, close() { this.open = false; },
+  querySelector() { return {focus: () => { this.focused = true; }}; }
+}]));
+context.__legalDialogMocks = legalDialogMocks;
+context.document = {
+  querySelector(selector) {
+    const key = Object.keys(legalDialogMocks).find(item => selector === `#${item}Dialog`);
+    return key ? legalDialogMocks[key] : null;
+  },
+  querySelectorAll(selector) { return selector === '[data-legal-dialog][open]' ? Object.values(legalDialogMocks).filter(dialog => dialog.open) : []; }
+};
+context.window = {
+  location: {hash: '#privacy', pathname: '/app', search: '?week=1'},
+  history: {state: {test: true}, replaced: null, replaceState(...args) { this.replaced = args; }},
+  requestAnimationFrame(callback) { callback(); }
+};
+assert.equal(run("openLegalDialogFromHash('#privacy')"), true);
+assert.equal(legalDialogMocks.privacy.open, true);
+assert.equal(legalDialogMocks.privacy.focused, true);
+run('clearLegalDialogHash(__legalDialogMocks.privacy)');
+assert.deepEqual(context.window.history.replaced, [{test: true}, '', '/app?week=1']);
+context.document = undefined;
+context.window = undefined;
+assert.match(html, /© 2026 메기 · 사이트 자체 제작 콘텐츠/);
+assert.ok((html.match(/Data based on NEXON Open API/g) || []).length >= 2);
+assert.match(html, /메기는 NEXON의 공식 서비스가 아닙니다/);
+assert.match(html, /GitHub Issues에서 문의<\/a>/);
+assert.match(html, /href="https:\/\/github\.com\/mdyjc79hj4-netizen\/maple-income\/issues" target="_blank" rel="noopener noreferrer"/);
+assert.match(html, /이메일 주소, 비밀번호, NEXON API Key, 인증 토큰, 복구 코드/);
+assert.match(html, /시행일: 2026년 10월 18일/);
+assert.match(html, /AES-256-GCM/);
+assert.match(html, /전체 데이터 초기화는 앱 기록을 지우지만 Supabase Auth 계정을 삭제하지 않습니다/);
+assert.match(html, /href="https:\/\/openapi\.nexon\.com\/ko\/guide\/" target="_blank" rel="noopener noreferrer"/);
+assert.match(html, /href="https:\/\/openapi\.nexon\.com\/ko\/support\/" target="_blank" rel="noopener noreferrer"/);
+assert.match(source, /const LEGAL_DIALOG_IDS = Object\.freeze\(\{contact: 'contactDialog', privacy: 'privacyDialog', terms: 'termsDialog', legal: 'legalDialog'\}\)/);
+assert.match(source, /window\.addEventListener\('hashchange', \(\) => openLegalDialogFromHash\(\)\)/);
+assert.match(source, /window\.history\.replaceState\(window\.history\.state, '', `\$\{window\.location\.pathname\}\$\{window\.location\.search\}`\)/);
+assert.match(source, /\$\$\('\[data-legal-dialog\]'\)\.forEach\(dialog => dialog\.addEventListener\('close'/);
+assert.match(css, /\.site-footer-links\{[^}]*flex-wrap:wrap/);
+assert.match(css, /\.legal-dialog\{width:min\(760px,calc\(100% - 24px\)\);max-height:85dvh;overflow:hidden\}/);
+assert.match(css, /\.legal-dialog-body\{[^}]*overflow-x:hidden;overflow-y:auto/);
+assert.match(css, /@media\(max-width:430px\)[\s\S]*\.legal-link-list a,\.legal-external-link\{width:100%\}/);
 assert.match(html, /id="onboardingShell"/);
 assert.match(html, /id="appShell"/);
 assert.match(html, /data-onboarding-stage="login"/);

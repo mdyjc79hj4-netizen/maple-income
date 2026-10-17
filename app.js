@@ -2896,6 +2896,38 @@ async function linkNexonCharacter(character, characterName) {
     renderNexonSettings(); renderAppExperience();
   }
 }
+const LEGAL_DIALOG_IDS = Object.freeze({contact: 'contactDialog', privacy: 'privacyDialog', terms: 'termsDialog', legal: 'legalDialog'});
+function legalDialogKeyFromHash(hash = '') {
+  const key = String(hash || '').replace(/^#/, '').toLowerCase();
+  return Object.prototype.hasOwnProperty.call(LEGAL_DIALOG_IDS, key) ? key : '';
+}
+function openLegalDialogFromHash(hash = window.location.hash) {
+  const key = legalDialogKeyFromHash(hash), dialogId = LEGAL_DIALOG_IDS[key];
+  if (!dialogId) return false;
+  const dialog = $('#' + dialogId);
+  if (!dialog) return false;
+  $$('[data-legal-dialog][open]').forEach(item => { if (item !== dialog) item.close(); });
+  if (!dialog.open) dialog.showModal();
+  window.requestAnimationFrame(() => dialog.querySelector('[data-close]')?.focus());
+  return true;
+}
+function clearLegalDialogHash(dialog) {
+  const key = legalDialogKeyFromHash(window.location.hash);
+  if (!key || dialog?.dataset.legalDialog !== key) return;
+  window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}`);
+}
+function setupLegalDialogs() {
+  $$('[data-legal-link]').forEach(link => link.addEventListener('click', event => {
+    const key = link.dataset.legalLink;
+    if (window.location.hash === `#${key}`) {
+      event.preventDefault();
+      openLegalDialogFromHash(`#${key}`);
+    }
+  }));
+  $$('[data-legal-dialog]').forEach(dialog => dialog.addEventListener('close', () => clearLegalDialogHash(dialog)));
+  window.addEventListener('hashchange', () => openLegalDialogFromHash());
+  openLegalDialogFromHash();
+}
 function init() {
   validatePresetIntegrity();
   setupThemeController();
@@ -3090,6 +3122,7 @@ function init() {
   $('#characterPreset').addEventListener('change', updateCharacterCreateUI);
   $('#customBosses').addEventListener('change', updateCharacterCreateUI);
   $$('[data-close]').forEach(b => b.addEventListener('click', () => $('#' + b.dataset.close).close()));
+  setupLegalDialogs();
   $('#characterForm').addEventListener('submit', e => {
     e.preventDefault(); const name = $('#characterName').value.trim(); if (!name) return;
     const settings = characterMode === 'direct' ? selectedDirectBosses() : presetConfig($('#characterPreset').value);
