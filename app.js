@@ -984,6 +984,10 @@ let onboardingCharacterCandidate = null;
 let activeMainTab = 'summary', returnTabAfterIncome = 'summary';
 const mainNavigationPages = ['summary', 'boss', 'history', 'settings'];
 const NEXON_CHECK_COOLDOWN_MS = 60_000;
+const NEXON_AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+const NEXON_AUTO_TRIGGER_DEBOUNCE_MS = 5_000;
+let nexonAutoSyncLastAttemptAt = 0;
+let nexonAutoSyncInFlight = null;
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 function message(text, error = false) { $('#status').textContent = text; $('#status').classList.toggle('error', error); }
@@ -1127,14 +1131,16 @@ function loadState() {
 }
 function isPast() { return selectedWeek && selectedWeek !== state.currentWeek; }
 function viewData() { return isPast() ? state.weeklyHistory[selectedWeek] : state; }
-function transaction(change) {
+function transaction(change, {silent = false} = {}) {
   if (storageBlocked) { message('저장소를 사용할 수 없습니다. 백업을 내려받고 새로고침해 주세요.', true); return false; }
   if (isPast()) { message('과거 주차는 읽기 전용입니다. 이번 주로 돌아와 주세요.', true); return false; }
   try {
     if (localStorage.getItem(KEY) !== savedRaw) { loadState(); render(); message('다른 탭의 변경을 불러왔습니다. 확인 후 다시 입력해 주세요.', true); return false; }
     const next = copy(state), previousWeek = state.currentWeek; rollover(next); const changedWeek = previousWeek !== next.currentWeek;
     change(next); persist(next); selectedWeek = '';
-    render(); message(changedWeek ? '지난 주를 마감하고 이번 주에 저장했습니다.' : '이 기기에 저장했습니다.'); return true;
+    render();
+    if (!silent) message(changedWeek ? '지난 주를 마감하고 이번 주에 저장했습니다.' : '이 기기에 저장했습니다.');
+    return true;
   } catch (error) { message(`저장하지 못했습니다: ${error.message}`, true); return false; }
 }
 function checkWeek() {
@@ -1945,6 +1951,47 @@ function nexonSyncPlan(character, {characterName = '', ignoreCooldown = false, n
   const schedulerCooldown = !characterName && !ignoreCooldown && !Number.isNaN(lastChecked) && now - lastChecked < NEXON_CHECK_COOLDOWN_MS;
   return {schedulerCooldown, fetchScheduler: !schedulerCooldown, fetchProfile: !schedulerCooldown || nexonProfileNeedsBackfill(character)};
 }
+function canAutoSyncNexon({signedIn = false, cloudReady = false, credentialStatus = '', hasCredential = false, linkedCount = 0, hidden = false, online = true, past = false, blocked = false, checking = false} = {}) {
+  return !!signedIn
+    && !!cloudReady
+    && !!hasCredential
+    && ['ready', 'saved'].includes(credentialStatus)
+    && linkedCount > 0
+    && !hidden
+    && online !== false
+    && !past
+    && !blocked
+    && !checking;
+}
+function nexonAutoSyncDue(characters = [], now = Date.now()) {
+  return characters.some(character => character?.nexonCharacter?.ocid && nexonSyncPlan(character, {now}).fetchScheduler);
+}
+async function maybeAutoSyncNexon({reason = 'interval', now = Date.now()} = {}) {
+  const linked = state?.characters?.filter(character => character.nexonCharacter?.ocid) || [];
+  const allowed = canAutoSyncNexon({
+    signedIn: cloudAuthUiState.signedIn && !!nexonCredentialAuthBridge?.isSignedIn?.(),
+    cloudReady: cloudAuthUiState.ready,
+    credentialStatus: nexonCredentialState.status,
+    hasCredential: nexonCredentialState.hasCredential === true,
+    linkedCount: linked.length,
+    hidden: typeof document !== 'undefined' && document.hidden,
+    online: typeof navigator === 'undefined' || navigator.onLine !== false,
+    past: isPast(),
+    blocked: storageBlocked,
+    checking: nexonApiState.status === 'checking'
+  });
+  if (!allowed || !nexonAutoSyncDue(linked, now) || nexonAutoSyncInFlight) return false;
+  if (now - nexonAutoSyncLastAttemptAt < NEXON_AUTO_TRIGGER_DEBOUNCE_MS) return false;
+  nexonAutoSyncLastAttemptAt = now;
+  const request = syncAllNexonCharacters({automatic: true, reason});
+  nexonAutoSyncInFlight = request;
+  try {
+    await request;
+    return true;
+  } finally {
+    if (nexonAutoSyncInFlight === request) nexonAutoSyncInFlight = null;
+  }
+}
 function nexonProfileFailure(character, error, nexonCharacter = '') {
   return {
     character: character?.name || '',
@@ -2261,6 +2308,7 @@ async function refreshNexonCredentialStatus() {
     nexonCredentialState = {status: 'error', hasCredential: false, editing: false, message: nexonCredentialErrorMessage(error)};
   }
   renderNexonCredentialSettings(); renderAppExperience();
+  void maybeAutoSyncNexon({reason: 'credential-ready'});
 }
 function setNexonCredentialAuthBridge(bridge) {
   nexonCredentialAuthBridge = bridge && typeof bridge.getAccessToken === 'function' ? bridge : null;
@@ -2283,6 +2331,7 @@ function onNexonCredentialAuthChanged({signedIn = false} = {}) {
 function onCloudSyncReady({signedIn = false} = {}) {
   cloudAuthUiState = {...cloudAuthUiState, initialized: true, signedIn: !!signedIn, ready: true};
   renderAppExperience();
+  void maybeAutoSyncNexon({reason: 'cloud-ready'});
 }
 function nexonConnectionStatusSummary(characters, credentialState, signedIn, apiState) {
   const linked = characters.some(character => character.nexonCharacter?.ocid);
@@ -2498,7 +2547,7 @@ function nexonUserStatusMessage(result, cooldown = false) {
   if (activities) parts.push(`주간 콘텐츠 ${activities}개`);
   return parts.length ? `${parts.join(' · ')}를 자동 확인했습니다.` : '새로 확인된 기록이 없습니다.';
 }
-async function syncNexonCharacter(characterId, {characterName = '', requestDate = '', ignoreCooldown = false} = {}) {
+async function syncNexonCharacter(characterId, {characterName = '', requestDate = '', ignoreCooldown = false, automatic = false} = {}) {
   const character = state.characters.find(item => item.id === characterId);
   if (!character) throw new Error('메기 캐릭터를 찾을 수 없습니다.');
   if (!characterName && !character.nexonCharacter?.ocid) throw new Error('먼저 NEXON 캐릭터를 연동해주세요.');
@@ -2510,7 +2559,7 @@ async function syncNexonCharacter(characterId, {characterName = '', requestDate 
     const saved = transaction(next => {
       try { profileChanged = applyNexonLinkProfileState(next, characterId, profileResponse, profileResponse.fetchedAt); }
       catch (error) { profileApplyError = error; throw error; }
-    });
+    }, {silent: automatic});
     if (!saved) throw profileApplyError || new Error('NEXON 캐릭터 연동 정보를 이 기기에 저장하지 못했습니다.');
     const linkedCharacter = state.characters.find(item => item.id === characterId);
     const nexonCharacter = linkedCharacter?.nexonCharacter?.characterName || profileResponse.character.name;
@@ -2523,7 +2572,7 @@ async function syncNexonCharacter(characterId, {characterName = '', requestDate 
       const schedulerSaved = transaction(next => {
         try { applied = applyNexonSchedulerState(next, characterId, response, response.fetchedAt); }
         catch (error) { applyError = error; throw error; }
-      });
+      }, {silent: automatic});
       if (!schedulerSaved) throw applyError || new Error('NEXON 주간 기록을 이 기기에 저장하지 못했습니다.');
       return {...applied, character: character.name, nexonCharacter, profileChanged, profileUpdated: Number(profileChanged), profileFailures: partialProfileFailures, profileError: partialProfileFailures[0]?.message || ''};
     } catch (error) {
@@ -2553,7 +2602,7 @@ async function syncNexonCharacter(characterId, {characterName = '', requestDate 
       try { profileChanged = applyNexonProfileState(next, characterId, profileResponse, profileResponse.fetchedAt); }
       catch (error) { profileFailure = nexonProfileFailure(character, error, nexonCharacter); }
     }
-  });
+  }, {silent: automatic});
   if (!saved) throw applyError || new Error('NEXON 확인 결과를 이 기기에 저장하지 못했습니다.');
   const diagnosticSamples = Array.isArray(response?.diagnostics?.samples) ? response.diagnostics.samples.map(sample => ({...sample, character: character.name, nexonCharacter})) : [];
   const diagnosticActivitySamples = Array.isArray(response?.diagnostics?.activitySamples) ? response.diagnostics.activitySamples.map(sample => ({...sample, character: character.name, nexonCharacter})) : [];
@@ -2565,19 +2614,29 @@ async function syncNexonCharacter(characterId, {characterName = '', requestDate 
   console.info('NEXON scheduler sync diagnostics', result);
   return result;
 }
-async function syncAllNexonCharacters() {
-  if (nexonApiState.status === 'checking') return;
-  if (isPast()) { nexonApiState = {status: 'error', message: '과거 주차는 읽기 전용입니다. 이번 주로 돌아와주세요.'}; renderNexonSettings(); return; }
+async function syncAllNexonCharacters({automatic = false} = {}) {
+  if (nexonApiState.status === 'checking') return false;
+  if (isPast()) {
+    if (!automatic) { nexonApiState = {status: 'error', message: '과거 주차는 읽기 전용입니다. 이번 주로 돌아와주세요.'}; renderNexonSettings(); }
+    return false;
+  }
   const linked = state.characters.filter(character => character.nexonCharacter?.ocid);
-  if (!linked.length) { nexonApiState = {status: 'error', message: '연동된 NEXON 캐릭터가 없습니다.'}; renderNexonSettings(); return; }
-  nexonApiState = {status: 'checking', message: '보스·주간 콘텐츠 확인 중…', diagnostics: null}; renderNexonSettings();
+  if (!linked.length) {
+    if (!automatic) { nexonApiState = {status: 'error', message: '연동된 NEXON 캐릭터가 없습니다.'}; renderNexonSettings(); }
+    return false;
+  }
+  const previousApiState = nexonApiState;
+  nexonApiState = automatic
+    ? {...previousApiState, status: 'checking', automatic: true}
+    : {status: 'checking', message: '보스·주간 콘텐츠 확인 중…', diagnostics: null};
+  if (!automatic) renderNexonSettings();
   let checked = 0, cooldown = 0, checkingCharacterId = '';
   const profileFailureIds = [];
   const total = {fetched: 0, apiCompleted: 0, matched: 0, matchedCompleted: 0, autoCompleted: 0, monthlyAutoCompleted: 0, activitiesFetched: 0, apiActivitiesCompleted: 0, activityMatched: 0, activityMatchedCompleted: 0, activityAutoCompleted: 0, profileUpdated: 0, unknown: [], difficultyMismatch: [], unselectedDifficulty: [], ambiguous: [], notConfigured: [], localNotFound: [], ignoredCycle: [], completedItems: [], blockedByManualOverride: [], diagnosticSamples: [], unsupportedActivity: [], activityCompletedItems: [], activityBlockedByManualOverride: [], diagnosticActivitySamples: [], profileFailures: []};
   try {
     for (const character of linked) {
       checkingCharacterId = character.id;
-      const result = await syncNexonCharacter(character.id);
+      const result = await syncNexonCharacter(character.id, {automatic});
       total.profileUpdated += result.profileUpdated || 0;
       if (result.profileFailures?.length) {
         total.profileFailures.push(...result.profileFailures);
@@ -2600,6 +2659,7 @@ async function syncAllNexonCharacters() {
     };
   }
   renderNexonSettings();
+  return true;
 }
 function renderIncomeForm(resetItems = false) {
   const category = $('#incomeCategory').value;
@@ -2923,7 +2983,7 @@ function init() {
   }));
   $('#addCharacter').addEventListener('click', openCharacterDialog);
   $('#addCharacterFromBoss').addEventListener('click', openCharacterDialog);
-  $('#checkNexonBosses').addEventListener('click', syncAllNexonCharacters);
+  $('#checkNexonBosses').addEventListener('click', () => syncAllNexonCharacters());
   $('#nexonCredentialForm').addEventListener('submit', async event => {
     event.preventDefault();
     const input = $('#nexonCredentialInput');
@@ -2941,6 +3001,7 @@ function init() {
       nexonCredentialState = {...previous, status: 'error', editing: true, message: nexonCredentialErrorMessage(error)};
     }
     renderNexonCredentialSettings(); renderAppExperience();
+    void maybeAutoSyncNexon({reason: 'credential-saved'});
   });
   $('#changeNexonCredential').addEventListener('click', () => {
     nexonCredentialState = {...nexonCredentialState, editing: true, message: '새 API Key가 검증된 경우에만 기존 Key를 교체합니다.'};
@@ -3174,12 +3235,18 @@ function init() {
   });
   $('#resetWeek').addEventListener('click', () => { if (!isPast() && confirm('이번 주 보스 완료 체크와 수익 기록만 초기화할까요? 캐릭터 구성, 프리셋, 과거 주차는 유지됩니다.')) transaction(resetCurrentWeek); });
   $('#resetAll').addEventListener('click', () => { if (!isPast() && confirm('현재 데이터와 과거 주차를 모두 초기화할까요? 먼저 백업을 권장합니다. 이전 버전 원본 백업은 유지됩니다.')) { try { persist(resetAllData(state)); selectedWeek = ''; selectedBossCharacterId = ''; renderIncomeForm(true); render(); message('전체 데이터를 초기화했습니다.'); } catch (error) { message(error.message, true); } } });
-  window.addEventListener('focus', checkWeek);
+  const handleForeground = () => {
+    checkWeek();
+    void maybeAutoSyncNexon({reason: 'foreground'});
+  };
+  window.addEventListener('focus', handleForeground);
   window.addEventListener('storage', e => {
     if (e.key === KEY) { loadState(); render(); renderIncomeForm(); message('다른 탭에서 저장한 변경을 반영했습니다.'); }
     if (e.key === THEME_STORAGE_KEY) { themePreference = normalizeThemePreference(e.newValue); applyTheme(themePreference); renderThemeSettings(); }
   });
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkWeek(); }); setInterval(checkWeek, 15000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) handleForeground(); });
+  window.setInterval(checkWeek, 15000);
+  window.setInterval(() => { void maybeAutoSyncNexon({reason: 'interval'}); }, NEXON_AUTO_SYNC_INTERVAL_MS);
 }
 if (typeof window !== 'undefined') window.mapleIncomeApp = {
   storageKey: KEY,

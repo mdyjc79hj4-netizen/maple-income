@@ -8,6 +8,7 @@ const env = import.meta.env || {};
 const url = env.VITE_SUPABASE_URL;
 const publishableKey = env.VITE_SUPABASE_PUBLISHABLE_KEY || env.VITE_SUPABASE_ANON_KEY;
 const MAX_CONFLICT_LOG = 50;
+const CLOUD_PULL_INTERVAL_MS = 60_000;
 
 const copy = value => value == null ? value : structuredClone(value);
 const asObject = value => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -21,6 +22,10 @@ const timestamp = value => {
 };
 const isoMax = (...values) => new Date(Math.max(0, ...values.map(timestamp))).toISOString();
 const same = (left, right) => JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+
+function shouldRunCloudPull({signedIn = false, hidden = false, online = true} = {}) {
+  return !!signedIn && !hidden && online !== false;
+}
 
 const migrationGroups = ['incomes', 'characters', 'bosses', 'accountActivities', 'activities', 'presets', 'weeklyHistory'];
 function normalizeMigrationGuard(value) {
@@ -908,6 +913,15 @@ export function startCloudSync(app) {
     });
     return syncQueue;
   };
+  const enqueueVisibleReconcile = () => {
+    if (!shouldRunCloudPull({
+      signedIn: !!user,
+      hidden: typeof document !== 'undefined' && document.hidden,
+      online: typeof navigator === 'undefined' || navigator.onLine !== false
+    })) return false;
+    enqueue(() => reconcile());
+    return true;
+  };
   const schedulePush = () => {
     if (!user) return;
     clearTimeout(pushTimer);
@@ -1037,10 +1051,11 @@ export function startCloudSync(app) {
   elements.syncNow?.addEventListener('click', () => enqueue(() => reconcile()));
   window.addEventListener(app.changeEvent, schedulePush);
   window.addEventListener('storage', event => { if (event.key === app.storageKey) schedulePush(); });
-  window.addEventListener('online', () => user && enqueue(() => reconcile()));
+  window.addEventListener('online', enqueueVisibleReconcile);
   window.addEventListener('offline', () => user && setStatus('offline'));
-  window.addEventListener('focus', () => user && enqueue(() => reconcile()));
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && user) enqueue(() => reconcile()); });
+  window.addEventListener('focus', enqueueVisibleReconcile);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) enqueueVisibleReconcile(); });
+  window.setInterval(enqueueVisibleReconcile, CLOUD_PULL_INTERVAL_MS);
   supabase.auth.onAuthStateChange((_event, session) => window.setTimeout(() => activate(session), 0));
   supabase.auth.getSession().then(({data, error}) => {
     if (error) setMessage(syncErrorMessage(syncError('session-recovery', error)), true);
@@ -1049,7 +1064,8 @@ export function startCloudSync(app) {
 }
 
 export const cloudSyncInternals = {
+  CLOUD_PULL_INTERVAL_MS,
   authErrorMessage, chooseSyncAction, contentHash, createCloudAuthBridge, meaningfulLocalData, mergeStates,
-  notifyCloudAuthChanged,
+  notifyCloudAuthChanged, shouldRunCloudPull,
   normalizeMeta, prepareStateForMerge, signupResult, syncError, syncErrorMessage, timestamp
 };

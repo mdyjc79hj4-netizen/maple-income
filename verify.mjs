@@ -919,6 +919,14 @@ assert.equal(cloudSyncInternals.meaningfulLocalData({characters: [{name: '본캐
 assert.equal(cloudSyncInternals.meaningfulLocalData({version: 7, migrationNote: 'schema', characters: [{name: '본캐', bosses: []}], incomes: [], weeklyHistory: {}, presets: [], settings: {defaultSaleFeeRate: 0.05}}), false);
 assert.equal(cloudSyncInternals.meaningfulLocalData({characters: [{name: '본캐', bosses: []}], incomes: [{id: 'i1'}], weeklyHistory: {}, presets: [], settings: {}}), true);
 assert.equal(cloudSyncInternals.meaningfulLocalData({characters: [{name: '본캐', bosses: []}], incomes: [], weeklyHistory: {}, presets: [], settings: {}, sync: {weeklyHistoryResetAt: '2026-10-03T00:00:00.000Z'}}), true);
+assert.equal(cloudSyncInternals.CLOUD_PULL_INTERVAL_MS, 60_000);
+assert.equal(cloudSyncInternals.shouldRunCloudPull({signedIn: false, hidden: false, online: true}), false);
+assert.equal(cloudSyncInternals.shouldRunCloudPull({signedIn: true, hidden: true, online: true}), false);
+assert.equal(cloudSyncInternals.shouldRunCloudPull({signedIn: true, hidden: false, online: false}), false);
+assert.equal(cloudSyncInternals.shouldRunCloudPull({signedIn: true, hidden: false, online: true}), true);
+assert.equal((cloudSource.match(/window\.setInterval\(enqueueVisibleReconcile, CLOUD_PULL_INTERVAL_MS\)/g) || []).length, 1);
+assert.match(cloudSource, /const enqueueVisibleReconcile = \(\) => \{[\s\S]*enqueue\(\(\) => reconcile\(\)\)/);
+assert.match(cloudSource, /if \(hash !== await contentHash\(app\.getState\(\)\)\) app\.applyCloudState\(row\.payload\)/);
 assert.equal(run("stateHasMeaningfulUserData(emptyState(new Date('2026-09-24T12:00:00')))"), false);
 assert.equal(run("stateHasMeaningfulUserData({...emptyState(new Date('2026-09-24T12:00:00')),settings:{defaultSaleFeeRate:0.03}})"), true);
 assert.equal(run("stateHasMeaningfulUserData({...emptyState(new Date('2026-09-24T12:00:00')),incomes:[{id:'user-income'}]})"), true);
@@ -1534,6 +1542,40 @@ assert.equal(run("!!__invalidLinkState.characters[0].nexonCharacter"), false);
 const nexonSyncSource = source.slice(source.indexOf('async function syncNexonCharacter'), source.indexOf('async function syncAllNexonCharacters'));
 assert.ok(nexonSyncSource.indexOf("fetchNexonProfile('', characterName)") < nexonSyncSource.indexOf("fetchNexonScheduler(linkedCharacter, '', requestDate)"));
 assert.match(nexonSyncSource, /schedulerWarning: warning/);
+assert.equal(run('NEXON_AUTO_SYNC_INTERVAL_MS'), 5 * 60 * 1000);
+assert.equal(run('NEXON_AUTO_TRIGGER_DEBOUNCE_MS'), 5_000);
+const autoSyncReady = {signedIn: true, cloudReady: true, credentialStatus: 'ready', hasCredential: true, linkedCount: 1, hidden: false, online: true, past: false, blocked: false, checking: false};
+context.__autoSyncReady = autoSyncReady;
+assert.equal(run('canAutoSyncNexon(__autoSyncReady)'), true);
+for (const override of [
+  {signedIn: false}, {cloudReady: false}, {credentialStatus: 'loading'}, {hasCredential: false}, {linkedCount: 0},
+  {hidden: true}, {online: false}, {past: true}, {blocked: true}, {checking: true}
+]) {
+  context.__autoSyncOverride = override;
+  assert.equal(run('canAutoSyncNexon({...__autoSyncReady,...__autoSyncOverride})'), false);
+}
+context.__autoDueCharacters = [{nexonCharacter: {ocid: 'linked', lastCheckedAt: '2026-10-17T00:00:00.000Z'}}];
+assert.equal(run("nexonAutoSyncDue(__autoDueCharacters, Date.parse('2026-10-17T00:00:59.000Z'))"), false);
+assert.equal(run("nexonAutoSyncDue(__autoDueCharacters, Date.parse('2026-10-17T00:01:01.000Z'))"), true);
+assert.match(source, /syncAllNexonCharacters\(\{automatic: true, reason\}\)/);
+assert.match(source, /syncNexonCharacter\(character\.id, \{automatic\}\)/);
+assert.match(source, /transaction\(next => \{[\s\S]*\}, \{silent: automatic\}\)/);
+assert.match(source, /window\.setInterval\(\(\) => \{ void maybeAutoSyncNexon\(\{reason: 'interval'\}\); \}, NEXON_AUTO_SYNC_INTERVAL_MS\)/);
+assert.match(source, /const handleForeground = \(\) => \{[\s\S]*maybeAutoSyncNexon\(\{reason: 'foreground'\}\)/);
+assert.doesNotMatch(source.slice(source.indexOf('async function maybeAutoSyncNexon'), source.indexOf('function nexonProfileFailure')), /fetch\(|applyNexonSchedulerState|applyCloudState|schedulePush|persist\(|localStorage/);
+run("globalThis.__savedSyncAllNexonCharacters=syncAllNexonCharacters;globalThis.__autoCalls=[];syncAllNexonCharacters=async options=>{__autoCalls.push(options);return true}");
+run("state={currentWeek:'2026-10-15~2026-10-21',characters:[{id:'c1',nexonCharacter:{ocid:'linked',lastCheckedAt:'2026-10-17T00:00:00.000Z'}}]};selectedWeek='';storageBlocked=false;cloudAuthUiState={initialized:true,signedIn:true,ready:true};nexonCredentialAuthBridge={isSignedIn:()=>true};nexonCredentialState={status:'ready',hasCredential:true};nexonApiState={status:'idle'};nexonAutoSyncLastAttemptAt=0;nexonAutoSyncInFlight=null");
+assert.equal(await run("maybeAutoSyncNexon({reason:'foreground',now:Date.parse('2026-10-17T00:02:00.000Z')})"), true);
+assert.equal(await run("maybeAutoSyncNexon({reason:'foreground',now:Date.parse('2026-10-17T00:02:02.000Z')})"), false);
+assert.equal(run('__autoCalls.length'), 1);
+assert.equal(run('__autoCalls[0].automatic'), true);
+run("syncAllNexonCharacters=options=>{__autoCalls.push(options);return new Promise(resolve=>{globalThis.__autoResolve=resolve})};nexonAutoSyncLastAttemptAt=0");
+const pendingAutoSync = run("maybeAutoSyncNexon({reason:'interval',now:Date.parse('2026-10-17T00:03:00.000Z')})");
+assert.equal(await run("maybeAutoSyncNexon({reason:'foreground',now:Date.parse('2026-10-17T00:03:06.000Z')})"), false);
+run('__autoResolve(true)');
+assert.equal(await pendingAutoSync, true);
+assert.equal(run('__autoCalls.length'), 2);
+run('syncAllNexonCharacters=__savedSyncAllNexonCharacters;delete globalThis.__savedSyncAllNexonCharacters;delete globalThis.__autoResolve');
 assert.match(source, /nexonApiState = nexonLinkUiState\(result, character\.id\)/);
 assert.match(source, /schedulerRestricted \|\| schedulerWarning \? '주간 자동 확인 준비 중'/);
 assert.match(source, /const badge = linked \? '<span class="nexon-link-badge linked">연동됨<\/span>'/);
