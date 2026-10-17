@@ -42,7 +42,7 @@ Credential API는 Supabase access token을 `Authorization: Bearer ...`로 검증
 
 ## 문의 게시판과 관리자 센터
 
-- 업데이트된 `schema.sql`을 Supabase SQL Editor에서 실행해 `support_tickets`, `support_replies`, `site_daily_stats`, `site_daily_visitor_keys`와 `record_site_visit` RPC를 생성합니다.
+- 업데이트된 `schema.sql`을 Supabase SQL Editor에서 실행해 `support_tickets`, `support_replies`, `site_daily_stats`, `site_daily_visitor_keys`와 `add_support_reply`, `record_site_visit` RPC를 생성합니다.
 - 문의와 방문 통계 테이블은 RLS를 활성화하고 `anon`/`authenticated`의 직접 접근을 차단합니다. 브라우저는 Vercel API만 호출하며 서버의 Supabase secret client가 권한을 검사합니다.
 - `ADMIN_USER_ID`에는 관리자 Supabase Auth 사용자의 UUID를 등록합니다. 관리자 여부는 모든 관리자 API 요청마다 서버에서 다시 확인하며 이메일이나 프런트엔드 값으로 판단하지 않습니다.
 - `VISITOR_HASH_SECRET`에는 최소 32바이트의 예측하기 어려운 문자열을 등록합니다. 서버는 KST 일자와 브라우저 무작위 방문 ID를 HMAC-SHA256 처리하며 원본 방문 ID, IP 주소, 사용자 에이전트나 기기 지문을 앱 통계 DB에 저장하지 않습니다.

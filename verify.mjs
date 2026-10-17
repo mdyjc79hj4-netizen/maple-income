@@ -10,6 +10,7 @@ import {nexonCharacterDetailInternals} from './api/nexon-character-detail.js';
 import {nexonCredentialStoreInternals} from './api/_nexon-credential-store.js';
 import {nexonCredentialInternals} from './api/nexon-credential.js';
 import {adminAuthInternals} from './api/_admin-auth.js';
+import {createSupportStore} from './api/_support-store.js';
 import {supportInternals} from './api/_support.js';
 import {supportTicketsInternals} from './api/support-tickets.js';
 import {supportRepliesInternals} from './api/support-replies.js';
@@ -39,6 +40,8 @@ const nexonAccountOwnershipApiSource = readFileSync(new URL('./api/nexon-account
 const nexonCharacterDetailApiSource = readFileSync(new URL('./api/nexon-character-detail.js', import.meta.url), 'utf8');
 const nexonCredentialApiSource = readFileSync(new URL('./api/nexon-credential.js', import.meta.url), 'utf8');
 const nexonCredentialStoreSource = readFileSync(new URL('./api/_nexon-credential-store.js', import.meta.url), 'utf8');
+const supportRepliesSource = readFileSync(new URL('./api/support-replies.js', import.meta.url), 'utf8');
+const supportStoreSource = readFileSync(new URL('./api/_support-store.js', import.meta.url), 'utf8');
 const envExample = readFileSync(new URL('./.env.example', import.meta.url), 'utf8');
 const context = vm.createContext({console, crypto: webcrypto, document: undefined, structuredClone, setTimeout, clearTimeout, URL, URLSearchParams});
 vm.runInContext(source, context);
@@ -3628,7 +3631,11 @@ const supportStore = {
   countRecentTickets: async () => 0,
   countRecentReplies: async () => 0,
   insertTicket: async row => { supportWrites.tickets.push(row); return {...privateTicket, ...row, id: '66666666-6666-4666-8666-666666666666', created_at: '2026-10-17T01:00:00Z', updated_at: '2026-10-17T01:00:00Z'}; },
-  insertReply: async row => { supportWrites.replies.push(row); return {...row, id: '77777777-7777-4777-8777-777777777777', created_at: '2026-10-17T02:00:00Z'}; },
+  addReply: async input => {
+    const reply = {ticket_id: input.ticketId, author_user_id: input.authorUserId, author_role: input.authorRole, content: input.content, id: '77777777-7777-4777-8777-777777777777', created_at: '2026-10-17T02:00:00Z'};
+    supportWrites.replies.push(reply); supportWrites.statuses.push([input.ticketId, input.status]);
+    return {ticketId: input.ticketId, status: input.status, reply};
+  },
   updateTicketStatus: async (id, status) => { supportWrites.statuses.push([id, status]); return {...supportRecords.get(id), status}; },
   deleteTicket: async id => { supportWrites.deletes.push(id); return true; },
   listAdmin: async () => [...supportRecords.values()]
@@ -3640,6 +3647,17 @@ const supportAuthenticate = async req => {
   if (token === 'admin') return {id: ADMIN_USER_ID};
   throw Object.assign(new Error('auth'), {status: 401, code: 'AUTH_REQUIRED'});
 };
+let atomicReplyRpcCall = null;
+const atomicReplyStore = createSupportStore({rpc: async (name, args) => {
+  atomicReplyRpcCall = {name, args};
+  return {data: {ticket_id: privateTicket.id, status: 'pending', reply: {id: '77777777-7777-4777-8777-777777777777', content: '원자 답변', author_role: 'user', created_at: '2026-10-17T02:00:00Z'}}, error: null};
+}});
+const atomicReplyResult = await atomicReplyStore.addReply({ticketId: privateTicket.id, authorUserId: SUPPORT_USER_ID, authorRole: 'user', content: '원자 답변', status: 'pending'});
+assert.equal(atomicReplyRpcCall.name, 'add_support_reply');
+assert.deepEqual(atomicReplyRpcCall.args, {p_ticket_id: privateTicket.id, p_author_user_id: SUPPORT_USER_ID, p_author_role: 'user', p_content: '원자 답변', p_status: 'pending'});
+assert.equal(atomicReplyResult.status, 'pending');
+const failedReplyStore = createSupportStore({rpc: async () => ({data: null, error: {message: 'database failure'}})});
+await assert.rejects(() => failedReplyStore.addReply({ticketId: privateTicket.id, authorUserId: SUPPORT_USER_ID, authorRole: 'user', content: '실패', status: 'pending'}), error => error.code === 'SUPPORT_DATABASE_FAILED');
 const supportTicketHandler = supportTicketsInternals.createSupportTicketsHandler({env: supportEnv, adminClient: {}, store: supportStore, authenticateRequest: supportAuthenticate});
 let response = endpointResponse();
 await supportTicketHandler({method: 'GET', headers: {}, query: {scope: 'public'}}, response);
@@ -3679,6 +3697,16 @@ await supportReplyHandler({method: 'POST', headers: {authorization: 'Bearer admi
 assert.equal(response.statusCode, 201);
 assert.equal(supportWrites.replies.at(-1).author_role, 'admin');
 assert.deepEqual(supportWrites.statuses.at(-1), [privateTicket.id, 'answered']);
+const writesBeforeFailedReply = {replies: supportWrites.replies.length, statuses: supportWrites.statuses.length};
+const failedAtomicReplyHandler = supportRepliesInternals.createSupportRepliesHandler({env: supportEnv, adminClient: {}, store: {...supportStore, addReply: async () => { throw Object.assign(new Error('rpc failed'), {status: 500, code: 'SUPPORT_DATABASE_FAILED'}); }}, authenticateRequest: supportAuthenticate});
+response = endpointResponse();
+await failedAtomicReplyHandler({method: 'POST', headers: {authorization: 'Bearer owner'}, body: {ticketId: privateTicket.id, content: '원자 처리 실패'}}, response);
+assert.equal(response.statusCode, 500);
+assert.deepEqual({replies: supportWrites.replies.length, statuses: supportWrites.statuses.length}, writesBeforeFailedReply, 'failed atomic RPC must not leave a partial reply or status write');
+const closedReplyHandler = supportRepliesInternals.createSupportRepliesHandler({env: supportEnv, adminClient: {}, store: {...supportStore, getTicket: async () => ({...privateTicket, status: 'closed'})}, authenticateRequest: supportAuthenticate});
+response = endpointResponse();
+await closedReplyHandler({method: 'POST', headers: {authorization: 'Bearer owner'}, body: {ticketId: privateTicket.id, content: '종료 후 답변'}}, response);
+assert.equal(response.statusCode, 409);
 const replyRateLimitedHandler = supportRepliesInternals.createSupportRepliesHandler({env: supportEnv, adminClient: {}, store: {...supportStore, countRecentReplies: async () => 20}, authenticateRequest: supportAuthenticate});
 response = endpointResponse();
 await replyRateLimitedHandler({method: 'POST', headers: {authorization: 'Bearer owner'}, body: {ticketId: privateTicket.id, content: '반복 답변'}}, response);
@@ -3694,6 +3722,11 @@ assert.deepEqual(response.body, {ok: true, isAdmin: false});
 response = endpointResponse();
 await adminSessionHandler({method: 'GET', headers: {authorization: 'Bearer admin'}}, response);
 assert.deepEqual(response.body, {ok: true, isAdmin: true});
+const unconfiguredAdminSessionHandler = adminSessionInternals.createAdminSessionHandler({env: {}, adminClient: {}, authenticateRequest: supportAuthenticate});
+response = endpointResponse();
+await unconfiguredAdminSessionHandler({method: 'GET', headers: {authorization: 'Bearer admin'}}, response);
+assert.equal(response.statusCode, 503);
+assert.equal(response.body.code, 'ADMIN_NOT_CONFIGURED');
 const adminSupportHandler = adminSupportInternals.createAdminSupportHandler({env: supportEnv, adminClient: {}, store: supportStore, authenticateRequest: supportAuthenticate});
 response = endpointResponse();
 await adminSupportHandler({method: 'GET', headers: {authorization: 'Bearer owner'}, query: {}}, response);
@@ -3723,19 +3756,32 @@ const secondVisitorHash = analyticsInternals.visitorHash('2026-10-18', '99999999
 assert.equal(new Set([...sameVisitorPageViews, secondVisitorHash]).size, 2, 'two visitor IDs produce two daily unique hashes');
 assert.throws(() => analyticsInternals.analyticsSecret({}), error => error.code === 'ANALYTICS_NOT_CONFIGURED');
 const recordedVisits = [];
+const productionAnalyticsHeaders = {origin: 'https://maple-income-vercel.vercel.app', 'x-forwarded-host': 'maple-income-vercel.vercel.app'};
 const analyticsHandler = analyticsVisitInternals.createAnalyticsVisitHandler({
   env: {...supportEnv, VISITOR_HASH_SECRET: analyticsSecret}, adminClient: {}, authenticateRequest: supportAuthenticate,
   kstDate: () => '2026-10-18', recordVisit: async (_client, date, hash) => recordedVisits.push({date, hash})
 });
 response = endpointResponse();
-await analyticsHandler({method: 'POST', headers: {}, body: {visitorId}}, response);
+await analyticsHandler({method: 'POST', headers: productionAnalyticsHeaders, body: {visitorId}}, response);
 assert.equal(response.statusCode, 204);
 assert.deepEqual(recordedVisits, [{date: '2026-10-18', hash: firstHash}]);
 assert.equal(JSON.stringify(recordedVisits).includes(visitorId), false, 'raw visitor ID must not reach analytics storage');
 response = endpointResponse();
-await analyticsHandler({method: 'POST', headers: {authorization: 'Bearer admin'}, body: {visitorId}}, response);
+await analyticsHandler({method: 'POST', headers: {...productionAnalyticsHeaders, authorization: 'Bearer admin'}, body: {visitorId}}, response);
 assert.equal(response.statusCode, 204);
 assert.equal(recordedVisits.length, 1, 'authenticated admin visits must be excluded');
+response = endpointResponse();
+await analyticsHandler({method: 'POST', headers: {origin: 'https://evil.example', host: 'maple-income-vercel.vercel.app'}, body: {visitorId}}, response);
+assert.equal(response.statusCode, 403);
+assert.equal(response.body.code, 'ANALYTICS_ORIGIN_FORBIDDEN');
+response = endpointResponse();
+await analyticsHandler({method: 'POST', headers: {host: 'maple-income-vercel.vercel.app'}, body: {visitorId}}, response);
+assert.equal(response.statusCode, 403);
+assert.equal(response.body.code, 'ANALYTICS_ORIGIN_FORBIDDEN');
+response = endpointResponse();
+await analyticsHandler({method: 'POST', headers: {origin: 'http://localhost:4173', host: 'localhost:4173'}, body: {visitorId}}, response);
+assert.equal(response.statusCode, 204, 'localhost HTTP same-origin requests must be allowed for development');
+assert.equal(recordedVisits.length, 2);
 const summarizedStats = adminStatsInternals.summarizeStats([
   {visit_date: '2026-10-16', unique_visitors: 7, page_views: 12},
   {visit_date: '2026-10-17', unique_visitors: 10, page_views: 18}
@@ -3768,6 +3814,15 @@ assert.match(schema, /primary key \(visit_date, visitor_hash\)/);
 assert.match(schema, /where visit_date < p_visit_date - 1/);
 assert.match(schema, /on conflict do nothing;[\s\S]*get diagnostics is_new_visitor = row_count;[\s\S]*page_views = public\.site_daily_stats\.page_views \+ 1/);
 assert.match(schema, /grant execute on function public\.record_site_visit\(date, text\) to service_role/);
+assert.match(schema, /create or replace function public\.add_support_reply\(/);
+assert.match(schema, /public\.add_support_reply[\s\S]*security definer[\s\S]*set search_path = ''/);
+assert.match(schema, /insert into public\.support_replies[\s\S]*update public\.support_tickets[\s\S]*set status = p_status/);
+assert.match(schema, /revoke all on function public\.add_support_reply\(uuid, uuid, text, text, text\) from authenticated/);
+assert.match(schema, /grant execute on function public\.add_support_reply\(uuid, uuid, text, text, text\) to service_role/);
+assert.match(supportStoreSource, /adminClient\.rpc\('add_support_reply'/);
+assert.doesNotMatch(supportRepliesSource, /insertReply\(|updateTicketStatus\(/, 'reply creation must use only the atomic RPC');
+assert.match(html, /문의 상태를 변경하거나 부적절한 내용을 삭제할 수 있습니다/);
+assert.doesNotMatch(html, /부적절한 내용을 숨김·삭제/);
 assert.match(envExample, /ADMIN_USER_ID=/);
 assert.match(envExample, /VISITOR_HASH_SECRET=/);
 assert.equal(run('STATE_VERSION'), 9);

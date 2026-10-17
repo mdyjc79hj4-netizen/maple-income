@@ -51,8 +51,17 @@ function createSupportStore(adminClient) {
     async insertTicket(row) {
       return resultData(await adminClient.from(TICKETS).insert(row).select('*').single(), '문의를 등록하지 못했습니다.');
     },
-    async insertReply(row) {
-      return resultData(await adminClient.from(REPLIES).insert(row).select('*').single(), '답변을 등록하지 못했습니다.');
+    async addReply({ticketId, authorUserId, authorRole, content, status}) {
+      const result = await adminClient.rpc('add_support_reply', {
+        p_ticket_id: ticketId,
+        p_author_user_id: authorUserId,
+        p_author_role: authorRole,
+        p_content: content,
+        p_status: status
+      });
+      const data = resultData(result, '답변을 등록하지 못했습니다.');
+      if (!data?.reply || !data?.ticket_id || !data?.status) throw databaseError('답변 처리 결과를 확인하지 못했습니다.');
+      return {ticketId: data.ticket_id, status: data.status, reply: data.reply};
     },
     async updateTicketStatus(id, status) {
       return resultData(await adminClient.from(TICKETS).update({status, updated_at: new Date().toISOString()}).eq('id', id).select('*').single(), '문의 상태를 변경하지 못했습니다.');

@@ -123,6 +123,65 @@ revoke all on public.support_replies from authenticated;
 grant all on public.support_tickets to service_role;
 grant all on public.support_replies to service_role;
 
+create or replace function public.add_support_reply(
+  p_ticket_id uuid,
+  p_author_user_id uuid,
+  p_author_role text,
+  p_content text,
+  p_status text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  new_reply public.support_replies%rowtype;
+begin
+  if p_author_role is null or p_author_role not in ('user', 'admin') then
+    raise exception 'invalid support reply author role';
+  end if;
+  if p_status is null or p_status not in ('pending', 'answered') then
+    raise exception 'invalid support ticket status';
+  end if;
+  if p_content is null or char_length(btrim(p_content)) not between 1 and 5000 then
+    raise exception 'invalid support reply content';
+  end if;
+  if not exists (select 1 from public.support_tickets where id = p_ticket_id) then
+    raise exception 'support ticket not found';
+  end if;
+
+  insert into public.support_replies (ticket_id, author_user_id, author_role, content)
+  values (p_ticket_id, p_author_user_id, p_author_role, p_content)
+  returning * into new_reply;
+
+  update public.support_tickets
+  set status = p_status,
+      updated_at = now()
+  where id = p_ticket_id;
+
+  if not found then
+    raise exception 'support ticket not found';
+  end if;
+
+  return jsonb_build_object(
+    'ticket_id', p_ticket_id,
+    'status', p_status,
+    'reply', jsonb_build_object(
+      'id', new_reply.id,
+      'content', new_reply.content,
+      'author_role', new_reply.author_role,
+      'created_at', new_reply.created_at
+    )
+  );
+end;
+$$;
+
+revoke all on function public.add_support_reply(uuid, uuid, text, text, text) from public;
+revoke all on function public.add_support_reply(uuid, uuid, text, text, text) from anon;
+revoke all on function public.add_support_reply(uuid, uuid, text, text, text) from authenticated;
+grant execute on function public.add_support_reply(uuid, uuid, text, text, text) to service_role;
+
 -- Privacy-preserving daily visit totals. Raw visitor IDs, IP addresses and user agents are not stored here.
 create table if not exists public.site_daily_stats (
   visit_date date primary key,

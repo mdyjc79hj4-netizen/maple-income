@@ -21,9 +21,10 @@ function createSupportRepliesHandler(dependencies = {}) {
         const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
         if (await store.countRecentReplies(user.id, since) >= 20) throw publicError(429, 'RATE_LIMITED', '답변은 한 시간에 20개까지 등록할 수 있습니다.');
       }
-      const reply = await store.insertReply({ticket_id: ticket.id, author_user_id: user.id, author_role: admin ? 'admin' : 'user', content: input.content});
-      const updated = await store.updateTicketStatus(ticket.id, admin ? 'answered' : 'pending');
-      return sendJson(res, 201, {ok: true, ticketId: updated.id, status: updated.status, reply: {id: reply.id, authorRole: admin ? 'admin' : 'user', content: reply.content, createdAt: reply.created_at}});
+      const authorRole = admin ? 'admin' : 'user';
+      const nextStatus = admin ? 'answered' : 'pending';
+      const result = await store.addReply({ticketId: ticket.id, authorUserId: user.id, authorRole, content: input.content, status: nextStatus});
+      return sendJson(res, 201, {ok: true, ticketId: result.ticketId, status: result.status, reply: {id: result.reply.id, authorRole, content: result.reply.content, createdAt: result.reply.created_at}});
     } catch (error) {
       return sendSupportError(res, error);
     }
