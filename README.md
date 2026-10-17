@@ -3,7 +3,7 @@
 ## 배포
 1. `schema.sql`을 Supabase SQL Editor에서 실행
 2. Supabase Auth에서 Email 로그인을 활성화하고 Site URL을 배포 주소로 설정
-3. Vercel 환경변수에 `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `NEXON_OPEN_API_KEY`, `NEXON_CREDENTIAL_ENCRYPTION_KEY` 등록
+3. Vercel 환경변수에 `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `NEXON_OPEN_API_KEY`, `NEXON_CREDENTIAL_ENCRYPTION_KEY`, `ADMIN_USER_ID`, `VISITOR_HASH_SECRET` 등록
 4. GitHub 저장소를 Vercel에 연결해 배포
 
 Vite로 빌드되는 정적 HTML/CSS/JS 사이트입니다. 로그인하지 않으면 기존처럼 localStorage에만 저장됩니다. 로그인하면 사용자별 RLS가 적용된 Supabase 행과 동기화하며 localStorage는 오프라인 캐시로 유지됩니다.
@@ -39,6 +39,15 @@ npm run dev
 4. Production과 필요한 Preview 환경에 동일하게 서버 환경변수를 설정한 뒤 다시 배포합니다.
 
 Credential API는 Supabase access token을 `Authorization: Bearer ...`로 검증하며, request body의 사용자 ID는 사용하지 않습니다. `POST /api/nexon-credential`은 Key 검증 및 저장/교체, `GET`은 등록 상태만 조회, `DELETE`는 현재 로그인 사용자의 Key만 삭제합니다.
+
+## 문의 게시판과 관리자 센터
+
+- 업데이트된 `schema.sql`을 Supabase SQL Editor에서 실행해 `support_tickets`, `support_replies`, `site_daily_stats`, `site_daily_visitor_keys`와 `record_site_visit` RPC를 생성합니다.
+- 문의와 방문 통계 테이블은 RLS를 활성화하고 `anon`/`authenticated`의 직접 접근을 차단합니다. 브라우저는 Vercel API만 호출하며 서버의 Supabase secret client가 권한을 검사합니다.
+- `ADMIN_USER_ID`에는 관리자 Supabase Auth 사용자의 UUID를 등록합니다. 관리자 여부는 모든 관리자 API 요청마다 서버에서 다시 확인하며 이메일이나 프런트엔드 값으로 판단하지 않습니다.
+- `VISITOR_HASH_SECRET`에는 최소 32바이트의 예측하기 어려운 문자열을 등록합니다. 서버는 KST 일자와 브라우저 무작위 방문 ID를 HMAC-SHA256 처리하며 원본 방문 ID, IP 주소, 사용자 에이전트나 기기 지문을 앱 통계 DB에 저장하지 않습니다.
+- 일별 방문자 해시는 오늘과 전날 정도만 유지하고, 일별 순 방문자·페이지뷰 합계는 관리자 대시보드용으로 보유합니다. 관리자 본인의 인증된 방문은 집계에서 제외합니다.
+- 환경변수와 스키마 적용 후 Production 및 필요한 Preview 환경을 다시 배포합니다.
 
 Vercel 자동 배포 연결 테스트
 

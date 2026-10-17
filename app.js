@@ -6,6 +6,7 @@ const MIGRATION_SYNC_KEY = `${KEY}-migration-sync-pending`;
 const STATE_VERSION = 9;
 const LOCAL_CHANGE_EVENT = 'maple-income:local-change';
 const THEME_STORAGE_KEY = 'maple-income-theme';
+const VISITOR_ID_STORAGE_KEY = 'maple-income-visitor-id';
 const THEME_PREFERENCES = ['system', 'light', 'dark'];
 const THEME_LABELS = {system: '시스템 설정', light: '라이트', dark: '다크'};
 const THEME_COLORS = {light: '#f5f7f9', dark: '#0d151c'};
@@ -973,6 +974,9 @@ let nexonApiState = {status: 'idle', message: '연동할 캐릭터를 선택해�
 let nexonSchedulerDiagnosticState = {status: 'idle', characterId: '', result: null, message: '진단을 실행하면 두 요청 결과를 비교합니다.'};
 let nexonCredentialAuthBridge = null;
 let nexonCredentialState = {status: 'signed-out', hasCredential: false, editing: false, message: ''};
+let supportState = {view: 'public', status: 'idle', tickets: [], ticket: null, message: ''};
+let adminUiState = {checked: false, isAdmin: false, activeTab: 'dashboard', stats: null, tickets: [], ticket: null};
+let analyticsVisitSent = false;
 const NEXON_DETAIL_CLIENT_TTL_MS = 5 * 60 * 1000;
 const nexonDetailRuntimeCache = new Map();
 const nexonEquipmentPresetSelection = new Map();
@@ -2316,15 +2320,22 @@ function setNexonCredentialAuthBridge(bridge) {
 }
 function onNexonCredentialAuthChanged({signedIn = false} = {}) {
   cloudAuthUiState = {initialized: true, signedIn: !!signedIn, ready: !signedIn};
+  void refreshAdminSession();
+  void sendAnalyticsVisit();
   if (!signedIn) {
     onboardingCharacterCandidate = null;
     clearNexonDetailRuntimeCache();
     nexonCredentialState = {status: 'signed-out', hasCredential: false, editing: false, message: ''};
     const input = $('#nexonCredentialInput');
     if (input) input.value = '';
+    supportState = {...supportState, view: 'public', ticket: null};
+    renderSupportBoard();
+    if ($('#contactDialog')?.open) void loadSupportTickets('public');
     renderNexonCredentialSettings(); renderAppExperience();
     return;
   }
+  renderSupportBoard();
+  if ($('#contactDialog')?.open) void loadSupportTickets(supportState.view);
   renderAppExperience();
   refreshNexonCredentialStatus();
 }
@@ -2896,6 +2907,144 @@ async function linkNexonCharacter(character, characterName) {
     renderNexonSettings(); renderAppExperience();
   }
 }
+const SUPPORT_CATEGORY_LABELS = Object.freeze({bug: '오류 제보', data: '데이터 오류', feature: '기능 제안', account: '계정/동기화', other: '기타'});
+const SUPPORT_STATUS_LABELS = Object.freeze({pending: '답변 대기', answered: '답변 완료', closed: '종료'});
+function plainTextHtml(value) { return escapeHtml(value).replace(/\r?\n/g, '<br>'); }
+function supportSignedIn() { return nexonCredentialAuthBridge?.isSignedIn?.() === true; }
+async function authenticatedApiRequest(path, {method = 'GET', body, requireAuth = false} = {}) {
+  let token = '';
+  try { token = await nexonCredentialAuthBridge?.getAccessToken?.() || ''; } catch {}
+  if (requireAuth && !token) throw Object.assign(new Error('로그인 후 사용할 수 있습니다.'), {status: 401, code: 'AUTH_REQUIRED'});
+  const response = await fetch(path, {
+    method,
+    headers: {...(token ? {Authorization: `Bearer ${token}`} : {}), ...(body ? {'Content-Type': 'application/json'} : {})},
+    ...(body ? {body: JSON.stringify(body)} : {})
+  });
+  let data = null;
+  if (response.status !== 204) try { data = await response.json(); } catch {}
+  if (!response.ok || (data && data.ok === false)) throw Object.assign(new Error(data?.message || '요청을 처리하지 못했습니다.'), {status: response.status, code: data?.code || 'REQUEST_FAILED'});
+  return data;
+}
+function supportDateLabel(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('ko-KR', {year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
+}
+function renderSupportBoard() {
+  if (typeof document === 'undefined') return;
+  const signedIn = supportSignedIn();
+  $('#supportSignedOutNotice')?.classList.toggle('hidden', signedIn);
+  $('#openSupportCompose')?.classList.toggle('hidden', !signedIn);
+  $$('[data-support-view]').forEach(button => {
+    const active = button.dataset.supportView === supportState.view;
+    button.classList.toggle('active', active); button.setAttribute('aria-selected', String(active));
+    if (button.dataset.supportView === 'mine') button.disabled = !signedIn;
+  });
+  const messageNode = $('#supportMessage');
+  if (messageNode) messageNode.textContent = supportState.message || (supportState.status === 'loading' ? '문의를 불러오는 중…' : '');
+  const list = $('#supportList');
+  const composing = !$('#supportComposeForm')?.classList.contains('hidden');
+  if (list) list.classList.toggle('hidden', !!supportState.ticket || composing);
+  if (list && !supportState.ticket && !composing) {
+    list.innerHTML = supportState.tickets.length ? supportState.tickets.map(ticket => `<button type="button" class="support-list-row" data-support-ticket="${escapeHtml(ticket.id)}"><span><small>${escapeHtml(SUPPORT_CATEGORY_LABELS[ticket.category] || '기타')}${ticket.isPrivate ? ' · 비공개' : ''}</small><b>${escapeHtml(ticket.title)}</b></span><span class="support-status ${escapeHtml(ticket.status)}">${escapeHtml(SUPPORT_STATUS_LABELS[ticket.status] || ticket.status)}</span><time>${escapeHtml(supportDateLabel(ticket.createdAt))}</time></button>`).join('') : '<p class="empty">표시할 문의가 없습니다.</p>';
+  }
+  const detail = $('#supportDetail');
+  if (!detail) return;
+  detail.classList.toggle('hidden', !supportState.ticket);
+  if (!supportState.ticket) { detail.innerHTML = ''; return; }
+  const ticket = supportState.ticket;
+  const replies = (ticket.replies || []).map(reply => `<article class="support-reply ${reply.authorRole === 'admin' ? 'admin' : ''}"><header><b>${reply.authorRole === 'admin' ? '메기 관리자' : '문의 작성자'}</b><time>${escapeHtml(supportDateLabel(reply.createdAt))}</time></header><p>${plainTextHtml(reply.content)}</p></article>`).join('');
+  const canReply = ticket.permissions?.canReply && ticket.status !== 'closed';
+  detail.innerHTML = `<div class="support-detail-head"><button type="button" class="text-button" data-support-back>← 목록</button>${ticket.permissions?.canDelete ? '<button type="button" class="danger-text" data-support-delete>문의 삭제</button>' : ''}</div><article class="support-ticket-body"><div class="support-ticket-meta"><span>${escapeHtml(SUPPORT_CATEGORY_LABELS[ticket.category] || '기타')}</span><span>${ticket.isPrivate ? '비공개' : '공개'}</span><span class="support-status ${escapeHtml(ticket.status)}">${escapeHtml(SUPPORT_STATUS_LABELS[ticket.status] || ticket.status)}</span></div><h3>${escapeHtml(ticket.title)}</h3><time>${escapeHtml(supportDateLabel(ticket.createdAt))}</time><p>${plainTextHtml(ticket.content)}</p></article><div class="support-replies">${replies || '<p class="empty">아직 답변이 없습니다.</p>'}</div>${canReply ? '<form id="supportReplyForm" class="support-reply-form"><label>추가 답변<textarea id="supportReplyContent" maxlength="5000" required placeholder="답변 내용을 입력해주세요. 인증정보는 입력하지 마세요."></textarea></label><button class="primary" type="submit">답변 등록</button></form>' : ticket.status === 'closed' ? '<p class="notice">종료된 문의입니다.</p>' : ''}`;
+}
+async function loadSupportTickets(view = supportState.view) {
+  if (view === 'mine' && !supportSignedIn()) view = 'public';
+  supportState = {...supportState, view, status: 'loading', ticket: null, message: ''};
+  renderSupportBoard();
+  try {
+    const data = await authenticatedApiRequest(`/api/support-tickets?scope=${encodeURIComponent(view)}`, {requireAuth: view === 'mine'});
+    supportState = {...supportState, status: 'ready', tickets: data?.tickets || [], message: ''};
+  } catch (error) { supportState = {...supportState, status: 'error', tickets: [], message: error.message}; }
+  renderSupportBoard();
+}
+async function loadSupportTicket(id, {admin = false} = {}) {
+  const target = admin ? '/api/admin-support' : '/api/support-tickets';
+  try {
+    const data = await authenticatedApiRequest(`${target}?id=${encodeURIComponent(id)}`, {requireAuth: admin});
+    if (admin) { adminUiState.ticket = data.ticket; renderAdminSupport(); }
+    else { supportState = {...supportState, ticket: data.ticket, message: ''}; renderSupportBoard(); }
+  } catch (error) {
+    if (admin) { $('#adminSupportMessage').textContent = error.message; }
+    else { supportState = {...supportState, message: error.message}; renderSupportBoard(); }
+  }
+}
+function openSupportCompose() {
+  if (!supportSignedIn()) return;
+  supportState.ticket = null;
+  $('#supportList').classList.add('hidden'); $('#supportDetail').classList.add('hidden');
+  $('#supportComposeForm').classList.remove('hidden'); $('#supportTitle').focus();
+}
+function closeSupportCompose() {
+  $('#supportComposeForm').classList.add('hidden'); $('#supportComposeForm').reset();
+  renderSupportBoard();
+}
+async function refreshAdminSession() {
+  adminUiState = {...adminUiState, checked: false, isAdmin: false, stats: null, tickets: [], ticket: null};
+  $('#adminSettingsRoute')?.classList.add('hidden');
+  if (!supportSignedIn()) return;
+  try {
+    const data = await authenticatedApiRequest('/api/admin-session', {requireAuth: true});
+    adminUiState = {...adminUiState, checked: true, isAdmin: data?.isAdmin === true};
+  } catch { adminUiState = {...adminUiState, checked: true, isAdmin: false}; }
+  $('#adminSettingsRoute')?.classList.toggle('hidden', !adminUiState.isAdmin);
+}
+function renderAdminStats() {
+  if (typeof document === 'undefined' || !adminUiState.isAdmin) return;
+  const stats = adminUiState.stats;
+  $('#adminTodayVisitors').textContent = stats ? won(stats.today.visitors) : '-';
+  $('#adminTodayPageviews').textContent = stats ? won(stats.today.pageViews) : '-';
+  $('#adminYesterdayVisitors').textContent = stats ? won(stats.yesterday.visitors) : '-';
+  $('#adminSevenDayAverage').textContent = stats ? String(stats.last7DaysAverage) : '-';
+  const chart = $('#adminStatsChart');
+  if (!chart) return;
+  const max = Math.max(1, ...(stats?.days || []).map(row => n(row.visitors)));
+  chart.innerHTML = (stats?.days || []).map(row => `<span style="--bar:${Math.max(2, Math.round(n(row.visitors) / max * 100))}%" title="${escapeHtml(row.date)} · 방문자 ${won(row.visitors)}명 · 페이지뷰 ${won(row.pageViews)}회"><i></i><small>${escapeHtml(row.date.slice(5))}</small></span>`).join('');
+}
+async function loadAdminStats() {
+  if (!adminUiState.isAdmin) return;
+  $('#adminStatsMessage').textContent = '통계를 불러오는 중…';
+  try { adminUiState.stats = await authenticatedApiRequest('/api/admin-stats', {requireAuth: true}); $('#adminStatsMessage').textContent = ''; }
+  catch (error) { $('#adminStatsMessage').textContent = error.message; }
+  renderAdminStats();
+}
+function renderAdminSupport() {
+  if (typeof document === 'undefined' || !adminUiState.isAdmin) return;
+  const list = $('#adminSupportList'), detail = $('#adminSupportDetail');
+  list.classList.toggle('hidden', !!adminUiState.ticket);
+  list.innerHTML = adminUiState.tickets.length ? adminUiState.tickets.map(ticket => `<button type="button" class="support-list-row" data-admin-support-ticket="${escapeHtml(ticket.id)}"><span><small>${escapeHtml(SUPPORT_CATEGORY_LABELS[ticket.category] || '기타')} · ${ticket.isPrivate ? '비공개' : '공개'}</small><b>${escapeHtml(ticket.title)}</b></span><span class="support-status ${escapeHtml(ticket.status)}">${escapeHtml(SUPPORT_STATUS_LABELS[ticket.status] || ticket.status)}</span><time>${escapeHtml(supportDateLabel(ticket.createdAt))}</time></button>`).join('') : '<p class="empty">조건에 맞는 문의가 없습니다.</p>';
+  detail.classList.toggle('hidden', !adminUiState.ticket);
+  if (!adminUiState.ticket) { detail.innerHTML = ''; return; }
+  const ticket = adminUiState.ticket;
+  detail.innerHTML = `<div class="support-detail-head"><button type="button" class="text-button" data-admin-support-back>← 목록</button><button type="button" class="danger-text" data-admin-support-delete>문의 삭제</button></div><article class="support-ticket-body"><div class="support-ticket-meta"><span>${escapeHtml(SUPPORT_CATEGORY_LABELS[ticket.category] || '기타')}</span><span>${ticket.isPrivate ? '비공개' : '공개'}</span></div><h3>${escapeHtml(ticket.title)}</h3><p>${plainTextHtml(ticket.content)}</p></article><div class="support-replies">${(ticket.replies || []).map(reply => `<article class="support-reply ${reply.authorRole === 'admin' ? 'admin' : ''}"><header><b>${reply.authorRole === 'admin' ? '관리자' : '작성자'}</b><time>${escapeHtml(supportDateLabel(reply.createdAt))}</time></header><p>${plainTextHtml(reply.content)}</p></article>`).join('') || '<p class="empty">아직 답변이 없습니다.</p>'}</div><label class="admin-status-field">상태<select id="adminTicketStatus"><option value="pending" ${ticket.status === 'pending' ? 'selected' : ''}>답변 대기</option><option value="answered" ${ticket.status === 'answered' ? 'selected' : ''}>답변 완료</option><option value="closed" ${ticket.status === 'closed' ? 'selected' : ''}>종료</option></select></label><form id="adminSupportReplyForm" class="support-reply-form"><label>관리자 답변<textarea id="adminSupportReplyContent" maxlength="5000" required></textarea></label><button class="primary" type="submit">답변 등록</button></form>`;
+}
+async function loadAdminSupport() {
+  if (!adminUiState.isAdmin) return;
+  const params = new URLSearchParams({status: $('#adminSupportStatus')?.value || '', category: $('#adminSupportCategory')?.value || '', privacy: $('#adminSupportPrivacy')?.value || ''});
+  $('#adminSupportMessage').textContent = '문의를 불러오는 중…';
+  try { const data = await authenticatedApiRequest(`/api/admin-support?${params}`, {requireAuth: true}); adminUiState.tickets = data.tickets || []; adminUiState.ticket = null; $('#adminSupportMessage').textContent = ''; }
+  catch (error) { adminUiState.tickets = []; $('#adminSupportMessage').textContent = error.message; }
+  renderAdminSupport();
+}
+async function sendAnalyticsVisit() {
+  if (analyticsVisitSent || typeof localStorage === 'undefined') return;
+  analyticsVisitSent = true;
+  try {
+    let visitorId = localStorage.getItem(VISITOR_ID_STORAGE_KEY) || '';
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(visitorId)) {
+      visitorId = crypto.randomUUID(); localStorage.setItem(VISITOR_ID_STORAGE_KEY, visitorId);
+    }
+    await authenticatedApiRequest('/api/analytics-visit', {method: 'POST', body: {visitorId}});
+  } catch {}
+}
 const LEGAL_DIALOG_IDS = Object.freeze({contact: 'contactDialog', privacy: 'privacyDialog', terms: 'termsDialog', legal: 'legalDialog'});
 function legalDialogKeyFromHash(hash = '') {
   const key = String(hash || '').replace(/^#/, '').toLowerCase();
@@ -2908,6 +3057,7 @@ function openLegalDialogFromHash(hash = window.location.hash) {
   if (!dialog) return false;
   $$('[data-legal-dialog][open]').forEach(item => { if (item !== dialog) item.close(); });
   if (!dialog.open) dialog.showModal();
+  if (key === 'contact') void loadSupportTickets(supportState.view);
   window.requestAnimationFrame(() => dialog.querySelector('[data-close]')?.focus());
   return true;
 }
@@ -3123,6 +3273,81 @@ function init() {
   $('#customBosses').addEventListener('change', updateCharacterCreateUI);
   $$('[data-close]').forEach(b => b.addEventListener('click', () => $('#' + b.dataset.close).close()));
   setupLegalDialogs();
+  $$('[data-support-view]').forEach(button => button.addEventListener('click', () => {
+    $('#supportComposeForm').classList.add('hidden');
+    void loadSupportTickets(button.dataset.supportView);
+  }));
+  $('#openSupportCompose').addEventListener('click', openSupportCompose);
+  $('[data-support-close-form]').addEventListener('click', closeSupportCompose);
+  $('#supportList').addEventListener('click', event => {
+    const button = event.target.closest('[data-support-ticket]');
+    if (button) void loadSupportTicket(button.dataset.supportTicket);
+  });
+  $('#supportComposeForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.currentTarget, submit = form.querySelector('[type="submit"]');
+    submit.disabled = true; supportState = {...supportState, message: '문의를 등록하는 중…'}; renderSupportBoard();
+    try {
+      const result = await authenticatedApiRequest('/api/support-tickets', {method: 'POST', requireAuth: true, body: {
+        category: $('#supportCategory').value, title: $('#supportTitle').value.trim(), content: $('#supportContent').value.trim(),
+        isPrivate: form.elements.supportVisibility.value !== 'public'
+      }});
+      form.reset(); form.classList.add('hidden'); supportState = {...supportState, view: 'mine', ticket: result.ticket, message: '문의를 등록했습니다.'};
+    } catch (error) { supportState = {...supportState, message: error.message}; }
+    finally { submit.disabled = false; renderSupportBoard(); }
+  });
+  $('#supportDetail').addEventListener('click', async event => {
+    if (event.target.closest('[data-support-back]')) { supportState = {...supportState, ticket: null}; renderSupportBoard(); return; }
+    if (!event.target.closest('[data-support-delete]') || !supportState.ticket || !confirm('이 문의와 모든 답변을 삭제할까요?')) return;
+    try { await authenticatedApiRequest(`/api/support-tickets?id=${encodeURIComponent(supportState.ticket.id)}`, {method: 'DELETE', requireAuth: true}); await loadSupportTickets(supportState.view); }
+    catch (error) { supportState = {...supportState, message: error.message}; renderSupportBoard(); }
+  });
+  $('#supportDetail').addEventListener('submit', async event => {
+    if (event.target.id !== 'supportReplyForm' || !supportState.ticket) return;
+    event.preventDefault(); const button = event.target.querySelector('[type="submit"]'); button.disabled = true;
+    try { await authenticatedApiRequest('/api/support-replies', {method: 'POST', requireAuth: true, body: {ticketId: supportState.ticket.id, content: event.target.querySelector('textarea').value.trim()}}); await loadSupportTicket(supportState.ticket.id); }
+    catch (error) { supportState = {...supportState, message: error.message}; renderSupportBoard(); }
+    finally { button.disabled = false; }
+  });
+  $$('[data-admin-tab]').forEach(button => button.addEventListener('click', () => {
+    adminUiState.activeTab = button.dataset.adminTab;
+    $$('[data-admin-tab]').forEach(item => { const active = item === button; item.classList.toggle('active', active); item.setAttribute('aria-selected', String(active)); });
+    $('#adminDashboard').classList.toggle('hidden', adminUiState.activeTab !== 'dashboard');
+    $('#adminSupportPanel').classList.toggle('hidden', adminUiState.activeTab !== 'support');
+    if (adminUiState.activeTab === 'dashboard' && !adminUiState.stats) void loadAdminStats();
+    if (adminUiState.activeTab === 'support' && !adminUiState.tickets.length) void loadAdminSupport();
+  }));
+  $('#adminSettingsRoute').addEventListener('toggle', event => {
+    if (!event.currentTarget.open || !adminUiState.isAdmin) return;
+    if (adminUiState.activeTab === 'dashboard') void loadAdminStats(); else void loadAdminSupport();
+  });
+  $('#refreshAdminStats').addEventListener('click', loadAdminStats);
+  $('#refreshAdminSupport').addEventListener('click', loadAdminSupport);
+  $('#adminSupportStatus').addEventListener('change', loadAdminSupport);
+  $('#adminSupportCategory').addEventListener('change', loadAdminSupport);
+  $('#adminSupportPrivacy').addEventListener('change', loadAdminSupport);
+  $('#adminSupportList').addEventListener('click', event => {
+    const button = event.target.closest('[data-admin-support-ticket]');
+    if (button) void loadSupportTicket(button.dataset.adminSupportTicket, {admin: true});
+  });
+  $('#adminSupportDetail').addEventListener('click', async event => {
+    if (event.target.closest('[data-admin-support-back]')) { adminUiState.ticket = null; renderAdminSupport(); return; }
+    if (!event.target.closest('[data-admin-support-delete]') || !adminUiState.ticket || !confirm('이 문의와 모든 답변을 삭제할까요?')) return;
+    try { await authenticatedApiRequest(`/api/admin-support?id=${encodeURIComponent(adminUiState.ticket.id)}`, {method: 'DELETE', requireAuth: true}); await loadAdminSupport(); }
+    catch (error) { $('#adminSupportMessage').textContent = error.message; }
+  });
+  $('#adminSupportDetail').addEventListener('change', async event => {
+    if (event.target.id !== 'adminTicketStatus' || !adminUiState.ticket) return;
+    try { await authenticatedApiRequest(`/api/admin-support?id=${encodeURIComponent(adminUiState.ticket.id)}`, {method: 'PATCH', requireAuth: true, body: {status: event.target.value}}); await loadSupportTicket(adminUiState.ticket.id, {admin: true}); }
+    catch (error) { $('#adminSupportMessage').textContent = error.message; }
+  });
+  $('#adminSupportDetail').addEventListener('submit', async event => {
+    if (event.target.id !== 'adminSupportReplyForm' || !adminUiState.ticket) return;
+    event.preventDefault(); const button = event.target.querySelector('[type="submit"]'); button.disabled = true;
+    try { await authenticatedApiRequest('/api/support-replies', {method: 'POST', requireAuth: true, body: {ticketId: adminUiState.ticket.id, content: event.target.querySelector('textarea').value.trim()}}); await loadSupportTicket(adminUiState.ticket.id, {admin: true}); }
+    catch (error) { $('#adminSupportMessage').textContent = error.message; }
+    finally { button.disabled = false; }
+  });
   $('#characterForm').addEventListener('submit', e => {
     e.preventDefault(); const name = $('#characterName').value.trim(); if (!name) return;
     const settings = characterMode === 'direct' ? selectedDirectBosses() : presetConfig($('#characterPreset').value);

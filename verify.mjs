@@ -9,6 +9,15 @@ import {nexonAccountOwnershipInternals} from './api/nexon-account-ownership.js';
 import {nexonCharacterDetailInternals} from './api/nexon-character-detail.js';
 import {nexonCredentialStoreInternals} from './api/_nexon-credential-store.js';
 import {nexonCredentialInternals} from './api/nexon-credential.js';
+import {adminAuthInternals} from './api/_admin-auth.js';
+import {supportInternals} from './api/_support.js';
+import {supportTicketsInternals} from './api/support-tickets.js';
+import {supportRepliesInternals} from './api/support-replies.js';
+import {adminSessionInternals} from './api/admin-session.js';
+import {adminSupportInternals} from './api/admin-support.js';
+import {analyticsInternals} from './api/_analytics.js';
+import {analyticsVisitInternals} from './api/analytics-visit.js';
+import {adminStatsInternals} from './api/admin-stats.js';
 
 const statKeys = Object.keys(nexonCharacterInternals.statDefinitions);
 const emptyDetailStats = Object.fromEntries(statKeys.map(key => [key, null]));
@@ -2976,12 +2985,12 @@ context.window = undefined;
 assert.match(html, /© 2026 메기 · 사이트 자체 제작 콘텐츠/);
 assert.ok((html.match(/Data based on NEXON Open API/g) || []).length >= 2);
 assert.match(html, /메기는 NEXON의 공식 서비스가 아닙니다/);
-assert.match(html, /GitHub Issues에서 문의<\/a>/);
+assert.match(html, />GitHub Issues ↗<\/a>/);
 assert.match(html, /href="https:\/\/github\.com\/mdyjc79hj4-netizen\/maple-income\/issues" target="_blank" rel="noopener noreferrer"/);
-assert.match(html, /이메일 주소, 비밀번호, NEXON API Key, 인증 토큰, 복구 코드/);
+assert.match(html, /이메일 주소, 비밀번호, NEXON API Key, Bearer\/JWT 인증 토큰, 복구 코드/);
 assert.match(html, /시행일: 2026년 10월 18일/);
 assert.match(html, /AES-256-GCM/);
-assert.match(html, /전체 데이터 초기화는 앱 기록을 지우지만 Supabase Auth 계정을 삭제하지 않습니다/);
+assert.match(html, /전체 데이터 초기화는 앱 기록을 지우지만 Supabase Auth 계정이나 문의를 자동 삭제하지 않습니다/);
 assert.match(html, /href="https:\/\/openapi\.nexon\.com\/ko\/guide\/" target="_blank" rel="noopener noreferrer"/);
 assert.match(html, /href="https:\/\/openapi\.nexon\.com\/ko\/support\/" target="_blank" rel="noopener noreferrer"/);
 assert.match(source, /const LEGAL_DIALOG_IDS = Object\.freeze\(\{contact: 'contactDialog', privacy: 'privacyDialog', terms: 'termsDialog', legal: 'legalDialog'\}\)/);
@@ -3577,6 +3586,192 @@ assert.match(css, /select,input\{[^}]*background:var\(--input-bg\)/);
 assert.match(css, /\.tabs\{[^}]*background:var\(--nav-bg\)/);
 assert.match(css, /dialog::backdrop\{background:var\(--overlay\)/);
 assert.match(css, /\.danger-zone\{[^}]*background:var\(--danger-bg\)/);
+
+// Support board, admin authorization and privacy-preserving analytics.
+const ADMIN_USER_ID = '11111111-1111-4111-8111-111111111111';
+const SUPPORT_USER_ID = '22222222-2222-4222-8222-222222222222';
+const OTHER_USER_ID = '33333333-3333-4333-8333-333333333333';
+const SUPPORT_TICKET_ID = '44444444-4444-4444-8444-444444444444';
+const supportEnv = {ADMIN_USER_ID};
+assert.equal(adminAuthInternals.configuredAdminUserId(supportEnv), ADMIN_USER_ID);
+assert.equal(adminAuthInternals.isAdminUser({id: ADMIN_USER_ID}, supportEnv), true);
+assert.equal(adminAuthInternals.isAdminUser({id: SUPPORT_USER_ID}, supportEnv), false);
+assert.equal(supportInternals.normalizeTicketInput({category: 'bug', title: ' 오류 ', content: ' 재현 내용 '}).isPrivate, true);
+assert.equal(supportInternals.normalizeTicketInput({category: 'feature', title: '제안', content: '내용', isPrivate: false}).isPrivate, false);
+assert.equal(Object.hasOwn(supportInternals.publicTicketSummary({id: 'ticket', category: 'bug', title: '공개', status: 'pending', is_private: false}), 'isPrivate'), false, 'public lists expose no privacy or owner metadata');
+assert.throws(() => supportInternals.normalizeTicketInput({category: 'bug', title: 'x'.repeat(101), content: '내용'}), error => error.code === 'INVALID_REQUEST');
+for (const secret of [
+  'Bearer abcdefghijklmnopqrstuvwxyz123456',
+  'eyJabcdefghijk.abcdefghijklmnop.abcdefghijklmnopqrstuvwxyz',
+  'x-nxopen-api-key: abcdefghijklmnopqrstuvwxyz',
+  'NEXON_OPEN_API_KEY=abcdefghijklmnopqrstuvwxyz123456'
+]) assert.throws(() => supportInternals.normalizeContent(secret), error => error.code === 'SENSITIVE_CONTENT_DETECTED');
+
+function endpointResponse() {
+  return {
+    statusCode: 0, body: null, headers: {}, ended: false,
+    setHeader(name, value) { this.headers[name] = value; },
+    status(code) { this.statusCode = code; return this; },
+    json(value) { this.body = value; return this; },
+    end() { this.ended = true; return this; }
+  };
+}
+const publicTicket = {id: SUPPORT_TICKET_ID, user_id: SUPPORT_USER_ID, category: 'bug', title: '공개 문의', content: '공개 내용', is_private: false, status: 'pending', created_at: '2026-10-17T00:00:00Z', updated_at: '2026-10-17T00:00:00Z'};
+const privateTicket = {...publicTicket, id: '55555555-5555-4555-8555-555555555555', title: '비공개 문의', is_private: true};
+const supportRecords = new Map([[publicTicket.id, publicTicket], [privateTicket.id, privateTicket]]);
+const supportWrites = {tickets: [], replies: [], statuses: [], deletes: []};
+const supportStore = {
+  listPublic: async () => [publicTicket],
+  listMine: async userId => [...supportRecords.values()].filter(ticket => ticket.user_id === userId),
+  getTicket: async id => supportRecords.get(id) || null,
+  listReplies: async () => [],
+  countRecentTickets: async () => 0,
+  countRecentReplies: async () => 0,
+  insertTicket: async row => { supportWrites.tickets.push(row); return {...privateTicket, ...row, id: '66666666-6666-4666-8666-666666666666', created_at: '2026-10-17T01:00:00Z', updated_at: '2026-10-17T01:00:00Z'}; },
+  insertReply: async row => { supportWrites.replies.push(row); return {...row, id: '77777777-7777-4777-8777-777777777777', created_at: '2026-10-17T02:00:00Z'}; },
+  updateTicketStatus: async (id, status) => { supportWrites.statuses.push([id, status]); return {...supportRecords.get(id), status}; },
+  deleteTicket: async id => { supportWrites.deletes.push(id); return true; },
+  listAdmin: async () => [...supportRecords.values()]
+};
+const supportAuthenticate = async req => {
+  const token = String(req.headers?.authorization || '').replace(/^Bearer\s+/i, '');
+  if (token === 'owner') return {id: SUPPORT_USER_ID};
+  if (token === 'other') return {id: OTHER_USER_ID};
+  if (token === 'admin') return {id: ADMIN_USER_ID};
+  throw Object.assign(new Error('auth'), {status: 401, code: 'AUTH_REQUIRED'});
+};
+const supportTicketHandler = supportTicketsInternals.createSupportTicketsHandler({env: supportEnv, adminClient: {}, store: supportStore, authenticateRequest: supportAuthenticate});
+let response = endpointResponse();
+await supportTicketHandler({method: 'GET', headers: {}, query: {scope: 'public'}}, response);
+assert.equal(response.statusCode, 200);
+assert.deepEqual(response.body.tickets.map(ticket => ticket.id), [publicTicket.id]);
+assert.equal(JSON.stringify(response.body).includes(SUPPORT_USER_ID), false, 'public support payload must not expose author IDs');
+for (const [token, expectedStatus] of [['', 404], ['other', 404], ['owner', 200], ['admin', 200]]) {
+  response = endpointResponse();
+  await supportTicketHandler({method: 'GET', headers: token ? {authorization: `Bearer ${token}`} : {}, query: {id: privateTicket.id}}, response);
+  assert.equal(response.statusCode, expectedStatus, `private ticket access for ${token || 'anonymous'}`);
+}
+response = endpointResponse();
+await supportTicketHandler({method: 'POST', headers: {}, body: {category: 'bug', title: '제목', content: '내용'}}, response);
+assert.equal(response.statusCode, 401);
+response = endpointResponse();
+await supportTicketHandler({method: 'POST', headers: {authorization: 'Bearer owner'}, body: {user_id: OTHER_USER_ID, category: 'account', title: '로그인 문의', content: '문의 내용', isPrivate: true}}, response);
+assert.equal(response.statusCode, 201);
+assert.equal(supportWrites.tickets.at(-1).user_id, SUPPORT_USER_ID, 'ticket author must come from authenticated session');
+assert.equal(supportWrites.tickets.at(-1).status, 'pending');
+const ticketRateLimitedHandler = supportTicketsInternals.createSupportTicketsHandler({env: supportEnv, adminClient: {}, store: {...supportStore, countRecentTickets: async () => 5}, authenticateRequest: supportAuthenticate});
+response = endpointResponse();
+await ticketRateLimitedHandler({method: 'POST', headers: {authorization: 'Bearer owner'}, body: {category: 'bug', title: '제목', content: '내용'}}, response);
+assert.equal(response.statusCode, 429);
+
+const supportReplyHandler = supportRepliesInternals.createSupportRepliesHandler({env: supportEnv, adminClient: {}, store: supportStore, authenticateRequest: supportAuthenticate});
+response = endpointResponse();
+await supportReplyHandler({method: 'POST', headers: {authorization: 'Bearer other'}, body: {ticketId: privateTicket.id, content: '남의 문의 답변'}}, response);
+assert.equal(response.statusCode, 403);
+response = endpointResponse();
+await supportReplyHandler({method: 'POST', headers: {authorization: 'Bearer owner'}, body: {ticketId: privateTicket.id, content: '추가 질문'}}, response);
+assert.equal(response.statusCode, 201);
+assert.equal(supportWrites.replies.at(-1).author_role, 'user');
+assert.equal(supportWrites.replies.at(-1).author_user_id, SUPPORT_USER_ID);
+assert.deepEqual(supportWrites.statuses.at(-1), [privateTicket.id, 'pending']);
+response = endpointResponse();
+await supportReplyHandler({method: 'POST', headers: {authorization: 'Bearer admin'}, body: {ticketId: privateTicket.id, content: '관리자 답변'}}, response);
+assert.equal(response.statusCode, 201);
+assert.equal(supportWrites.replies.at(-1).author_role, 'admin');
+assert.deepEqual(supportWrites.statuses.at(-1), [privateTicket.id, 'answered']);
+const replyRateLimitedHandler = supportRepliesInternals.createSupportRepliesHandler({env: supportEnv, adminClient: {}, store: {...supportStore, countRecentReplies: async () => 20}, authenticateRequest: supportAuthenticate});
+response = endpointResponse();
+await replyRateLimitedHandler({method: 'POST', headers: {authorization: 'Bearer owner'}, body: {ticketId: privateTicket.id, content: '반복 답변'}}, response);
+assert.equal(response.statusCode, 429);
+response = endpointResponse();
+await replyRateLimitedHandler({method: 'POST', headers: {authorization: 'Bearer admin'}, body: {ticketId: privateTicket.id, content: '관리자 운영 답변'}}, response);
+assert.equal(response.statusCode, 201, 'admin replies may be exempt from user reply rate limits');
+
+const adminSessionHandler = adminSessionInternals.createAdminSessionHandler({env: supportEnv, adminClient: {}, authenticateRequest: supportAuthenticate});
+response = endpointResponse();
+await adminSessionHandler({method: 'GET', headers: {authorization: 'Bearer owner'}}, response);
+assert.deepEqual(response.body, {ok: true, isAdmin: false});
+response = endpointResponse();
+await adminSessionHandler({method: 'GET', headers: {authorization: 'Bearer admin'}}, response);
+assert.deepEqual(response.body, {ok: true, isAdmin: true});
+const adminSupportHandler = adminSupportInternals.createAdminSupportHandler({env: supportEnv, adminClient: {}, store: supportStore, authenticateRequest: supportAuthenticate});
+response = endpointResponse();
+await adminSupportHandler({method: 'GET', headers: {authorization: 'Bearer owner'}, query: {}}, response);
+assert.equal(response.statusCode, 403);
+response = endpointResponse();
+await adminSupportHandler({method: 'GET', headers: {authorization: 'Bearer admin'}, query: {}}, response);
+assert.equal(response.statusCode, 200);
+const adminStatsAuthHandler = adminStatsInternals.createAdminStatsHandler({env: supportEnv, adminClient: {}, authenticateRequest: supportAuthenticate, loadStats: async () => [], kstDate: () => '2026-10-17'});
+response = endpointResponse();
+await adminStatsAuthHandler({method: 'GET', headers: {authorization: 'Bearer owner'}}, response);
+assert.equal(response.statusCode, 403);
+response = endpointResponse();
+await adminStatsAuthHandler({method: 'GET', headers: {authorization: 'Bearer admin'}}, response);
+assert.equal(response.statusCode, 200);
+
+assert.equal(analyticsInternals.kstDate(new Date('2026-10-17T16:00:00Z')), '2026-10-18');
+const analyticsSecret = '0123456789abcdef0123456789abcdef';
+const visitorId = '88888888-8888-4888-8888-888888888888';
+const firstHash = analyticsInternals.visitorHash('2026-10-18', visitorId, analyticsSecret);
+assert.equal(firstHash, analyticsInternals.visitorHash('2026-10-18', visitorId, analyticsSecret));
+assert.notEqual(firstHash, analyticsInternals.visitorHash('2026-10-19', visitorId, analyticsSecret));
+assert.equal(firstHash.length, 64);
+const sameVisitorPageViews = Array.from({length: 10}, () => analyticsInternals.visitorHash('2026-10-18', visitorId, analyticsSecret));
+assert.equal(sameVisitorPageViews.length, 10, 'ten page loads remain ten page views');
+assert.equal(new Set(sameVisitorPageViews).size, 1, 'the same visitor produces one daily unique hash');
+const secondVisitorHash = analyticsInternals.visitorHash('2026-10-18', '99999999-9999-4999-8999-999999999999', analyticsSecret);
+assert.equal(new Set([...sameVisitorPageViews, secondVisitorHash]).size, 2, 'two visitor IDs produce two daily unique hashes');
+assert.throws(() => analyticsInternals.analyticsSecret({}), error => error.code === 'ANALYTICS_NOT_CONFIGURED');
+const recordedVisits = [];
+const analyticsHandler = analyticsVisitInternals.createAnalyticsVisitHandler({
+  env: {...supportEnv, VISITOR_HASH_SECRET: analyticsSecret}, adminClient: {}, authenticateRequest: supportAuthenticate,
+  kstDate: () => '2026-10-18', recordVisit: async (_client, date, hash) => recordedVisits.push({date, hash})
+});
+response = endpointResponse();
+await analyticsHandler({method: 'POST', headers: {}, body: {visitorId}}, response);
+assert.equal(response.statusCode, 204);
+assert.deepEqual(recordedVisits, [{date: '2026-10-18', hash: firstHash}]);
+assert.equal(JSON.stringify(recordedVisits).includes(visitorId), false, 'raw visitor ID must not reach analytics storage');
+response = endpointResponse();
+await analyticsHandler({method: 'POST', headers: {authorization: 'Bearer admin'}, body: {visitorId}}, response);
+assert.equal(response.statusCode, 204);
+assert.equal(recordedVisits.length, 1, 'authenticated admin visits must be excluded');
+const summarizedStats = adminStatsInternals.summarizeStats([
+  {visit_date: '2026-10-16', unique_visitors: 7, page_views: 12},
+  {visit_date: '2026-10-17', unique_visitors: 10, page_views: 18}
+], '2026-10-17');
+assert.equal(summarizedStats.days.length, 30);
+assert.deepEqual(summarizedStats.today, {visitors: 10, pageViews: 18});
+assert.deepEqual(summarizedStats.yesterday, {visitors: 7, pageViews: 12});
+assert.equal(summarizedStats.days.at(-3).visitors, 0, 'missing analytics dates must be zero-filled');
+
+assert.match(html, /id="supportComposeForm"/);
+assert.match(html, /문의 게시판에서 오류 제보, 데이터 오류, 기능 제안 및 기타 문의를 남길 수 있습니다/);
+assert.match(html, /<option value="account">계정\/동기화<\/option>/);
+assert.match(html, /name="supportVisibility" value="private" checked/);
+assert.match(html, /id="adminSettingsRoute" class="settings-route hidden"/);
+assert.match(html, /id="adminStatsChart"/);
+assert.match(html, /id="adminSupportPrivacy"/);
+assert.match(source, /plainTextHtml\(value\).*escapeHtml/s);
+assert.equal(run("plainTextHtml('<img src=x onerror=alert(1)>\\n다음 줄')"), '&lt;img src=x onerror=alert(1)&gt;<br>다음 줄');
+assert.match(source, /const VISITOR_ID_STORAGE_KEY = 'maple-income-visitor-id'/);
+assert.doesNotMatch(JSON.stringify(json('emptyState()')), /visitor-id|supportState|adminUiState/);
+assert.doesNotMatch(cloudSource, /maple-income-visitor-id|support_tickets|site_daily_stats/);
+assert.match(schema, /create table if not exists public\.support_tickets/);
+assert.match(schema, /create table if not exists public\.support_replies/);
+assert.match(schema, /references public\.support_tickets\(id\) on delete cascade/);
+assert.match(schema, /author_user_id uuid not null references auth\.users\(id\) on delete cascade/);
+assert.match(schema, /alter table public\.support_tickets enable row level security/);
+assert.match(schema, /revoke all on public\.support_tickets from authenticated/);
+assert.match(schema, /create or replace function public\.record_site_visit/);
+assert.match(schema, /primary key \(visit_date, visitor_hash\)/);
+assert.match(schema, /where visit_date < p_visit_date - 1/);
+assert.match(schema, /on conflict do nothing;[\s\S]*get diagnostics is_new_visitor = row_count;[\s\S]*page_views = public\.site_daily_stats\.page_views \+ 1/);
+assert.match(schema, /grant execute on function public\.record_site_visit\(date, text\) to service_role/);
+assert.match(envExample, /ADMIN_USER_ID=/);
+assert.match(envExample, /VISITOR_HASH_SECRET=/);
+assert.equal(run('STATE_VERSION'), 9);
+
 const themedCssRules = css.split('\n').slice(2).join('\n');
 assert.doesNotMatch(themedCssRules, /#[0-9a-fA-F]{3,8}|rgba?\(/, 'component rules should use semantic theme tokens');
 console.log('boss roster, preset, migration, backup, reset, rollover, income, NEXON scheduler and multi-device cloud sync regression checks passed');
