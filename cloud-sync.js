@@ -616,6 +616,12 @@ function notifyCloudAuthChanged(app, user) {
   app.onCloudAuthChanged?.({signedIn: !!user});
 }
 
+function authIdentityChanged(previousUser, nextUser) {
+  const previousUserId = typeof previousUser?.id === 'string' ? previousUser.id : '';
+  const nextUserId = typeof nextUser?.id === 'string' ? nextUser.id : '';
+  return previousUserId !== nextUserId;
+}
+
 export function startCloudSync(app) {
   const elements = {
     badge: document.querySelector('#syncBadge'), unavailable: document.querySelector('#cloudUnavailable'),
@@ -728,8 +734,10 @@ export function startCloudSync(app) {
     elements.choiceDialog.showModal();
   });
   const showSession = session => {
-    user = session?.user || null;
-    notifyCloudAuthChanged(app, user);
+    const nextUser = session?.user || null;
+    const identityChanged = authIdentityChanged(user, nextUser);
+    user = nextUser;
+    if (identityChanged) notifyCloudAuthChanged(app, user);
     if (!user && choiceResolver) finishChoice(null);
     elements.form.classList.toggle('hidden', !!user);
     elements.account.classList.toggle('hidden', !user);
@@ -1065,7 +1073,7 @@ export function startCloudSync(app) {
 
 export const cloudSyncInternals = {
   CLOUD_PULL_INTERVAL_MS,
-  authErrorMessage, chooseSyncAction, contentHash, createCloudAuthBridge, meaningfulLocalData, mergeStates,
+  authErrorMessage, authIdentityChanged, chooseSyncAction, contentHash, createCloudAuthBridge, meaningfulLocalData, mergeStates,
   notifyCloudAuthChanged, shouldRunCloudPull,
   normalizeMeta, prepareStateForMerge, signupResult, syncError, syncErrorMessage, timestamp
 };

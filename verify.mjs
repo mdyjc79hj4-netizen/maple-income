@@ -3041,11 +3041,14 @@ assert.match(source, /onboardingCharacterCandidate/);
 assert.match(source, /await fetchNexonProfile\('', characterName\)/);
 assert.match(source, /button\.textContent = '이 캐릭터 연결'/);
 assert.match(source, /function resolveAppExperience\(/);
-assert.equal(run("resolveAppExperience({initialized:true,signedIn:false,cloudReady:true},{})"), 'login');
-assert.equal(run("resolveAppExperience({initialized:true,signedIn:true,cloudReady:false,credentialStatus:'loading'},{})"), 'sync');
-assert.equal(run("resolveAppExperience({initialized:true,signedIn:true,cloudReady:true,credentialStatus:'ready',hasCredential:false},{})"), 'credential');
-assert.equal(run("resolveAppExperience({initialized:true,signedIn:true,cloudReady:true,credentialStatus:'ready',hasCredential:true,linkedCharacterCount:0},{})"), 'character');
-assert.equal(run("resolveAppExperience({initialized:true,signedIn:true,cloudReady:true,credentialStatus:'ready',hasCredential:true,linkedCharacterCount:1},{wasOnboarding:false,dismissed:false})"), 'app');
+assert.equal(run("resolveAppExperience({initialized:false,signedIn:false,cloudReady:false},{})"), 'sync');
+assert.equal(run("resolveAppExperience({initialized:true,signedIn:true,cloudReady:false,credentialStatus:'ready'},{dismissed:false})"), 'sync');
+assert.equal(run("resolveAppExperience({initialized:true,signedIn:true,cloudReady:true,credentialStatus:'ready',hasCredential:true,linkedCharacterCount:1},{dismissed:true})"), 'app');
+assert.equal(run("resolveAppExperience({initialized:true,signedIn:true,cloudReady:false,credentialStatus:'ready',hasCredential:true,linkedCharacterCount:1},{dismissed:true})"), 'app');
+assert.equal(run("resolveAppExperience({initialized:true,signedIn:true,cloudReady:true,credentialStatus:'loading',hasCredential:true,linkedCharacterCount:1},{dismissed:true})"), 'app');
+assert.equal(run("resolveAppExperience({initialized:true,signedIn:false,cloudReady:false,credentialStatus:'loading'},{dismissed:true})"), 'login');
+assert.equal(run("resolveAppExperience({initialized:true,signedIn:true,cloudReady:true,credentialStatus:'ready',hasCredential:false,linkedCharacterCount:1},{dismissed:true})"), 'credential');
+assert.equal(run("resolveAppExperience({initialized:true,signedIn:true,cloudReady:true,credentialStatus:'ready',hasCredential:true,linkedCharacterCount:0},{dismissed:true})"), 'character');
 assert.equal(run("resolveAppExperience({initialized:true,signedIn:true,cloudReady:true,credentialStatus:'ready',hasCredential:true,linkedCharacterCount:1},{wasOnboarding:true,dismissed:false})"), 'complete');
 assert.match(source, /moveSharedOnboardingUi\(stage\)/);
 assert.match(source, /cloudMount\.append\(cloud\)/);
@@ -3407,9 +3410,19 @@ assert.match(cloudSource, /app\.setCloudAuthBridge\?\.\(createCloudAuthBridge\(/
 assert.match(cloudSource, /app\.onCloudSyncReady\?\.\(\{signedIn: true\}\)/);
 assert.match(cloudSource, /finally \{[\s\S]*app\.onCloudSyncReady/);
 assert.match(cloudSource, /getSession: \(\) => supabase\.auth\.getSession\(\)/);
-assert.match(cloudSource, /const showSession = session => \{\s*user = session\?\.user \|\| null;\s*notifyCloudAuthChanged\(app, user\);/);
+assert.match(cloudSource, /const showSession = session => \{\s*const nextUser = session\?\.user \|\| null;\s*const identityChanged = authIdentityChanged\(user, nextUser\);\s*user = nextUser;\s*if \(identityChanged\) notifyCloudAuthChanged\(app, user\);/);
 assert.match(cloudSource, /onAuthStateChange\([^)]*\) => window\.setTimeout\(\(\) => activate\(session\), 0\)\)/);
 assert.match(cloudSource, /supabase\.auth\.getSession\(\)\.then\(\(\{data, error\}\) => \{[\s\S]*else activate\(data\.session\)/);
+
+assert.equal(cloudSyncInternals.authIdentityChanged(null, {id: 'user-a'}), true);
+assert.equal(cloudSyncInternals.authIdentityChanged({id: 'user-a'}, {id: 'user-a'}), false);
+assert.equal(cloudSyncInternals.authIdentityChanged({id: 'user-a'}, {id: 'user-b'}), true);
+assert.equal(cloudSyncInternals.authIdentityChanged({id: 'user-a'}, null), true);
+assert.equal(cloudSyncInternals.authIdentityChanged(null, null), false);
+assert.equal(cloudSyncInternals.authIdentityChanged(
+  {id: 'user-a', access_token: 'old-token'},
+  {id: 'user-a', access_token: 'refreshed-token'}
+), false);
 
 let bridgeUser = {id: 'signed-in-user'};
 let bridgeSession = {access_token: 'supabase-access-token'};

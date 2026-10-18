@@ -1024,6 +1024,7 @@ function watchSyncBadge() {
 function resolveAppExperience({initialized = false, signedIn = false, cloudReady = false, credentialStatus = '', hasCredential = false, linkedCharacterCount = 0} = {}, {wasOnboarding = false, dismissed = false} = {}) {
   if (!initialized) return 'sync';
   if (!signedIn) return 'login';
+  if (dismissed && (!cloudReady || credentialStatus === 'loading')) return 'app';
   if (!cloudReady || credentialStatus === 'loading') return 'sync';
   if (!hasCredential) return 'credential';
   if (linkedCharacterCount < 1) return 'character';
