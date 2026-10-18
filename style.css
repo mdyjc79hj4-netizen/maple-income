@@ -17,8 +17,16 @@ p{overflow-wrap:anywhere}
 .app{max-width:720px;margin:auto;padding-bottom:calc(88px + env(safe-area-inset-bottom))}
 .top{padding:20px 20px 14px;border-bottom:1px solid var(--line);background:var(--header-bg)}
 .brand-row,.panel-head,.week-footer,.section-divider{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.brand-mark{display:grid;place-content:center;width:31px;height:31px;border-radius:10px;background:var(--accent);color:var(--primary-text);font-size:24px;font-weight:900}
-.device-save{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
+.brand-lockup{display:inline-flex;align-items:center;gap:10px;min-width:0;color:var(--text)}
+.brand-mark{display:grid;place-content:center;width:34px;height:34px;flex:0 0 34px;border-radius:11px;background:var(--accent);color:var(--primary-text)}
+.brand-mark svg{display:block;width:28px;height:28px;overflow:visible}
+.brand-mark path{fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round}
+.brand-mark-monogram{stroke-width:2.8}
+.brand-mark-bars{stroke-width:2.4}
+.brand-copy{display:grid;gap:1px;min-width:0;line-height:1.12}
+.brand-name{font-size:18px;font-weight:800;letter-spacing:-.55px}
+.brand-subtitle{overflow:hidden;color:var(--muted);font-size:10px;font-weight:600;letter-spacing:-.12px;text-overflow:ellipsis;white-space:nowrap}
+.device-save{display:flex;align-items:center;gap:6px;flex:none;font-size:11px;color:var(--muted)}
 .device-save i{width:6px;height:6px;background:var(--muted);border-radius:50%}
 .device-save.sync-pending{color:var(--amber)}
 .device-save.sync-pending i{background:var(--amber)}
@@ -641,7 +649,7 @@ dialog::backdrop{background:var(--overlay);backdrop-filter:blur(3px)}
 
 .onboarding-shell{min-height:100dvh;display:grid;place-items:center;padding:28px 18px;background:radial-gradient(circle at 50% 0,var(--mint-soft) 0,transparent 38%),var(--bg)}
 .onboarding-card{width:min(100%,540px)}
-.onboarding-brand{display:flex;align-items:center;gap:10px;margin-bottom:32px;color:var(--text);font-size:18px}
+.onboarding-brand{margin-bottom:32px}
 .onboarding-intro{margin-bottom:24px}
 .onboarding-intro .eyebrow{margin-bottom:8px;color:var(--mint);font-weight:700}
 .onboarding-intro h1{display:block;font-size:clamp(30px,8vw,42px);line-height:1.15;letter-spacing:-1.7px}
@@ -751,7 +759,7 @@ body{padding-left:184px}
 main{padding:16px 0 24px}
 .top{padding:14px 18px 10px}
 .top h1{font-size:20px}
-.top .brand-mark{width:28px;height:28px;border-radius:9px;font-size:21px}
+.top .brand-mark{width:34px;height:34px;flex-basis:34px;border-radius:11px}
 .header-stats{gap:14px;margin:9px 0 4px}
 .header-stats small{font-size:10px;margin-bottom:1px}
 .header-stats strong{font-size:21px;line-height:1.25}
@@ -866,6 +874,13 @@ button.equipment-slot:hover{border-color:var(--line-strong);background:var(--hov
 
 @media(max-width:360px){main{padding:12px}
 .top{padding:16px}
+.brand-row{gap:8px}
+.brand-lockup{gap:8px}
+.brand-mark{width:32px;height:32px;flex-basis:32px;border-radius:10px}
+.brand-mark svg{width:26px;height:26px}
+.brand-name{font-size:17px}
+.brand-subtitle{font-size:9px}
+.device-save{font-size:10px}
 .panel,.summary-main{padding:14px}
 .header-stats strong{font-size:18px}
 .metric b{font-size:14px}
