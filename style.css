@@ -352,7 +352,20 @@ dd{margin:0;font-size:12px}
 .footnote{margin-top:16px;line-height:1.7}
 .form{border:0;padding:0;margin:16px 0 0;display:grid;gap:14px}
 .form-pair{display:grid;grid-template-columns:.85fr 1.15fr;gap:10px}
-.sale-entry-grid{display:grid;gap:10px}
+.income-mode-tabs{grid-template-columns:repeat(3,minmax(0,1fr))}
+.income-mode-tabs button{min-width:0;padding-left:5px;padding-right:5px}
+.income-mode-panel{display:grid;gap:12px;padding:13px;border:1px solid var(--line);border-radius:12px;background:var(--surface-deep)}
+.income-entry-grid,.sale-entry-grid{display:grid;gap:10px}
+.income-source-tabs{margin-top:6px}
+.acquired-source-tabs{grid-template-columns:repeat(3,minmax(0,1fr))}
+.sale-source-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}
+.income-source-tabs button{min-width:0;padding-left:5px;padding-right:5px}
+.sale-price-field{display:grid;align-content:start;gap:2px;min-width:0}
+.recent-price-button{flex-basis:100%;justify-content:flex-start;min-height:32px;padding:2px 0;font-size:10px}
+.income-extra-fields{border-top:1px solid var(--line)}
+.income-extra-fields>summary{display:flex;align-items:center;min-height:44px;color:var(--text-secondary);font-size:11px;font-weight:700;cursor:pointer}
+.income-extra-fields>div{display:grid;gap:10px;padding:0 0 4px}
+#incomeFormStatus{min-height:1.4em;font-size:11px}
 .form label,.dialog-card label{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12px;color:var(--label)}
 .form label input,.form label select,.dialog-card label input,.dialog-card label select{flex-basis:100%}
 .form label>small.muted{font-size:10px}
@@ -364,7 +377,7 @@ dd{margin:0;font-size:12px}
 .income-result span,.income-result small{color:var(--text-secondary);font-size:11px}
 #incomeResultSimple{display:grid;gap:4px}
 .income-result strong{color:var(--accent-text);font-size:23px;overflow-wrap:anywhere}
-.sale-result-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.sale-result-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
 .sale-result-grid>span{display:grid;align-content:start;gap:3px;padding:8px 10px;border-left:1px solid var(--success-border)}
 .sale-result-grid>span:first-child{border-left:0;padding-left:0}
 .sale-result-grid small{display:block}
@@ -734,7 +747,9 @@ dialog::backdrop{background:var(--overlay);backdrop-filter:blur(3px)}
 .boss-controls{max-width:400px}
 .panel,.summary-main{padding:22px}
 .form-pair{grid-template-columns:1fr 1fr}
-.sale-entry-grid{grid-template-columns:minmax(180px,1.2fr) minmax(100px,.65fr) minmax(190px,1fr);align-items:start}
+.income-entry-grid{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
+.hunt-entry-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+.sale-entry-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 
 @media(min-width:1000px){
@@ -952,7 +967,7 @@ button.equipment-slot:hover{border-color:var(--line-strong);background:var(--hov
 .direct-boss-row select{padding:6px 5px;font-size:11px}
 .character-spec{grid-template-columns:1fr 1fr}
 .character-stat-groups{grid-template-columns:1fr;gap:12px}
-.sale-entry-grid,.sale-result-grid{grid-template-columns:1fr}
+.income-mode-panel{padding:11px 10px}.income-mode-tabs button,.income-source-tabs button{font-size:11px}.income-entry-grid,.sale-entry-grid,.sale-result-grid{grid-template-columns:1fr}
 .sale-result-grid>span{grid-template-columns:minmax(0,1fr) auto;align-items:baseline;padding:5px 0;border-left:0;border-top:1px solid var(--success-border)}
 .sale-result-grid>span:first-child{border-top:0;padding-top:0}
 .sale-result-grid b,.sale-result-grid strong{font-size:14px;text-align:right}

@@ -142,6 +142,42 @@ function saleAmounts(quantity, unitPrice, feeRate) {
   const feeAmount = Math.floor(grossSale / 100) * percent + Math.floor((grossSale % 100) * percent / 100);
   return {feeRate: normalizedRate, grossSale, feeAmount, netSale: grossSale - feeAmount};
 }
+function saleAmountsWithCost(quantity, unitPrice, feeRate, materialCost = 0) {
+  const amounts = saleAmounts(quantity, unitPrice, feeRate), cost = n(materialCost);
+  if (!amounts || !Number.isSafeInteger(cost) || cost < 0 || !Number.isSafeInteger(amounts.netSale - cost)) return null;
+  return {...amounts, materialCost: cost, netSale: amounts.netSale - cost};
+}
+function incomeClassificationFields(value) {
+  if (value === 'hunt') return {category: 'hunt'};
+  if (value === 'gather') return {category: 'gather'};
+  if (value === 'boss') return {category: 'drop', sourceType: 'boss'};
+  return {category: 'drop', sourceType: 'other'};
+}
+function incomeClassificationForRecord(row) {
+  if (row?.category === 'hunt') return 'hunt';
+  if (row?.category === 'gather') return 'gather';
+  return row?.sourceType === 'boss' ? 'boss' : 'other';
+}
+function incomeCharacterFields(characterId, characters = []) {
+  const character = (characters || []).find(item => item.id === characterId);
+  return character ? {characterId: character.id, characterNameSnapshot: character.name} : {};
+}
+function recentItemPrice(item, itemPrices = {}) {
+  const price = n(itemPrices?.[String(item || '').trim()]);
+  return Number.isSafeInteger(price) && price > 0 ? price : 0;
+}
+function buildHuntIncomeRows({mesoAmount = 0, solErdaPieces = 0, coreGemstones = 0, memo = '', characterId = '', characterNameSnapshot = '', weekId = '', batchId = uid(), createdAt = Date.now(), date = new Date(createdAt).toLocaleString('ko-KR'), idFactory = uid} = {}) {
+  const values = [mesoAmount, solErdaPieces, coreGemstones].map(n);
+  if (values.some(value => !Number.isSafeInteger(value) || value < 0)) return null;
+  const [meso, solErda, coreGems] = values;
+  if (!values.some(value => value > 0)) return [];
+  const shared = {date, createdAt, weekId, category: 'hunt', categoryLabel: labels.hunt, batchId, ...(memo.trim() ? {memo: memo.trim()} : {}), ...(characterId ? {characterId, characterNameSnapshot: characterNameSnapshot || ''} : {})};
+  const rows = [];
+  if (meso > 0) rows.push({...shared, id: idFactory(), item: '메소', recordType: 'income', saleState: 'direct', amount: meso, netIncome: meso});
+  if (solErda > 0) rows.push({...shared, id: idFactory(), item: '솔 에르다 조각', recordType: 'acquired', saleState: 'acquired', qty: solErda, quantity: solErda, netIncome: 0});
+  if (coreGems > 0) rows.push({...shared, id: idFactory(), item: '코어 젬스톤', recordType: 'acquired', saleState: 'acquired', qty: coreGems, quantity: coreGems, netIncome: 0});
+  return rows;
+}
 function koreanMeso(value) {
   let rest = Math.abs(Math.trunc(n(value))); const parts = [];
   for (const [size, unit] of [[1e12, '조'], [1e8, '억'], [1e4, '만']]) {
@@ -968,7 +1004,7 @@ function rollover(data, now = new Date()) {
 
 let state, savedRaw = null, storageBlocked = false, migrationSyncInfo = null;
 let selectedWeek = '', bossFilter = 'pending', historyFilter = 'all', selectedBossCharacterId = '', selectedActivityCharacterId = '', characterMode = 'preset', presetApplyMode = 'add';
-let editingIncomeId = '', editSaleState = 'acquired', incomeFeeRateDraft = null;
+let editingIncomeId = '', incomeEntryMode = 'hunt', incomeAcquireSource = 'gather', incomeSaleSource = 'hunt', incomeFeeRateDraft = null, incomeCharacterSelection = null;
 let selectedHubCharacterId = '', activeCharacterHubTab = 'overview';
 let nexonApiState = {status: 'idle', message: '연동할 캐릭터를 선택해주세요.', diagnostics: null};
 let nexonSchedulerDiagnosticState = {status: 'idle', characterId: '', result: null, message: '진단을 실행하면 두 요청 결과를 비교합니다.'};
@@ -1890,15 +1926,23 @@ function historyMatches(row) {
   if (historyFilter === 'unsold') return kind === 'acquired';
   return row.category === historyFilter;
 }
+function incomeRecordCategoryLabel(row) {
+  if (row?.category === 'drop' && row.sourceType === 'boss') return '보스 드랍';
+  if (row?.category === 'drop' && row.sourceType === 'other') return '기타';
+  return labels[row?.category] || row?.categoryLabel || '기타';
+}
+function incomeRecordCharacterLabel(row, data) {
+  return row?.characterNameSnapshot || (data?.characters || []).find(character => character.id === row?.characterId)?.name || '';
+}
 function renderHomeRecent(data) {
   const target = $('#homeRecentRecords');
   if (!target) return;
   const rows = (data.incomes || []).map((row, index) => ({row, index})).sort((a, b) => n(b.row.createdAt) - n(a.row.createdAt) || b.index - a.index).slice(0, 3);
   target.innerHTML = rows.map(({row}) => {
     const value = incomeValue(row), kind = recordKind(row);
-    const category = labels[row.category] || row.categoryLabel || '기타';
-    const detail = kind === 'income' ? '직접 획득' : kind === 'acquired' ? `${won(row.qty ?? row.quantity)}개 · 미판매` : `${won(row.qty ?? row.quantity)}개 판매`;
-    return `<div class="home-recent-row"><b>${escapeHtml(row.item)}</b><strong class="${kind === 'acquired' ? 'muted' : value < 0 ? 'negative' : 'mint'}">${kind === 'acquired' ? '—' : `${value >= 0 ? '+' : ''}${koreanMeso(value)}`}</strong><small class="home-recent-detail">${escapeHtml(category)} · ${escapeHtml(detail)}</small><small class="home-recent-time">${escapeHtml(historyDate(row))}</small></div>`;
+    const category = incomeRecordCategoryLabel(row), character = incomeRecordCharacterLabel(row, data);
+    const detail = kind === 'income' ? '직접 획득' : kind === 'acquired' ? `${won(row.qty ?? row.quantity)}개 · 획득 기록` : `${won(row.qty ?? row.quantity)}개 판매`;
+    return `<div class="home-recent-row"><b>${escapeHtml(row.item)}</b><strong class="${kind === 'acquired' ? 'muted' : value < 0 ? 'negative' : 'mint'}">${kind === 'acquired' ? '—' : `${value >= 0 ? '+' : ''}${koreanMeso(value)}`}</strong><small class="home-recent-detail">${escapeHtml([category, character, detail].filter(Boolean).join(' · '))}</small><small class="home-recent-time">${escapeHtml(historyDate(row))}</small></div>`;
   }).join('') || '<p class="empty compact-empty">아직 저장된 수익 기록이 없습니다.</p>';
 }
 function renderHistory(data) {
@@ -1906,15 +1950,15 @@ function renderHistory(data) {
   $('#incomeHistory').innerHTML = rows.map(({row: r}) => {
     const kind = recordKind(r), value = incomeValue(r), qty = won(r.qty ?? r.quantity);
     const feeRecorded = kind === 'sold' && r.feeRate != null && r.grossSale != null && r.feeAmount != null && r.netSale != null;
-    const category = escapeHtml(labels[r.category] || r.categoryLabel || '기타');
+    const category = escapeHtml(incomeRecordCategoryLabel(r)), character = escapeHtml(incomeRecordCharacterLabel(r, data));
     const item = escapeHtml(r.item);
     const unitPrice = n(r.salePrice ?? r.price ?? r.unitPrice);
     const detail = kind === 'income'
       ? '직접 획득'
       : kind === 'acquired'
-        ? `${qty}개 · 미판매`
+        ? `${qty}개 · 획득 기록${r.source ? ` · ${r.source}` : ''}`
         : feeRecorded
-          ? `${qty}개 판매 · 개당 ${koreanMeso(unitPrice)} · 수수료 ${saleFeePercent(r.feeRate)}%`
+          ? `${qty}개 판매 · 개당 ${koreanMeso(unitPrice)} · 수수료 ${saleFeePercent(r.feeRate)}%${n(r.materialCost) ? ` · 소재비 ${koreanMeso(r.materialCost)}` : ''}`
           : `${qty}개 판매 · 기존 계산값`;
     const result = kind === 'income'
       ? `<small>획득</small><span class="${value < 0 ? 'negative' : 'mint'}">${value >= 0 ? '+' : ''}${koreanMeso(value)}</span>`
@@ -1922,7 +1966,8 @@ function renderHistory(data) {
         ? `<small>실수령</small><span class="${value < 0 ? 'negative' : 'mint'}">${value >= 0 ? '+' : ''}${koreanMeso(value)}</span>`
         : '<span class="muted">—</span>';
     const disabled = isPast() || storageBlocked;
-    return `<article class="history-item compact-record"><span class="record-category">${category}</span><div class="record-item"><b><span class="record-category-inline">${category} · </span>${item}</b>${r.memo ? `<small class="record-memo muted">${escapeHtml(r.memo)}</small>` : ''}</div><p class="record-detail ${kind === 'acquired' ? 'pending' : value < 0 ? 'negative' : 'mint'}">${escapeHtml(detail)}</p><strong class="record-value">${result}</strong><small class="record-time muted">${escapeHtml(historyDate(r))}</small><details class="more-menu record-more ${disabled ? 'hidden' : ''}"><summary aria-label="${item} 기록 메뉴">⋯</summary><div class="more-menu-popover"><button type="button" data-income-action="edit" data-income-id="${escapeHtml(r.id)}">수정</button><button type="button" class="danger-text" data-income-action="delete" data-income-id="${escapeHtml(r.id)}">삭제</button></div></details></article>`;
+    const meta = [character, r.memo ? escapeHtml(r.memo) : ''].filter(Boolean).join(' · ');
+    return `<article class="history-item compact-record"><span class="record-category">${category}</span><div class="record-item"><b><span class="record-category-inline">${category} · </span>${item}</b>${meta ? `<small class="record-memo muted">${meta}</small>` : ''}</div><p class="record-detail ${kind === 'acquired' ? 'pending' : value < 0 ? 'negative' : 'mint'}">${escapeHtml(detail)}</p><strong class="record-value">${result}</strong><small class="record-time muted">${escapeHtml(historyDate(r))}</small><details class="more-menu record-more ${disabled ? 'hidden' : ''}"><summary aria-label="${item} 기록 메뉴">⋯</summary><div class="more-menu-popover"><button type="button" data-income-action="edit" data-income-id="${escapeHtml(r.id)}">수정</button><button type="button" class="danger-text" data-income-action="delete" data-income-id="${escapeHtml(r.id)}">삭제</button></div></details></article>`;
   }).join('') || '<p class="empty">이 필터에 해당하는 기록이 없습니다.</p>';
 }
 function renderPrices() {
@@ -2673,40 +2718,51 @@ async function syncAllNexonCharacters({automatic = false} = {}) {
   renderNexonSettings();
   return true;
 }
-function renderIncomeForm(resetItems = false) {
-  const category = $('#incomeCategory').value;
-  if (resetItems || !$('#incomeItem').options.length) $('#incomeItem').innerHTML = items[category].map(item => option(item, item)).join('');
-  const meso = $('#incomeItem').value === '메소', acquired = !meso && state.saleState !== 'sold';
+function renderIncomeCharacterOptions() {
+  const characters = state.characters || [];
+  if (incomeCharacterSelection == null) incomeCharacterSelection = characters.length === 1 ? characters[0].id : '';
+  if (incomeCharacterSelection && !characters.some(character => character.id === incomeCharacterSelection)) incomeCharacterSelection = '';
+  $('#incomeCharacter').innerHTML = option('', '공용 / 미지정', !incomeCharacterSelection) + characters.map(character => option(character.id, character.name, character.id === incomeCharacterSelection)).join('');
+  $('#incomeCharacter').value = incomeCharacterSelection;
+}
+function renderIncomeForm() {
+  renderIncomeCharacterOptions();
   incomeFeeRateDraft = normalizeSaleFeeRate(incomeFeeRateDraft ?? state.settings.defaultSaleFeeRate);
   $('#incomeFeeRate').value = String(incomeFeeRateDraft);
-  for (const [id, hide] of Object.entries({mesoWrap: !meso, qtyWrap: meso, priceWrap: meso || acquired, feeWrap: meso || acquired, saleStateWrap: meso, sourceWrap: meso || !acquired, incomeResult: acquired, customItemWrap: category !== 'drop'})) {
-    $('#' + id).classList.toggle('hidden', hide);
-    // Hidden numeric fields must not block a different record type's native validation.
-    $$('#' + id + ' input').forEach(input => { input.disabled = hide; });
+  for (const [mode, id] of Object.entries({hunt: 'huntIncomeFields', acquired: 'acquiredIncomeFields', sold: 'soldIncomeFields'})) {
+    const hidden = incomeEntryMode !== mode, panel = $('#' + id);
+    panel.classList.toggle('hidden', hidden);
+    panel.querySelectorAll('input, select').forEach(control => { control.disabled = hidden; });
   }
-  $$('[data-sale]').forEach(b => { b.classList.toggle('active', b.dataset.sale === (state.saleState === 'sold' ? 'sold' : 'acquired')); b.setAttribute('aria-pressed', b.classList.contains('active')); });
-  $('#incomeSubmit').textContent = meso ? '메소 수익 기록' : acquired ? '획득 기록 추가' : '판매 수익 기록'; updateIncomePreview();
+  $$('[data-income-mode]').forEach(button => { const active = button.dataset.incomeMode === incomeEntryMode; button.classList.toggle('active', active); button.setAttribute('aria-pressed', active); });
+  $$('[data-acquire-source]').forEach(button => { const active = button.dataset.acquireSource === incomeAcquireSource; button.classList.toggle('active', active); button.setAttribute('aria-pressed', active); });
+  $$('[data-sale-source]').forEach(button => { const active = button.dataset.saleSource === incomeSaleSource; button.classList.toggle('active', active); button.setAttribute('aria-pressed', active); });
+  $('#incomeSubmit').textContent = incomeEntryMode === 'hunt' ? '재획 기록 저장' : incomeEntryMode === 'acquired' ? '획득 기록 저장' : '판매 기록 저장';
+  updateIncomePreview();
 }
 function incomeDraft() {
-  const category = $('#incomeCategory').value, item = category === 'drop' ? $('#customItem').value.trim() || $('#incomeItem').value : $('#incomeItem').value;
-  const meso = category === 'hunt' && item === '메소';
-  return {category, item, kind: meso ? 'income' : state.saleState === 'sold' ? 'sold' : 'acquired', amount: n($('#mesoAmount').value), qty: n($('#incomeQty').value), price: n($('#incomePrice').value), feeRate: normalizeSaleFeeRate($('#incomeFeeRate').value)};
+  const character = incomeCharacterFields($('#incomeCharacter').value, state.characters);
+  if (incomeEntryMode === 'hunt') return {mode: 'hunt', mesoAmount: n($('#huntMesoAmount').value), solErdaPieces: n($('#huntSolErdaQty').value), coreGemstones: n($('#huntCoreGemQty').value), memo: $('#huntMemo').value.trim(), ...character};
+  if (incomeEntryMode === 'acquired') return {mode: 'acquired', item: $('#acquiredItem').value.trim(), qty: n($('#acquiredQty').value), source: $('#acquiredSource').value.trim(), memo: $('#acquiredMemo').value.trim(), ...incomeClassificationFields(incomeAcquireSource), ...character};
+  return {mode: 'sold', item: $('#soldItem').value.trim(), qty: n($('#soldQty').value), price: n($('#soldPrice').value), materialCost: n($('#soldMaterialCost').value), feeRate: normalizeSaleFeeRate($('#incomeFeeRate').value), memo: $('#soldMemo').value.trim(), ...incomeClassificationFields(incomeSaleSource), ...character};
+}
+function updateRecentPriceControl() {
+  const button = $('#applyRecentPrice'), price = recentItemPrice($('#soldItem').value, state.settings.itemPrices);
+  button.classList.toggle('hidden', !price);
+  button.textContent = price ? `최근 단가 ${won(price)} 메소 적용` : '';
+  button.dataset.price = price ? String(price) : '';
 }
 function updateIncomePreview() {
-  const d = incomeDraft(), sold = d.kind === 'sold';
-  $('#incomeResultSimple').classList.toggle('hidden', sold); $('#saleResult').classList.toggle('hidden', !sold);
-  if (sold) {
-    const amounts = saleAmounts(d.qty, d.price, d.feeRate) || {grossSale: 0, feeAmount: 0, netSale: 0, feeRate: d.feeRate};
-    $('#saleGrossValue').textContent = `${koreanMeso(amounts.grossSale)} 메소`;
-    $('#saleFeeLabel').textContent = `수수료 ${saleFeePercent(amounts.feeRate)}%`;
-    $('#saleFeeValue').textContent = `-${koreanMeso(amounts.feeAmount)} 메소`;
-    $('#saleNetValue').textContent = `${koreanMeso(amounts.netSale)} 메소`;
-    return amounts;
-  }
-  const amount = d.kind === 'income' ? d.amount : 0;
-  $('#incomeResultValue').textContent = `${koreanMeso(amount)} 메소`; $('#incomeResultLabel').textContent = '즉시 반영할 수익';
-  $('#incomeResultDetail').textContent = `${won(amount)} 메소`;
-  return {grossSale: amount, feeAmount: 0, netSale: amount, feeRate: 0};
+  updateRecentPriceControl();
+  if (incomeEntryMode !== 'sold') return null;
+  const d = incomeDraft();
+  const amounts = saleAmountsWithCost(d.qty, d.price, d.feeRate, d.materialCost) || {grossSale: 0, feeAmount: 0, materialCost: Math.max(0, d.materialCost), netSale: 0, feeRate: d.feeRate};
+  $('#saleGrossValue').textContent = `${koreanMeso(amounts.grossSale)} 메소`;
+  $('#saleFeeLabel').textContent = `수수료 ${saleFeePercent(amounts.feeRate)}%`;
+  $('#saleFeeValue').textContent = `-${koreanMeso(amounts.feeAmount)} 메소`;
+  $('#saleCostValue').textContent = `-${koreanMeso(amounts.materialCost)} 메소`;
+  $('#saleNetValue').textContent = `${koreanMeso(amounts.netSale)} 메소`;
+  return amounts;
 }
 function formatMoneyInput(input) {
   const count = input.value.slice(0, input.selectionStart).replace(/\D/g, '').length, digits = input.value.replace(/\D/g, '');
@@ -2843,52 +2899,62 @@ function resetCurrentWeek(data, now = new Date()) {
 }
 function openIncomeEdit(id) {
   const row = state.incomes.find(item => item.id === id); if (!row || isPast()) return;
-  editingIncomeId = id; editSaleState = recordKind(row) === 'sold' ? 'sold' : 'acquired';
-  const meso = recordKind(row) === 'income';
+  editingIncomeId = id;
+  const kind = recordKind(row), meso = kind === 'income';
   $('#incomeEditLabel').textContent = `${labels[row.category] || row.categoryLabel || '기타'} · ${row.item}`;
-  $('#editCategory').value = row.category || 'drop'; $('#editItem').value = row.item || '';
+  const characters = state.characters || [], currentCharacter = characters.find(character => character.id === row.characterId);
+  const missingCharacterOption = row.characterId && !currentCharacter ? option(row.characterId, `${row.characterNameSnapshot || '삭제된 캐릭터'} (현재 목록에 없음)`, true) : '';
+  $('#editCharacter').innerHTML = option('', '공용 / 미지정', !row.characterId) + characters.map(character => option(character.id, character.name, character.id === row.characterId)).join('') + missingCharacterOption;
+  $('#editCharacter').value = row.characterId || '';
+  $('#editClassification').value = incomeClassificationForRecord(row); $('#editItem').value = row.item || '';
   $('#editAmount').value = meso ? won(row.amount ?? row.netIncome) : '';
   $('#editQty').value = meso ? 1 : n(row.qty ?? row.quantity) || 1;
-  $('#editPrice').value = editSaleState === 'sold' ? won(row.salePrice ?? row.price ?? row.unitPrice) : '';
+  $('#editPrice').value = kind === 'sold' ? won(row.salePrice ?? row.price ?? row.unitPrice) : '';
   $('#editFeeRate').value = String(row.feeRate == null ? normalizeSaleFeeRate(state.settings.defaultSaleFeeRate) : normalizeSaleFeeRate(row.feeRate));
+  $('#editMaterialCost').value = kind === 'sold' && n(row.materialCost) ? won(row.materialCost) : '';
   $('#editSource').value = row.source || ''; $('#editMemo').value = row.memo || '';
-  $('#incomeEditDialog').dataset.meso = meso ? 'true' : 'false'; updateIncomeEditUI(); $('#incomeEditDialog').showModal();
+  $('#incomeEditDialog').dataset.kind = kind; updateIncomeEditUI(); $('#incomeEditDialog').showModal();
 }
 function updateIncomeEditUI() {
-  const meso = $('#incomeEditDialog').dataset.meso === 'true', sold = editSaleState === 'sold';
-  for (const [id, hide] of Object.entries({editCategoryWrap: meso, editItemWrap: meso, editSaleStateWrap: meso, editAmountWrap: !meso, editQtyWrap: meso, editPriceWrap: meso || !sold, editFeeWrap: meso || !sold, editSaleResult: meso || !sold, editSourceWrap: meso || sold, editMemoWrap: meso})) $('#' + id).classList.toggle('hidden', hide);
-  $$('[data-edit-sale]').forEach(button => { const active = button.dataset.editSale === editSaleState; button.classList.toggle('active', active); button.setAttribute('aria-pressed', active); });
+  const kind = $('#incomeEditDialog').dataset.kind, meso = kind === 'income', sold = kind === 'sold';
+  for (const [id, hide] of Object.entries({editClassificationWrap: meso, editItemWrap: meso, editAmountWrap: !meso, editQtyWrap: meso, editPriceWrap: !sold, editFeeWrap: !sold, editCostWrap: !sold, editSaleResult: !sold, editSourceWrap: kind !== 'acquired'})) $('#' + id).classList.toggle('hidden', hide);
   updateIncomeEditPreview();
 }
 function updateIncomeEditPreview() {
-  if ($('#incomeEditDialog').dataset.meso === 'true' || editSaleState !== 'sold') return null;
-  const amounts = saleAmounts(n($('#editQty').value), n($('#editPrice').value), $('#editFeeRate').value) || {grossSale: 0, feeAmount: 0, netSale: 0, feeRate: normalizeSaleFeeRate($('#editFeeRate').value)};
+  if ($('#incomeEditDialog').dataset.kind !== 'sold') return null;
+  const cost = n($('#editMaterialCost').value);
+  const amounts = saleAmountsWithCost(n($('#editQty').value), n($('#editPrice').value), $('#editFeeRate').value, cost) || {grossSale: 0, feeAmount: 0, materialCost: Math.max(0, cost), netSale: 0, feeRate: normalizeSaleFeeRate($('#editFeeRate').value)};
   $('#editGrossValue').textContent = `${koreanMeso(amounts.grossSale)} 메소`;
   $('#editFeeLabel').textContent = `수수료 ${saleFeePercent(amounts.feeRate)}%`;
   $('#editFeeValue').textContent = `-${koreanMeso(amounts.feeAmount)} 메소`;
+  $('#editCostValue').textContent = `-${koreanMeso(amounts.materialCost)} 메소`;
   $('#editNetValue').textContent = `${koreanMeso(amounts.netSale)} 메소`;
   return amounts;
 }
 function saveIncomeEdit() {
   const index = state.incomes.findIndex(row => row.id === editingIncomeId); if (index < 0) return false;
-  const current = state.incomes[index], meso = recordKind(current) === 'income';
-  const amount = n($('#editAmount').value), qty = n($('#editQty').value), price = n($('#editPrice').value), feeRate = normalizeSaleFeeRate($('#editFeeRate').value);
+  const current = state.incomes[index], kind = recordKind(current), meso = kind === 'income', sold = kind === 'sold';
+  const amount = n($('#editAmount').value), qty = n($('#editQty').value), price = n($('#editPrice').value), materialCost = n($('#editMaterialCost').value), feeRate = normalizeSaleFeeRate($('#editFeeRate').value);
   if (meso ? !Number.isSafeInteger(amount) || amount <= 0 : !Number.isSafeInteger(qty) || qty < 1) { message('금액 또는 수량을 올바르게 입력해 주세요.', true); return false; }
-  const sale = !meso && editSaleState === 'sold' ? saleAmounts(qty, price, feeRate) : null;
-  if (!meso && editSaleState === 'sold' && !sale) { message('판매가와 수량을 올바르게 입력해 주세요.', true); return false; }
+  const sale = sold ? saleAmountsWithCost(qty, price, feeRate, materialCost) : null;
+  if (sold && !sale) { message('판매가, 수량 또는 소재비를 올바르게 입력해 주세요.', true); return false; }
   return transaction(next => {
-    const row = next.incomes[index]; row.memo = $('#editMemo').value.trim();
+    const row = next.incomes[index], selectedCharacterId = $('#editCharacter').value;
+    row.memo = $('#editMemo').value.trim(); delete row.characterId; delete row.characterNameSnapshot;
+    const selectedCharacter = next.characters.find(character => character.id === selectedCharacterId);
+    if (selectedCharacter) Object.assign(row, {characterId: selectedCharacter.id, characterNameSnapshot: selectedCharacter.name});
+    else if (selectedCharacterId === current.characterId && current.characterId) Object.assign(row, {characterId: current.characterId, characterNameSnapshot: current.characterNameSnapshot || ''});
     if (meso) Object.assign(row, {amount, netIncome: amount, recordType: 'income', saleState: 'direct'});
     else {
-      const category = $('#editCategory').value, item = $('#editItem').value.trim(); if (!item) throw new Error('아이템명을 입력해 주세요.');
-      Object.assign(row, {category, categoryLabel: labels[category], item, qty, quantity: qty, recordType: editSaleState, saleState: editSaleState});
+      const classification = incomeClassificationFields($('#editClassification').value), item = $('#editItem').value.trim(); if (!item) throw new Error('아이템명을 입력해 주세요.');
+      delete row.sourceType; Object.assign(row, classification, {categoryLabel: labels[classification.category], item, qty, quantity: qty, recordType: kind, saleState: kind});
       delete row.amount; delete row.grossIncome;
-      if (editSaleState === 'acquired') {
+      if (kind === 'acquired') {
         Object.assign(row, {netIncome: 0, source: $('#editSource').value.trim()});
         for (const key of ['type', 'salePrice', 'price', 'unitPrice', 'materialCost', 'feeRate', 'grossSale', 'feeAmount', 'netSale', 'grossIncome']) delete row[key];
       } else {
         Object.assign(row, {type: 'sale', salePrice: price, price, unitPrice: price, ...sale, grossIncome: sale.grossSale, netIncome: sale.netSale});
-        delete row.source; (next.settings.itemPrices ||= {})[item] = price;
+        (next.settings.itemPrices ||= {})[item] = price;
       }
     }
   });
@@ -3439,10 +3505,12 @@ function init() {
   });
   $('#bossToAdd').addEventListener('change', updateBossDialogOptions);
   $('#bossForm').addEventListener('submit', e => { e.preventDefault(); const ci = n($('#bossDialog').dataset.ci), name = $('#bossToAdd').value, difficulty = $('#bossDifficulty').value, partySize = n($('#bossPartySize').value); if (transaction(next => { if (!next.characters[ci].bosses.some(b => b.bossId === bossIdFor(name))) next.characters[ci].bosses.push(makeBoss({bossId: bossIdFor(name), difficulty, partySize})); })) $('#bossDialog').close(); });
-  $('#incomeCategory').addEventListener('change', () => { incomeFeeRateDraft = null; renderIncomeForm(true); });
-  $('#incomeItem').addEventListener('change', () => { incomeFeeRateDraft = null; renderIncomeForm(); });
-  $$('[data-sale]').forEach(b => b.addEventListener('click', () => { state.saleState = b.dataset.sale; if (state.saleState === 'sold') incomeFeeRateDraft = normalizeSaleFeeRate(state.settings.defaultSaleFeeRate); renderIncomeForm(); }));
+  $$('[data-income-mode]').forEach(button => button.addEventListener('click', () => { incomeEntryMode = button.dataset.incomeMode; $('#incomeFormStatus').textContent = ''; renderIncomeForm(); }));
+  $$('[data-acquire-source]').forEach(button => button.addEventListener('click', () => { incomeAcquireSource = button.dataset.acquireSource; renderIncomeForm(); }));
+  $$('[data-sale-source]').forEach(button => button.addEventListener('click', () => { incomeSaleSource = button.dataset.saleSource; renderIncomeForm(); }));
+  $('#incomeCharacter').addEventListener('change', () => { incomeCharacterSelection = $('#incomeCharacter').value; });
   $('#incomeFeeRate').addEventListener('change', () => { incomeFeeRateDraft = normalizeSaleFeeRate($('#incomeFeeRate').value); updateIncomePreview(); });
+  $('#applyRecentPrice').addEventListener('click', () => { const price = n($('#applyRecentPrice').dataset.price); if (!price) return; $('#soldPrice').value = won(price); updateIncomePreview(); });
   document.addEventListener('input', e => {
     if (e.target.classList.contains('money-input')) formatMoneyInput(e.target);
     if (e.target.closest('#incomeForm')) updateIncomePreview();
@@ -3451,17 +3519,33 @@ function init() {
   $('#editFeeRate').addEventListener('change', updateIncomeEditPreview);
   $('#incomeForm').addEventListener('submit', e => {
     e.preventDefault(); const d = incomeDraft();
-    if (d.kind === 'income' ? !Number.isSafeInteger(d.amount) || d.amount <= 0 : !Number.isSafeInteger(d.qty) || d.qty < 1) { message('금액 또는 수량을 올바르게 입력해 주세요.', true); return; }
-    const sale = d.kind === 'sold' ? saleAmounts(d.qty, d.price, d.feeRate) : null;
-    if (d.kind === 'sold' && !sale) { message('판매가와 수량을 올바르게 입력해 주세요.', true); return; }
+    const invalid = text => { $('#incomeFormStatus').textContent = text; message(text, true); };
+    if (d.mode === 'hunt' && [d.mesoAmount, d.solErdaPieces, d.coreGemstones].some(value => !Number.isSafeInteger(value) || value < 0)) { invalid('금액과 수량은 0 이상의 정수로 입력해 주세요.'); return; }
+    if (d.mode === 'hunt' && ![d.mesoAmount, d.solErdaPieces, d.coreGemstones].some(value => value > 0)) { invalid('획득 메소나 아이템 수량을 하나 이상 입력해 주세요.'); return; }
+    if (d.mode === 'acquired' && (!d.item || !Number.isSafeInteger(d.qty) || d.qty < 1)) { invalid('아이템명과 수량을 올바르게 입력해 주세요.'); return; }
+    const sale = d.mode === 'sold' ? saleAmountsWithCost(d.qty, d.price, d.feeRate, d.materialCost) : null;
+    if (d.mode === 'sold' && (!d.item || !sale)) { invalid('아이템명, 수량, 판매가 또는 소재비를 올바르게 입력해 주세요.'); return; }
     const ok = transaction(next => {
-      const row = {id: uid(), date: new Date().toLocaleString('ko-KR'), createdAt: Date.now(), weekId: next.currentWeek, category: d.category, categoryLabel: labels[d.category], item: d.item, recordType: d.kind, memo: $('#incomeMemo').value.trim()};
-      if (d.kind === 'income') Object.assign(row, {amount: d.amount, netIncome: d.amount, saleState: 'direct'});
-      else if (d.kind === 'acquired') Object.assign(row, {qty: d.qty, quantity: d.qty, netIncome: 0, saleState: 'acquired', source: $('#incomeSource').value.trim()});
-      else { Object.assign(row, {type: 'sale', qty: d.qty, quantity: d.qty, salePrice: d.price, price: d.price, unitPrice: d.price, ...sale, grossIncome: sale.grossSale, netIncome: sale.netSale, saleState: 'sold'}); (next.settings.itemPrices ||= {})[d.item] = d.price; }
+      const createdAt = Date.now(), date = new Date(createdAt).toLocaleString('ko-KR');
+      if (d.mode === 'hunt') {
+        const rows = buildHuntIncomeRows({...d, weekId: next.currentWeek, createdAt, date});
+        if (!rows?.length) throw new Error('재획 기록을 만들 수 없습니다.');
+        next.incomes.push(...rows);
+        return;
+      }
+      const row = {id: uid(), date, createdAt, weekId: next.currentWeek, category: d.category, categoryLabel: labels[d.category], ...(d.sourceType ? {sourceType: d.sourceType} : {}), item: d.item, qty: d.qty, quantity: d.qty, memo: d.memo, ...(d.characterId ? {characterId: d.characterId, characterNameSnapshot: d.characterNameSnapshot} : {})};
+      if (d.mode === 'acquired') Object.assign(row, {recordType: 'acquired', saleState: 'acquired', netIncome: 0, ...(d.source ? {source: d.source} : {})});
+      else { Object.assign(row, {recordType: 'sold', saleState: 'sold', type: 'sale', salePrice: d.price, price: d.price, unitPrice: d.price, ...sale, grossIncome: sale.grossSale, netIncome: sale.netSale}); (next.settings.itemPrices ||= {})[d.item] = d.price; }
       next.incomes.push(row);
     });
-    if (ok) { for (const id of ['mesoAmount', 'incomePrice', 'incomeSource', 'incomeMemo']) $('#' + id).value = ''; $('#incomeQty').value = '1'; incomeFeeRateDraft = normalizeSaleFeeRate(state.settings.defaultSaleFeeRate); $$('#incomeForm .money-hint').forEach(el => { el.textContent = ''; }); renderIncomeForm(); }
+    if (ok) {
+      const resetIds = incomeEntryMode === 'hunt' ? ['huntMesoAmount', 'huntSolErdaQty', 'huntCoreGemQty', 'huntMemo'] : incomeEntryMode === 'acquired' ? ['acquiredItem', 'acquiredSource', 'acquiredMemo'] : ['soldItem', 'soldPrice', 'soldMaterialCost', 'soldMemo'];
+      resetIds.forEach(id => { $('#' + id).value = ''; });
+      if (incomeEntryMode === 'acquired') $('#acquiredQty').value = '1';
+      if (incomeEntryMode === 'sold') $('#soldQty').value = '1';
+      incomeFeeRateDraft = normalizeSaleFeeRate(state.settings.defaultSaleFeeRate); $('#incomeFormStatus').textContent = '기록을 저장했습니다.';
+      $$('#incomeForm .money-hint').forEach(el => { el.textContent = ''; }); renderIncomeForm();
+    }
   });
   $('#incomeHistory').addEventListener('click', e => {
     const button = e.target.closest('[data-income-action]'); if (!button || isPast()) return;
@@ -3469,7 +3553,6 @@ function init() {
     if (button.dataset.incomeAction === 'edit') openIncomeEdit(row.id);
     if (button.dataset.incomeAction === 'delete' && confirm(`${labels[row.category] || '기타'} · ${row.item} 기록을 삭제할까요? 수익 합계에서 즉시 제외됩니다.`)) transaction(next => { next.incomes = next.incomes.filter(item => item.id !== row.id); });
   });
-  $$('[data-edit-sale]').forEach(button => button.addEventListener('click', () => { editSaleState = button.dataset.editSale; updateIncomeEditUI(); }));
   $('#incomeEditForm').addEventListener('submit', e => { e.preventDefault(); if (saveIncomeEdit()) { editingIncomeId = ''; $('#incomeEditDialog').close(); } });
   $('#defaultSaleFeeRate').addEventListener('change', () => {
     const feeRate = normalizeSaleFeeRate($('#defaultSaleFeeRate').value);
