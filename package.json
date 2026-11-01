@@ -12,6 +12,7 @@
     "@supabase/supabase-js": "^2.57.4"
   },
   "devDependencies": {
-    "vite": "^7.1.7"
+    "vite": "^7.1.7",
+    "vite-plugin-pwa": "^2.0.0"
   }
 }
