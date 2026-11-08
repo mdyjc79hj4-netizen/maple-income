@@ -392,20 +392,117 @@ function monthlyBossIncomeForWeek(boss, weekId = '') {
     .filter(entry => !weekId || entry.weekId === weekId)
     .reduce((sum, entry) => sum + n(entry.income), 0);
 }
-function migrateBlackMageReferencePrice(boss, now = new Date()) {
-  if (!isMonthlyBoss(boss) || dateKey(now) < BLACK_MAGE_PRICE_CHANGE_DATE) return false;
+function migrateBlackMageReferencePrice(boss, referenceDate = new Date()) {
+  if (!isMonthlyBoss(boss)) return false;
   const legacyPrice = legacyBlackMagePrices[boss.difficulty], currentPrice = bossDB['검은 마법사']?.[boss.difficulty];
-  if (!legacyPrice || !currentPrice || n(boss.price) !== legacyPrice) return false;
+  if (!legacyPrice || !currentPrice) return false;
   const partySize = Math.max(1, n(boss.party ?? boss.partySize) || 1);
   const legacyIncome = Math.floor(legacyPrice / partySize), currentIncome = Math.floor(currentPrice / partySize);
-  boss.price = currentPrice;
+  let changed = false;
+  if (dateKey(referenceDate) >= BLACK_MAGE_PRICE_CHANGE_DATE && n(boss.price) === legacyPrice) {
+    boss.price = currentPrice; changed = true;
+  }
   const history = normalizeMonthlyCompletions(boss.monthlyCompletions);
   for (const [month, entry] of Object.entries(history)) {
-    if (month >= '2026-10' && n(entry.income) === legacyIncome) entry.income = currentIncome;
+    if (month >= '2026-10' && n(entry.income) === legacyIncome) { entry.income = currentIncome; changed = true; }
   }
   boss.monthlyCompletions = history;
-  if (boss.completedIncome != null && n(boss.completedIncome) === legacyIncome) boss.completedIncome = currentIncome;
-  return true;
+  if (dateKey(referenceDate) >= BLACK_MAGE_PRICE_CHANGE_DATE && boss.completedIncome != null && n(boss.completedIncome) === legacyIncome) {
+    boss.completedIncome = currentIncome; changed = true;
+  }
+  return changed;
+}
+function monthlyCompletionCandidate(month, entry, boss) {
+  if (!entry) return null;
+  const normalized = normalizeMonthlyCompletions({[month]: entry})[month];
+  if (!normalized) return null;
+  const dates = [parseNexonDate(normalized.completedAt), parseNexonDate(boss?.apiCompletedAt)]
+    .filter(date => date && monthKey(date) === month)
+    .sort((left, right) => left.getTime() - right.getTime());
+  const evidence = dates[0] || null;
+  if (evidence) {
+    normalized.weekId = currentWeekKey(evidence);
+    normalized.completedAt = evidence.toISOString();
+  }
+  const confidence = evidence ? 4 : normalized.source === 'manual' ? 3 : normalized.source === 'nexon-api' ? 2 : 1;
+  return {entry: normalized, confidence};
+}
+function preferMonthlyCompletion(left, right) {
+  if (!left) return right;
+  if (!right) return left;
+  if (left.confidence !== right.confidence) return left.confidence > right.confidence ? left : right;
+  const leftTime = Date.parse(left.entry.completedAt || ''), rightTime = Date.parse(right.entry.completedAt || '');
+  if (!Number.isNaN(leftTime) && !Number.isNaN(rightTime) && leftTime !== rightTime) return leftTime < rightTime ? left : right;
+  if (left.entry.weekId !== right.entry.weekId) return left.entry.weekId < right.entry.weekId ? left : right;
+  return left;
+}
+function collapseAmbiguousMonthlyCompletionWeeks(history) {
+  const result = normalizeMonthlyCompletions(history), grouped = new Map();
+  for (const [month, entry] of Object.entries(result)) {
+    const list = grouped.get(entry.weekId) || [];
+    list.push({month, entry, evidence: parseNexonDate(entry.completedAt)});
+    grouped.set(entry.weekId, list);
+  }
+  for (const entries of grouped.values()) {
+    if (entries.length < 2) continue;
+    const ranked = entries.map(item => ({...item, confidence: item.evidence && monthKey(item.evidence) === item.month ? 4 : item.entry.source === 'manual' ? 3 : item.entry.source === 'nexon-api' ? 2 : 1}));
+    const top = Math.max(...ranked.map(item => item.confidence)), winners = ranked.filter(item => item.confidence === top);
+    if (winners.length !== 1 || top < 2) continue;
+    for (const item of ranked) if (item !== winners[0] && item.confidence < top) delete result[item.month];
+  }
+  return result;
+}
+function repairBlackMageArchive(data, now = new Date()) {
+  const canonical = new Map(), snapshotEntries = [];
+  const collectCharacter = (character, referenceDate, snapshotWeek = '') => {
+    for (const boss of character?.bosses || []) {
+      if (!isMonthlyBoss(boss)) continue;
+      const priceChanged = migrateBlackMageReferencePrice(boss, referenceDate);
+      const ownerKey = `${character.id}::${boss.bossId}`;
+      let owner = canonical.get(ownerKey);
+      if (!owner) { owner = new Map(); canonical.set(ownerKey, owner); }
+      for (const [month, entry] of Object.entries(normalizeMonthlyCompletions(boss.monthlyCompletions))) {
+        const candidate = monthlyCompletionCandidate(month, entry, boss);
+        if (candidate) owner.set(month, preferMonthlyCompletion(owner.get(month), candidate));
+      }
+      if (snapshotWeek) snapshotEntries.push({character, boss, ownerKey, snapshotWeek, priceChanged});
+    }
+  };
+  for (const character of data?.characters || []) collectCharacter(character, now);
+  for (const [historyKey, snapshot] of Object.entries(data?.weeklyHistory || {}).sort(([left], [right]) => left.localeCompare(right))) {
+    const snapshotWeek = validWeek(snapshot?.weekId) ? snapshot.weekId : validWeek(historyKey) ? historyKey : '';
+    const referenceDate = weekEndReference(snapshotWeek, now);
+    for (const character of snapshot?.characters || []) collectCharacter(character, referenceDate, snapshotWeek);
+  }
+  for (const owner of canonical.values()) {
+    const collapsed = collapseAmbiguousMonthlyCompletionWeeks(Object.fromEntries([...owner].map(([month, candidate]) => [month, candidate.entry])));
+    owner.clear();
+    for (const [month, entry] of Object.entries(collapsed)) owner.set(month, {entry, confidence: 4});
+  }
+  const applyCanonical = (character, boss, ownerKey, snapshotWeek = '') => {
+    const owner = canonical.get(ownerKey);
+    if (!owner) return false;
+    const next = {};
+    for (const [month, candidate] of owner) {
+      if (!snapshotWeek || candidate.entry.weekId <= snapshotWeek) next[month] = candidate.entry;
+    }
+    const before = JSON.stringify(normalizeMonthlyCompletions(boss.monthlyCompletions)), after = JSON.stringify(next);
+    if (before === after) return false;
+    boss.monthlyCompletions = next;
+    return true;
+  };
+  for (const character of data?.characters || []) for (const boss of character?.bosses || []) {
+    if (!isMonthlyBoss(boss)) continue;
+    applyCanonical(character, boss, `${character.id}::${boss.bossId}`);
+  }
+  const changedWeeks = new Set(snapshotEntries.filter(item => item.priceChanged).map(item => item.snapshotWeek));
+  for (const item of snapshotEntries) if (applyCanonical(item.character, item.boss, item.ownerKey, item.snapshotWeek)) changedWeeks.add(item.snapshotWeek);
+  for (const [historyKey, snapshot] of Object.entries(data?.weeklyHistory || {})) {
+    const snapshotWeek = validWeek(snapshot?.weekId) ? snapshot.weekId : validWeek(historyKey) ? historyKey : '';
+    if (!changedWeeks.has(snapshotWeek)) continue;
+    snapshot.totals = totalsFor(snapshot);
+  }
+  return changedWeeks.size > 0;
 }
 function repairNexonMonthlyCompletionWeek(boss) {
   if (!isMonthlyBoss(boss)) return false;
@@ -1010,10 +1107,10 @@ function migrateState(raw, now = new Date()) {
     ], 'account', true);
   }
   restoreMonthlyHistory(result.characters, result.weeklyHistory);
+  repairBlackMageArchive(result, now);
   result.characters.forEach(character => {
     for (const boss of character.bosses || []) {
       if (!isMonthlyBoss(boss)) continue;
-      migrateBlackMageReferencePrice(boss, now);
       repairNexonMonthlyCompletionWeek(boss);
     }
     migrateMonthlyBossState(character, {weekId: result.currentWeek, now, syncCurrent: true});

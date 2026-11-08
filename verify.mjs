@@ -942,6 +942,53 @@ assert.deepEqual(json("characterWeekStats(__weekStatsCharacter,'2026-10-29~2026-
 assert.deepEqual(json("characterWeekStats(__weekStatsCharacter,'2026-11-05~2026-11-11')"), {count:1,done:1,expected:48900000,earned:48900000,remaining:0,monthlyEarned:0});
 assert.match(source, /renderCharacterHubOverview[\s\S]*characterWeekStats\(character, weekId\)/);
 
+// Historical weekly snapshots must be repaired too: old price, stale totals and duplicated monthly credit.
+context.__historicalBlackMageState = {
+  version: 9, currentWeek: '2026-11-05~2026-11-11', updatedAt:'2026-11-09T03:00:00.000Z',
+  characters:[{id:'history-c1',name:'기록캐릭터',bosses:[{
+    bossId:'black-mage',name:'검은 마법사',difficulty:'하드',party:1,partySize:1,price:665000000,done:true,completedIncome:665000000,
+    completionSource:'nexon-api',apiCompleted:true,apiCheckedMonth:'2026-11',apiCompletedAt:'2026-11-02T03:00:00.000Z',
+    monthlyCompletions:{'2026-10':{weekId:'2026-10-29~2026-11-04',income:665000000,source:'migration'},'2026-11':{weekId:'2026-10-29~2026-11-04',income:665000000,completedAt:'2026-11-02T03:00:00.000Z',source:'nexon-api'}}
+  }],weeklyActivities:[]}],
+  incomes:[],presets:[],settings:{},
+  weeklyHistory:{
+    '2026-10-22~2026-10-28':{weekId:'2026-10-22~2026-10-28',characters:[{id:'history-c1',name:'기록캐릭터',bosses:[{
+      bossId:'black-mage',name:'검은 마법사',difficulty:'하드',party:1,partySize:1,price:665000000,done:true,completedIncome:665000000,completionSource:'nexon-api',apiCompletedAt:'2026-10-25T03:00:00.000Z',
+      monthlyCompletions:{'2026-10':{weekId:'2026-10-22~2026-10-28',income:665000000,completedAt:'2026-10-25T03:00:00.000Z',source:'nexon-api'}}
+    }],weeklyActivities:[]}],accountWeeklyActivities:[],incomes:[],totals:{boss:665000000,hunt:0,gather:0,drop:0,total:665000000}},
+    '2026-10-29~2026-11-04':{weekId:'2026-10-29~2026-11-04',characters:[{id:'history-c1',name:'기록캐릭터',bosses:[{
+      bossId:'black-mage',name:'검은 마법사',difficulty:'하드',party:1,partySize:1,price:665000000,done:true,completedIncome:665000000,completionSource:'nexon-api',apiCompletedAt:'2026-11-02T03:00:00.000Z',
+      monthlyCompletions:{'2026-10':{weekId:'2026-10-29~2026-11-04',income:665000000,source:'migration'},'2026-11':{weekId:'2026-10-29~2026-11-04',income:665000000,completedAt:'2026-11-02T03:00:00.000Z',source:'nexon-api'}}
+    }],weeklyActivities:[]}],accountWeeklyActivities:[],incomes:[],totals:{boss:1330000000,hunt:0,gather:0,drop:0,total:1330000000}}
+  }
+};
+const repairedHistory = json("migrateState(__historicalBlackMageState,new Date('2026-11-09T12:00:00'))");
+const historyOct = repairedHistory.weeklyHistory['2026-10-22~2026-10-28'];
+const historyNov = repairedHistory.weeklyHistory['2026-10-29~2026-11-04'];
+assert.equal(historyOct.characters[0].bosses[0].price, 465000000);
+assert.equal(historyOct.characters[0].bosses[0].monthlyCompletions['2026-10'].income, 465000000);
+assert.equal(historyOct.totals.boss, 465000000);
+assert.equal(historyOct.totals.total, 465000000);
+assert.equal(historyNov.characters[0].bosses[0].price, 465000000);
+assert.equal(historyNov.characters[0].bosses[0].monthlyCompletions['2026-10'].weekId, '2026-10-22~2026-10-28');
+assert.equal(historyNov.characters[0].bosses[0].monthlyCompletions['2026-11'].weekId, '2026-10-29~2026-11-04');
+context.__historyNovCharacter = structuredClone(historyNov.characters[0]);
+assert.equal(run("bossIncomeForWeek(__historyNovCharacter,'2026-10-29~2026-11-04')"), 465000000);
+assert.equal(historyNov.totals.boss, 465000000);
+assert.equal(historyNov.totals.total, 465000000);
+
+// Two genuinely separate month clears in one cross-month week stay valid when both have month-matching timestamps.
+context.__legitCrossMonthHistory = {
+  '2026-10':{weekId:'2026-10-29~2026-11-04',income:465000000,completedAt:'2026-10-30T03:00:00.000Z',source:'nexon-api'},
+  '2026-11':{weekId:'2026-10-29~2026-11-04',income:465000000,completedAt:'2026-11-02T03:00:00.000Z',source:'nexon-api'}
+};
+assert.equal(run("Object.keys(collapseAmbiguousMonthlyCompletionWeeks(__legitCrossMonthHistory)).length"), 2);
+context.__ambiguousCrossMonthHistory = {
+  '2026-10':{weekId:'2026-10-29~2026-11-04',income:465000000,source:'migration'},
+  '2026-11':{weekId:'2026-10-29~2026-11-04',income:465000000,completedAt:'2026-11-02T03:00:00.000Z',source:'nexon-api'}
+};
+assert.deepEqual(json("Object.keys(collapseAmbiguousMonthlyCompletionWeeks(__ambiguousCrossMonthHistory))"), ['2026-11']);
+
 context.__activityReset = structuredClone(context.__activityState);
 run('resetCurrentWeek(__activityReset)');
 assert.equal(context.__activityReset.characters[0].weeklyActivities.every(activity => !activity.done), true);
