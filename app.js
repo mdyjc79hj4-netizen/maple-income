@@ -504,6 +504,24 @@ function repairBlackMageArchive(data, now = new Date()) {
   }
   return changedWeeks.size > 0;
 }
+function repairHistoricalWeeklyBossCompletions(data) {
+  let repaired = 0;
+  for (const [historyKey, snapshot] of Object.entries(data?.weeklyHistory || {})) {
+    const weekId = validWeek(snapshot?.weekId) ? snapshot.weekId : validWeek(historyKey) ? historyKey : '';
+    if (!weekId) continue;
+    let changed = false;
+    for (const character of snapshot?.characters || []) for (const boss of character?.bosses || []) {
+      if (isMonthlyBoss(boss) || boss.done === true || boss.apiCompleted !== true || boss.manualOverride === false) continue;
+      if (boss.apiCheckedWeek !== weekId || typeof boss.apiCompletedAt !== 'string' || Number.isNaN(Date.parse(boss.apiCompletedAt))) continue;
+      boss.done = true;
+      boss.completedIncome = Math.max(0, Math.trunc(n(bossValue(boss))));
+      boss.completionSource ||= 'nexon-api';
+      repaired += 1; changed = true;
+    }
+    if (changed) snapshot.totals = totalsFor(snapshot);
+  }
+  return repaired;
+}
 function repairNexonMonthlyCompletionWeek(boss) {
   if (!isMonthlyBoss(boss)) return false;
   const history = normalizeMonthlyCompletions(boss.monthlyCompletions);
@@ -1108,6 +1126,7 @@ function migrateState(raw, now = new Date()) {
   }
   restoreMonthlyHistory(result.characters, result.weeklyHistory);
   repairBlackMageArchive(result, now);
+  repairHistoricalWeeklyBossCompletions(result);
   result.characters.forEach(character => {
     for (const boss of character.bosses || []) {
       if (!isMonthlyBoss(boss)) continue;

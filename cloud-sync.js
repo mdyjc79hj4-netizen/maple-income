@@ -321,6 +321,25 @@ function mergeArchiveItems({baseItems, localItems, remoteItems, key, localRevisi
   return result;
 }
 
+function mergeArchiveBoss(baseValue, localValue, remoteValue, localRevision, remoteRevision, id, conflicts, now) {
+  if (localValue == null) return copy(remoteValue);
+  if (remoteValue == null) return copy(localValue);
+  const result = mergeRecord(baseValue, localValue, remoteValue, localRevision, remoteRevision, 'weeklyHistory.character.bosses', id, conflicts, now);
+  const explicitIncomplete = localValue?.manualOverride === false || remoteValue?.manualOverride === false;
+  if (explicitIncomplete) {
+    result.done = false;
+    result.manualOverride = false;
+    delete result.completedIncome;
+  } else if (localValue?.done === true || remoteValue?.done === true) {
+    result.done = true;
+    const completed = [localValue, remoteValue].find(value => value?.done === true && Number.isFinite(Number(value?.completedIncome)));
+    if (completed) result.completedIncome = Number(completed.completedIncome);
+    if (!result.completionSource) result.completionSource = localValue?.completionSource || remoteValue?.completionSource;
+  }
+  if (localValue?.apiCompleted === true || remoteValue?.apiCompleted === true) result.apiCompleted = true;
+  return result;
+}
+
 function mergeArchiveCharacter(baseValue, localValue, remoteValue, localRevision, remoteRevision, id, conflicts, now) {
   if (localValue == null) return copy(remoteValue);
   if (remoteValue == null) return copy(localValue);
@@ -331,7 +350,10 @@ function mergeArchiveCharacter(baseValue, localValue, remoteValue, localRevision
   );
   result.bosses = mergeArchiveItems({
     baseItems: baseValue?.bosses, localItems: localValue?.bosses, remoteItems: remoteValue?.bosses,
-    key: 'bossId', localRevision, remoteRevision, scope: 'weeklyHistory.character.bosses', conflicts, now
+    key: 'bossId', localRevision, remoteRevision, scope: 'weeklyHistory.character.bosses', conflicts, now,
+    mergeItem: (baseBoss, localBoss, remoteBoss, bossId) => mergeArchiveBoss(
+      baseBoss, localBoss, remoteBoss, localRevision, remoteRevision, bossId, conflicts, now
+    )
   });
   result.weeklyActivities = mergeArchiveItems({
     baseItems: baseValue?.weeklyActivities, localItems: localValue?.weeklyActivities, remoteItems: remoteValue?.weeklyActivities,

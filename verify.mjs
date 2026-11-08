@@ -977,6 +977,27 @@ assert.equal(run("bossIncomeForWeek(__historyNovCharacter,'2026-10-29~2026-11-04
 assert.equal(historyNov.totals.boss, 465000000);
 assert.equal(historyNov.totals.total, 465000000);
 
+// Historical weekly boss completions with matching API evidence are restored conservatively.
+context.__lostWeeklyBossHistory = {
+  version:9,currentWeek:'2026-11-05~2026-11-11',updatedAt:'2026-11-09T03:00:00.000Z',
+  characters:[],incomes:[],presets:[],settings:{},
+  weeklyHistory:{
+    '2026-10-08~2026-10-14':{weekId:'2026-10-08~2026-10-14',characters:[{id:'lost-c1',name:'복구캐릭터',bosses:[
+      {bossId:'lotus',name:'스우',difficulty:'하드',party:1,partySize:1,price:48900000,done:false,apiCompleted:true,completionSource:'nexon-api',apiCheckedWeek:'2026-10-08~2026-10-14',apiCompletedAt:'2026-10-13T02:24:52.055Z'},
+      {bossId:'damien',name:'데미안',difficulty:'하드',party:1,partySize:1,price:46400000,done:false,apiCompleted:true,manualOverride:false,apiCheckedWeek:'2026-10-08~2026-10-14',apiCompletedAt:'2026-10-13T02:24:52.055Z'},
+      {bossId:'lucid',name:'루시드',difficulty:'하드',party:1,partySize:1,price:59700000,done:false,apiCompleted:true,apiCheckedWeek:'2026-10-01~2026-10-07',apiCompletedAt:'2026-10-13T02:24:52.055Z'}
+    ],weeklyActivities:[]}],accountWeeklyActivities:[],incomes:[],totals:{boss:0,hunt:100,gather:0,drop:0,total:100}}
+  }
+};
+const repairedLostWeekly = json("migrateState(__lostWeeklyBossHistory,new Date('2026-11-09T12:00:00'))");
+const repairedLostBosses = repairedLostWeekly.weeklyHistory['2026-10-08~2026-10-14'].characters[0].bosses;
+assert.equal(repairedLostBosses[0].done, true);
+assert.equal(repairedLostBosses[0].completedIncome, 48900000);
+assert.equal(repairedLostBosses[1].done, false);
+assert.equal(repairedLostBosses[2].done, false);
+assert.equal(repairedLostWeekly.weeklyHistory['2026-10-08~2026-10-14'].totals.boss, 48900000);
+assert.equal(repairedLostWeekly.weeklyHistory['2026-10-08~2026-10-14'].totals.total, 48900000);
+
 // Two genuinely separate month clears in one cross-month week stay valid when both have month-matching timestamps.
 context.__legitCrossMonthHistory = {
   '2026-10':{weekId:'2026-10-29~2026-11-04',income:465000000,completedAt:'2026-10-30T03:00:00.000Z',source:'nexon-api'},
@@ -1299,6 +1320,28 @@ assert.equal(preservedArchive.incomes.length, 44);
 assert.equal(preservedArchive.characters.length, 10);
 assert.equal(preservedArchive.accountWeeklyActivities[0].done, true);
 assert.equal(preservedArchive.totals.total, 123456);
+
+// A stale same-week device cannot erase an archived boss completion. Explicit manual incomplete remains authoritative.
+const archiveBossBase = clone(archiveBase);
+archiveBossBase.weeklyHistory[archiveWeekId].characters[0].bosses[0] = {bossId:'lotus',name:'스우',done:true,completedIncome:48900000,apiCompleted:true,completionSource:'nexon-api'};
+const archiveBossStale = clone(archiveBossBase);
+archiveBossStale.updatedAt = '2026-10-01T06:00:00.000Z';
+archiveBossStale.weeklyHistory[archiveWeekId].characters[0].bosses[0] = {bossId:'lotus',name:'스우',done:false,apiCompleted:true,completionSource:'nexon-api'};
+const archiveBossGood = clone(archiveBossBase);
+archiveBossGood.updatedAt = '2026-10-01T05:00:00.000Z';
+const preservedBossCompletion = cloudSyncInternals.mergeStates(
+  archiveBossBase, archiveBossStale, archiveBossGood, '2026-10-01T07:00:00.000Z'
+).state.weeklyHistory[archiveWeekId].characters[0].bosses[0];
+assert.equal(preservedBossCompletion.done, true);
+assert.equal(preservedBossCompletion.completedIncome, 48900000);
+assert.equal(preservedBossCompletion.apiCompleted, true);
+const archiveBossManualIncomplete = clone(archiveBossStale);
+archiveBossManualIncomplete.weeklyHistory[archiveWeekId].characters[0].bosses[0].manualOverride = false;
+const preservedManualIncomplete = cloudSyncInternals.mergeStates(
+  archiveBossBase, archiveBossManualIncomplete, archiveBossGood, '2026-10-01T08:00:00.000Z'
+).state.weeklyHistory[archiveWeekId].characters[0].bosses[0];
+assert.equal(preservedManualIncomplete.done, false);
+assert.equal(preservedManualIncomplete.manualOverride, false);
 
 // Archived incomes are unioned by id without duplicates, even when devices overlap.
 const archiveIncomeBase = {...clone(syncBase), weeklyHistory: {[archiveWeekId]: {weekId: archiveWeekId, incomes: [], characters: []}}};
