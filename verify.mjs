@@ -879,6 +879,69 @@ assert.equal(monthlySchedulerResult.autoCompleted, 1);
 assert.equal(context.__monthlySchedulerState.characters[0].bosses[0].monthlyCompletions['2026-09'].weekId, '2026-09-24~2026-09-30');
 assert.equal(run("nexonUserStatusMessage({autoCompleted:1,monthlyAutoCompleted:1,activityAutoCompleted:0})"), '월간 보스 1개를 자동 확인했습니다.');
 
+// Black Mage uses the pre-change price only before 2026-10-01. Current reference values come from bossDB.
+assert.equal(run("bossDB['검은 마법사']['하드']"), 465000000);
+assert.equal(run("bossDB['검은 마법사']['익스트림']"), 5680000000);
+assert.equal(run("referencePrice('검은 마법사','하드',new Date('2026-09-30T12:00:00'))"), 665000000);
+assert.equal(run("referencePrice('검은 마법사','하드',new Date('2026-10-01T12:00:00'))"), 465000000);
+
+// Repeated monthly scheduler checks must not move the already-recorded completion into a later week.
+context.__monthlyRepeatState = {
+  version: 9, currentWeek: '2026-11-05~2026-11-11',
+  characters: [{id:'monthly-repeat',name:'월간반복',bosses:[{
+    bossId:'black-mage',name:'검은 마법사',difficulty:'하드',party:1,partySize:1,price:465000000,done:true,completedIncome:465000000,
+    completionSource:'nexon-api',apiCompleted:true,apiCheckedMonth:'2026-11',apiCompletedAt:'2026-11-02T03:00:00.000Z',
+    monthlyCompletions:{'2026-11':{weekId:'2026-10-29~2026-11-04',income:465000000,completedAt:'2026-11-02T03:00:00.000Z',source:'nexon-api'}}
+  }],weeklyActivities:[]}],
+  incomes: [], weeklyHistory: {}, presets: [], settings: {}
+};
+context.__monthlyRepeatResponse = {
+  date:'2026-11-09',requestedDate:null,mode:'live',character:{name:'월간반복'},
+  bosses:[{contentName:'검은 마법사',difficulty:'hard',cycle:'bossMonthly',complete:true}],activities:[]
+};
+json("applyNexonSchedulerState(__monthlyRepeatState,'monthly-repeat',__monthlyRepeatResponse,'2026-11-09T03:00:00.000Z')");
+assert.equal(context.__monthlyRepeatState.characters[0].bosses[0].monthlyCompletions['2026-11'].weekId, '2026-10-29~2026-11-04');
+assert.equal(context.__monthlyRepeatState.characters[0].bosses[0].monthlyCompletions['2026-11'].income, 465000000);
+assert.equal(run("bossIncomeForWeek(__monthlyRepeatState.characters[0],'2026-11-05~2026-11-11')"), 0);
+assert.equal(run("bossIncomeForWeek(__monthlyRepeatState.characters[0],'2026-10-29~2026-11-04')"), 465000000);
+
+// Existing buggy data is repaired from the first API completion timestamp, and only the old official default price is migrated.
+context.__monthlyBuggyState = {
+  version: 9, currentWeek: '2026-11-05~2026-11-11', updatedAt:'2026-11-09T03:00:00.000Z',
+  characters: [{id:'monthly-buggy',name:'월간복구',bosses:[{
+    bossId:'black-mage',name:'검은 마법사',difficulty:'하드',party:1,partySize:1,price:665000000,done:true,completedIncome:665000000,
+    completionSource:'nexon-api',apiCompleted:true,apiCheckedMonth:'2026-11',apiCompletedAt:'2026-11-02T03:00:00.000Z',
+    monthlyCompletions:{'2026-11':{weekId:'2026-11-05~2026-11-11',income:665000000,completedAt:'2026-11-09T03:00:00.000Z',source:'nexon-api'}}
+  }],weeklyActivities:[]}],
+  incomes: [], weeklyHistory: {}, presets: [], settings: {}
+};
+const repairedMonthly = json("migrateState(__monthlyBuggyState,new Date('2026-11-09T12:00:00'))");
+assert.equal(repairedMonthly.characters[0].bosses[0].price, 465000000);
+assert.equal(repairedMonthly.characters[0].bosses[0].completedIncome, 465000000);
+assert.equal(repairedMonthly.characters[0].bosses[0].monthlyCompletions['2026-11'].income, 465000000);
+assert.equal(repairedMonthly.characters[0].bosses[0].monthlyCompletions['2026-11'].weekId, '2026-10-29~2026-11-04');
+assert.equal(repairedMonthly.characters[0].bosses[0].monthlyCompletions['2026-11'].completedAt, '2026-11-02T03:00:00.000Z');
+context.__repairedMonthly = structuredClone(repairedMonthly);
+assert.equal(run("totalsFor(__repairedMonthly).boss"), 0);
+context.__repairedMonthly.currentWeek = '2026-10-29~2026-11-04';
+assert.equal(run("totalsFor(__repairedMonthly).boss"), 465000000);
+
+context.__customBlackMageState = structuredClone(context.__monthlyBuggyState);
+context.__customBlackMageState.characters[0].bosses[0].price = 600000000;
+context.__customBlackMageState.characters[0].bosses[0].completedIncome = 600000000;
+context.__customBlackMageState.characters[0].bosses[0].monthlyCompletions['2026-11'].income = 600000000;
+const customBlackMage = json("migrateState(__customBlackMageState,new Date('2026-11-09T12:00:00'))");
+assert.equal(customBlackMage.characters[0].bosses[0].price, 600000000);
+assert.equal(customBlackMage.characters[0].bosses[0].monthlyCompletions['2026-11'].income, 600000000);
+
+context.__weekStatsCharacter = {bosses:[
+  {bossId:'lotus',name:'스우',difficulty:'하드',party:1,partySize:1,price:48900000,done:true,completedIncome:48900000},
+  {bossId:'black-mage',name:'검은 마법사',difficulty:'하드',party:1,partySize:1,price:465000000,done:true,completedIncome:465000000,monthlyCompletions:{'2026-11':{weekId:'2026-10-29~2026-11-04',income:465000000,source:'nexon-api'}}}
+]};
+assert.deepEqual(json("characterWeekStats(__weekStatsCharacter,'2026-10-29~2026-11-04')"), {count:1,done:1,expected:513900000,earned:513900000,remaining:0,monthlyEarned:465000000});
+assert.deepEqual(json("characterWeekStats(__weekStatsCharacter,'2026-11-05~2026-11-11')"), {count:1,done:1,expected:48900000,earned:48900000,remaining:0,monthlyEarned:0});
+assert.match(source, /renderCharacterHubOverview[\s\S]*characterWeekStats\(character, weekId\)/);
+
 context.__activityReset = structuredClone(context.__activityState);
 run('resetCurrentWeek(__activityReset)');
 assert.equal(context.__activityReset.characters[0].weeklyActivities.every(activity => !activity.done), true);

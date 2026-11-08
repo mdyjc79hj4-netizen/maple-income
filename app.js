@@ -61,8 +61,10 @@ function setupThemeController() {
 }
 const items = {hunt: ['메소', '솔 에르다 조각', '코어 젬스톤'], gather: ['쥬니퍼베리 씨앗', '쥬니퍼베리 씨앗 오일', '소형 재물 획득의 비약'], drop: ['보스 드랍 아이템', '칠흑 아이템', '기타 드랍 아이템']};
 const labels = {boss: '보스', hunt: '재획', gather: '채집', drop: '드랍·기타'};
-// KMS reference: https://gi.maplestory.nexon.com/Update/813, 2026-09-17.
-// Keep manually saved prices; Black Mage's new prices start on October 1.
+// KMS reference: https://maplestory.nexon.com/News/Update/813, 2026-09-17.
+// Black Mage's changed crystal prices apply from 2026-10-01; older records keep the prior values.
+const BLACK_MAGE_PRICE_CHANGE_DATE = '2026-10-01';
+const legacyBlackMagePrices = Object.freeze({하드: 665000000, 익스트림: 8740000000});
 const bossDB = {
   '자쿰': {카오스: 4040000}, '피에르': {카오스: 4080000}, '반반': {카오스: 4070000},
   '블러디퀸': {카오스: 4070000}, '벨룸': {카오스: 4640000}, '매그너스': {하드: 4280000}, '파풀라투스': {카오스: 6550000},
@@ -70,7 +72,7 @@ const bossDB = {
   '가디언 엔젤 슬라임': {노멀: 12700000, 카오스: 71300000}, '루시드': {이지: 14900000, 노멀: 17800000, 하드: 59700000},
   '윌': {이지: 16100000, 노멀: 20500000, 하드: 73200000}, '더스크': {노멀: 22000000, 카오스: 66300000},
   '듄켈': {노멀: 23700000, 하드: 89600000}, '진 힐라': {노멀: 67600000, 하드: 100000000},
-  '검은 마법사': {하드: 665000000, 익스트림: 8740000000},
+  '검은 마법사': {하드: 465000000, 익스트림: 5680000000},
   '선택받은 세렌': {노멀: 167000000, 하드: 302000000, 익스트림: 1840000000},
   '감시자 칼로스': {이지: 238000000, 노멀: 479000000, 카오스: 1230000000, 익스트림: 4104000000},
   '카링': {이지: 320000000, 노멀: 593000000, 하드: 1560000000, 익스트림: 5387000000},
@@ -280,7 +282,7 @@ function validWeek(value) { return typeof value === 'string' && /^\d{4}-\d{2}-\d
 function shortWeek(value) { return value.split('~').map(d => { const [, m, day] = d.split('-'); return `${n(m)}월 ${n(day)}일`; }).join(' ~ '); }
 function referencePrice(name, difficulty, date = new Date()) {
   name = canonicalBossName(name);
-  if (name === '검은 마법사' && dateKey(date) >= '2026-10-01') return difficulty === '하드' ? 465000000 : difficulty === '익스트림' ? 5680000000 : 0;
+  if (name === '검은 마법사' && dateKey(date) < BLACK_MAGE_PRICE_CHANGE_DATE) return legacyBlackMagePrices[difficulty] ?? 0;
   return bossDB[name]?.[difficulty] ?? 0;
 }
 function canonicalBossName(name) { return bossAliases[name] || name; }
@@ -390,6 +392,40 @@ function monthlyBossIncomeForWeek(boss, weekId = '') {
     .filter(entry => !weekId || entry.weekId === weekId)
     .reduce((sum, entry) => sum + n(entry.income), 0);
 }
+function migrateBlackMageReferencePrice(boss, now = new Date()) {
+  if (!isMonthlyBoss(boss) || dateKey(now) < BLACK_MAGE_PRICE_CHANGE_DATE) return false;
+  const legacyPrice = legacyBlackMagePrices[boss.difficulty], currentPrice = bossDB['검은 마법사']?.[boss.difficulty];
+  if (!legacyPrice || !currentPrice || n(boss.price) !== legacyPrice) return false;
+  const partySize = Math.max(1, n(boss.party ?? boss.partySize) || 1);
+  const legacyIncome = Math.floor(legacyPrice / partySize), currentIncome = Math.floor(currentPrice / partySize);
+  boss.price = currentPrice;
+  const history = normalizeMonthlyCompletions(boss.monthlyCompletions);
+  for (const [month, entry] of Object.entries(history)) {
+    if (month >= '2026-10' && n(entry.income) === legacyIncome) entry.income = currentIncome;
+  }
+  boss.monthlyCompletions = history;
+  if (boss.completedIncome != null && n(boss.completedIncome) === legacyIncome) boss.completedIncome = currentIncome;
+  return true;
+}
+function repairNexonMonthlyCompletionWeek(boss) {
+  if (!isMonthlyBoss(boss)) return false;
+  const history = normalizeMonthlyCompletions(boss.monthlyCompletions);
+  let changed = false;
+  for (const [completionMonth, entry] of Object.entries(history)) {
+    if (entry.source !== 'nexon-api') continue;
+    const candidates = [parseNexonDate(entry.completedAt), parseNexonDate(boss.apiCompletedAt)]
+      .filter(date => date && monthKey(date) === completionMonth)
+      .sort((left, right) => left.getTime() - right.getTime());
+    const firstSeen = candidates[0];
+    if (!firstSeen) continue;
+    const firstWeek = currentWeekKey(firstSeen);
+    if (entry.weekId !== firstWeek) { entry.weekId = firstWeek; changed = true; }
+    const firstSeenAt = firstSeen.toISOString();
+    if (!entry.completedAt || Date.parse(entry.completedAt) > firstSeen.getTime()) { entry.completedAt = firstSeenAt; changed = true; }
+  }
+  if (changed) boss.monthlyCompletions = history;
+  return changed;
+}
 function syncMonthlyBossCurrentState(boss, now = new Date()) {
   if (!isMonthlyBoss(boss)) return false;
   const before = JSON.stringify(boss), currentMonth = monthKey(now);
@@ -419,6 +455,19 @@ function recordMonthlyBossCompletion(boss, completionMonth, weekId, options = {}
   if (!isMonthlyBoss(boss) || !/^\d{4}-\d{2}$/.test(completionMonth) || !validWeek(weekId)) return false;
   const now = options.now instanceof Date ? options.now : new Date(options.now || Date.now());
   const history = normalizeMonthlyCompletions(boss.monthlyCompletions);
+  const existing = history[completionMonth];
+  if (existing) {
+    let changed = false;
+    if (!existing.completedAt && typeof options.completedAt === 'string' && !Number.isNaN(Date.parse(options.completedAt))) { existing.completedAt = options.completedAt; changed = true; }
+    if (!existing.source && ['manual', 'nexon-api', 'migration'].includes(options.source)) { existing.source = options.source; changed = true; }
+    boss.monthlyCompletions = history;
+    if (completionMonth === monthKey(now)) {
+      boss.done = true;
+      boss.completedIncome = existing.income;
+      boss.completionSource = existing.source || boss.completionSource || 'manual';
+    }
+    return changed;
+  }
   const entry = {weekId, income: Math.max(0, Math.trunc(n(options.income ?? bossValue(boss))))};
   if (typeof options.completedAt === 'string' && !Number.isNaN(Date.parse(options.completedAt))) entry.completedAt = options.completedAt;
   if (['manual', 'nexon-api', 'migration'].includes(options.source)) entry.source = options.source;
@@ -804,6 +853,11 @@ function bossIncomeForWeek(character, weekId = '') {
     return sum + (boss.done ? n(boss.completedIncome ?? bossValue(boss)) : 0);
   }, 0);
 }
+function characterWeekStats(character, weekId = '') {
+  const weekly = characterStats(character), earned = bossIncomeForWeek(character, weekId);
+  const monthlyEarned = Math.max(0, earned - weekly.earned);
+  return {...weekly, earned, expected: weekly.expected + monthlyEarned, remaining: weekly.remaining, monthlyEarned};
+}
 function totalsFor(data) {
   const weekId = data?.weekId || data?.currentWeek || '';
   const t = {boss: (data.characters || []).reduce((sum, c) => sum + bossIncomeForWeek(c, weekId), 0), hunt: 0, gather: 0, drop: 0};
@@ -956,7 +1010,14 @@ function migrateState(raw, now = new Date()) {
     ], 'account', true);
   }
   restoreMonthlyHistory(result.characters, result.weeklyHistory);
-  result.characters.forEach(character => migrateMonthlyBossState(character, {weekId: result.currentWeek, now, syncCurrent: true}));
+  result.characters.forEach(character => {
+    for (const boss of character.bosses || []) {
+      if (!isMonthlyBoss(boss)) continue;
+      migrateBlackMageReferencePrice(boss, now);
+      repairNexonMonthlyCompletionWeek(boss);
+    }
+    migrateMonthlyBossState(character, {weekId: result.currentWeek, now, syncCurrent: true});
+  });
   if (legacy) {
     result.migrationNote = '이전 보스 완료 기록은 저장된 주차가 없으면 이전한 주에 유지됩니다. 수익 기록은 저장된 주차·작성일을 따릅니다.';
     const active = [], newHistory = new Set();
@@ -1637,7 +1698,7 @@ function characterHubHero(character) {
   return `<div class="character-hub-identity">${nexonProfileAvatar(character, 'hub-art')}<div><span class="character-hub-link-state ${linked ? 'linked' : ''}">NEXON ${linked ? '● 연결됨' : '미연동'}</span><h2 id="characterHubTitle">${escapeHtml(character.name)}</h2>${nexonProfileCopy(character, 'hub-profile-line')}</div></div><dl class="character-hub-core-stats"><div><dt>전투력</dt><dd>${escapeHtml(combatPower)}</dd></div><div><dt>유니온</dt><dd>${escapeHtml(unionLevel)}${unionGrade}</dd></div></dl>`;
 }
 function renderCharacterHubOverview(character, data) {
-  const stats = characterStats(character), percent = stats.count ? Math.round(stats.done / stats.count * 100) : 0;
+  const weekId = data?.weekId || data?.currentWeek || '', stats = characterWeekStats(character, weekId), percent = stats.count ? Math.round(stats.done / stats.count * 100) : 0;
   const activities = normalizeWeeklyActivities(character.weeklyActivities, 'character', true);
   const accountActivities = normalizeWeeklyActivities(data?.accountWeeklyActivities, 'account', true);
   const characterDone = activities.filter(activity => activity.done).length, accountDone = accountActivities.filter(activity => activity.done).length;
